@@ -1,0 +1,64 @@
+[package]
+name = "water-simulation"
+version = "0.1.0"
+edition = "2024"
+default-run = "water-simulation"
+
+[dependencies]
+crossterm = "0.29.0"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+
+[features]
+default = []
+ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json"]
+
+[dependencies.wgpu]
+version = "27.0.1"
+optional = true
+
+[dependencies.winit]
+version = "0.30.13"
+optional = true
+
+[dependencies.glam]
+version = "0.30"
+optional = true
+
+[dependencies.bytemuck]
+version = "1.23"
+features = ["derive"]
+optional = true
+
+[dependencies.pollster]
+version = "0.4"
+optional = true
+
+[dependencies.png]
+version = "0.18"
+optional = true
+
+[[bin]]
+name = "ocean"
+path = "src/bin/ocean.rs"
+required-features = ["ocean"]
+
+[dependencies.egui]
+version = "0.33.3"
+optional = true
+
+[dependencies.egui-winit]
+version = "0.33.3"
+optional = true
+
+[dependencies.egui-wgpu]
+version = "0.33.3"
+optional = true
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+optional = true
+
+[dependencies.serde_json]
+version = "1.0"
+optional = true

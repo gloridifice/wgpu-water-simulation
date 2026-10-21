@@ -1,0 +1,661 @@
+use super::{
+    foam::{Foam, FoamConfig, FoamStep},
+    gpu::{CameraUniform, Error, Gpu, Ocean, Renderer},
+    gui::Gui,
+    optics::OpticsConfig,
+    settings::{SavedSettings, SettingsStore},
+    spectrum::OceanConfig,
+};
+use glam::{Mat4, Vec3};
+use std::{sync::Arc, time::Instant};
+use winit::{
+    application::ApplicationHandler,
+    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+    event_loop::{ActiveEventLoop, EventLoop},
+    keyboard::{KeyCode, PhysicalKey},
+    window::{Window, WindowId},
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Camera {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub distance: f32,
+    pub gain: f32,
+    pub choppy: bool,
+    pub chop_amount: f32,
+    pub foam_debug: u32,
+    pub foam: bool,
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self::new(OceanConfig::default().length)
+    }
+}
+
+impl Camera {
+    pub fn new(length: f32) -> Self {
+        Self {
+            yaw: 0.55,
+            pitch: 0.30,
+            distance: length * 0.58,
+            gain: 1.0,
+            choppy: true,
+            chop_amount: 1.15,
+            foam_debug: 0,
+            foam: true,
+        }
+    }
+
+    pub fn beach(length: f32) -> Self {
+        Self {
+            yaw: -0.72,
+            pitch: 0.70,
+            distance: length * 0.60,
+            gain: 0.22,
+            chop_amount: 0.65,
+            foam: true,
+            ..Self::new(length)
+        }
+    }
+
+    pub fn uniform(&self, config: OceanConfig, aspect: f32) -> CameraUniform {
+        let eye = Vec3::new(
+            self.yaw.sin() * self.pitch.cos(),
+            self.pitch.sin(),
+            self.yaw.cos() * self.pitch.cos(),
+        ) * self.distance;
+        let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+        let projection =
+            Mat4::perspective_rh(55.0_f32.to_radians(), aspect, 0.1, config.length * 8.0);
+        let matrix = projection * view;
+        let sun = Vec3::new(-0.35, 0.40, -0.65).normalize();
+        CameraUniform {
+            view_projection: matrix.to_cols_array_2d(),
+            inverse_view_projection: matrix.inverse().to_cols_array_2d(),
+            eye: eye.extend(1.0).to_array(),
+            sun: sun.extend(0.0).to_array(),
+            ocean: [
+                config.resolution as f32,
+                config.length,
+                if self.choppy { -self.chop_amount } else { 0.0 },
+                self.gain,
+            ],
+            misc: [
+                if self.foam { 1.0 } else { 0.0 },
+                config.mesh_resolution as f32,
+                self.foam_debug as f32,
+                0.0,
+            ],
+        }
+    }
+}
+
+struct State {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
+    gpu: Gpu,
+    ocean: Ocean,
+    foam_field: Foam,
+    foam_time: f32,
+    renderer: Renderer,
+    config: wgpu::SurfaceConfiguration,
+    camera: Camera,
+    gui: Gui,
+    time: f32,
+    paused: bool,
+    dragging: bool,
+    cursor: Option<(f64, f64)>,
+    last: Instant,
+    title_time: Instant,
+    title_frames: u32,
+    frames: u32,
+    settings: Option<SettingsStore>,
+}
+
+impl State {
+    async fn new(window: Arc<Window>, ocean_config: OceanConfig) -> Result<Self, Error> {
+        let instance = wgpu::Instance::default();
+        let surface = instance.create_surface(window.clone())?;
+        let gpu = Gpu::new(&instance, Some(&surface)).await?;
+        eprintln!("GPU: {}", gpu.name);
+        let size = window.inner_size();
+        let mut config = surface
+            .get_default_config(&gpu.adapter, size.width.max(1), size.height.max(1))
+            .ok_or("adapter cannot present to this window")?;
+        config.present_mode = wgpu::PresentMode::AutoVsync;
+        surface.configure(&gpu.device, &config);
+        let ocean = Ocean::new(&gpu, ocean_config)?;
+        let foam_field = Foam::new(&gpu, &ocean.fields, ocean_config.resolution);
+        let renderer = Renderer::new(
+            &gpu,
+            &ocean,
+            &foam_field,
+            config.format,
+            config.width,
+            config.height,
+        );
+        let gui = Gui::new(&window, &gpu, config.format, ocean_config);
+        Ok(Self {
+            gui,
+            window,
+            surface,
+            gpu,
+            ocean,
+            foam_field,
+            foam_time: 0.0,
+            renderer,
+            config,
+            camera: Camera::new(ocean_config.length),
+            time: 0.0,
+            paused: false,
+            dragging: false,
+            cursor: None,
+            last: Instant::now(),
+            title_time: Instant::now(),
+            title_frames: 0,
+            frames: 0,
+            settings: None,
+        })
+    }
+
+    fn saved_settings(&self) -> SavedSettings {
+        SavedSettings {
+            ocean: self.ocean.config,
+            draft: self.gui.draft,
+            foam: self.gui.foam_settings,
+            optics: self.gui.optics,
+            camera: self.camera,
+            speed: self.gui.speed,
+            paused: self.paused,
+            ..Default::default()
+        }
+    }
+
+    fn persist(&mut self, force: bool) {
+        let current = self.saved_settings();
+        if let Some(store) = &mut self.settings {
+            store.update(current, Instant::now(), force);
+            self.gui.save_status = store.status.clone();
+            self.gui.save_failed = store.failed;
+        }
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.config.width = width;
+        self.config.height = height;
+        self.surface.configure(&self.gpu.device, &self.config);
+        self.renderer.resize(&self.gpu.device, width, height);
+    }
+
+    fn draw(&mut self) -> Result<bool, wgpu::SurfaceError> {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last).as_secs_f32().min(0.1);
+        self.last = now;
+        if !self.paused {
+            self.time += elapsed * self.gui.speed;
+        }
+        let frame = self.surface.get_current_texture()?;
+        let view = frame.texture.create_view(&Default::default());
+        let (gui_output, apply) = self.gui.frame(
+            &self.window,
+            self.ocean.config,
+            &mut self.camera,
+            &mut self.paused,
+            &mut self.time,
+        );
+        if let Some(config) = apply {
+            match Ocean::new(&self.gpu, config) {
+                Ok(ocean) => {
+                    self.camera.distance *= config.length / self.ocean.config.length;
+                    let foam_field = Foam::new(&self.gpu, &ocean.fields, config.resolution);
+                    self.renderer = Renderer::new(
+                        &self.gpu,
+                        &ocean,
+                        &foam_field,
+                        self.config.format,
+                        self.config.width,
+                        self.config.height,
+                    );
+                    self.ocean = ocean;
+                    self.foam_field = foam_field;
+                    self.foam_time = self.time;
+                }
+                Err(error) => self.gui.error = Some(error.to_string()),
+            }
+        }
+        let force_save = std::mem::take(&mut self.gui.save_now);
+        self.persist(force_save);
+        let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
+        self.ocean.encode(&self.gpu, &mut encoder, self.time);
+        let camera = self.camera.uniform(
+            self.ocean.config,
+            self.config.width as f32 / self.config.height as f32,
+        );
+        let reset = std::mem::take(&mut self.gui.clear_foam) || self.time < self.foam_time;
+        let dt = if reset {
+            0.0
+        } else {
+            (self.time - self.foam_time).max(0.0)
+        };
+        self.foam_field.encode(
+            &self.gpu,
+            &mut encoder,
+            FoamStep::new(
+                self.ocean.config.resolution,
+                self.ocean.config.length,
+                camera.ocean[2] * camera.ocean[3],
+                dt,
+                self.gui.foam_settings,
+                reset,
+            ),
+        );
+        self.foam_time = self.time;
+        self.renderer.update_optics(&self.gpu, &self.gui.optics);
+        self.renderer.shore.encode(
+            &self.gpu,
+            &mut encoder,
+            &self.gui.optics,
+            self.time,
+            reset,
+            camera.ocean[3],
+        );
+        self.renderer
+            .encode(&self.gpu, &mut encoder, &view, &camera);
+        let extra = self
+            .gui
+            .encode(&self.window, &self.gpu, &mut encoder, &view, gui_output);
+        self.gpu
+            .queue
+            .submit(extra.into_iter().chain([encoder.finish()]));
+        frame.present();
+        self.frames += 1;
+        self.title_frames += 1;
+        let duration = now.duration_since(self.title_time).as_secs_f32();
+        if duration > 0.5 {
+            self.window.set_title(&format!("FFT Ocean | {:.0} FPS | t={:.1}s {} | amplitude {:.1}x | Drag: orbit / Wheel: zoom / Space: pause / C: choppy / F: foam / Up,Down: height / R: reset / Esc: exit",
+                self.title_frames as f32 / duration, self.time, if self.paused { "PAUSED" } else { "" }, self.camera.gain));
+            self.title_time = now;
+            self.title_frames = 0;
+        }
+        Ok(true)
+    }
+}
+
+struct App {
+    initial: SavedSettings,
+    settings: Option<SettingsStore>,
+    state: Option<State>,
+    error: Option<String>,
+    frame_limit: Option<u32>,
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.state.is_some() {
+            return;
+        }
+        let result = (|| -> Result<State, Error> {
+            let window = Arc::new(event_loop.create_window(Window::default_attributes()
+                .with_title("FFT Ocean | Drag: orbit | Wheel: zoom | Space: pause | C: choppy | Esc: exit")
+                .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0)))?);
+            pollster::block_on(State::new(window, self.initial.ocean))
+        })();
+        match result {
+            Ok(mut state) => {
+                state.gui.optics = self.initial.optics;
+                state.gui.draft = self.initial.draft;
+                state.gui.foam_settings = self.initial.foam;
+                state.gui.speed = self.initial.speed;
+                state.paused = self.initial.paused;
+                state.camera = self.initial.camera;
+                state.settings = self.settings.take();
+                if let Some(store) = &state.settings {
+                    state.gui.settings_path = Some(store.path.clone());
+                    state.gui.save_status = store.status.clone();
+                    state.gui.save_failed = store.failed;
+                    eprintln!("Local settings: {}", store.path.display());
+                    if store.failed {
+                        eprintln!("{}", store.status);
+                    }
+                }
+                self.state = Some(state);
+            }
+            Err(error) => {
+                self.error = Some(error.to_string());
+                event_loop.exit();
+            }
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        let Some(state) = &mut self.state else {
+            return;
+        };
+        if state.window.id() != window_id {
+            return;
+        }
+        let response = state.gui.input.on_window_event(&state.window, &event);
+        // 即使鼠标在面板内释放，也必须结束此前的相机拖动。
+        if matches!(
+            &event,
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                ..
+            }
+        ) {
+            state.dragging = false;
+        }
+        if response.consumed
+            && matches!(
+                &event,
+                WindowEvent::MouseInput { .. }
+                    | WindowEvent::MouseWheel { .. }
+                    | WindowEvent::CursorMoved { .. }
+                    | WindowEvent::KeyboardInput { .. }
+                    | WindowEvent::Ime(_)
+            )
+        {
+            state.dragging = false;
+            state.cursor = None;
+            return;
+        }
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => state.resize(size.width, size.height),
+            WindowEvent::Focused(false) => {
+                state.persist(true);
+                state.dragging = false;
+                state.cursor = None;
+            }
+            WindowEvent::MouseInput {
+                button: MouseButton::Left,
+                state: pressed,
+                ..
+            } => state.dragging = pressed == ElementState::Pressed,
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some((x, y)) = state.cursor.filter(|_| state.dragging) {
+                    state.camera.yaw -= (position.x - x) as f32 * 0.005;
+                    state.camera.pitch =
+                        (state.camera.pitch + (position.y - y) as f32 * 0.005).clamp(0.07, 1.35);
+                }
+                state.cursor = Some((position.x, position.y));
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let amount = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 50.0,
+                };
+                let length = state.ocean.config.length;
+                state.camera.distance = (state.camera.distance * (-amount * 0.1).exp())
+                    .clamp(length * 0.12, length * 0.95);
+            }
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                match event.physical_key {
+                    PhysicalKey::Code(KeyCode::Escape | KeyCode::KeyQ) => event_loop.exit(),
+                    PhysicalKey::Code(KeyCode::Space) if !event.repeat => {
+                        state.paused = !state.paused
+                    }
+                    PhysicalKey::Code(KeyCode::KeyC) if !event.repeat => {
+                        state.camera.choppy = !state.camera.choppy
+                    }
+                    PhysicalKey::Code(KeyCode::KeyF) if !event.repeat => {
+                        state.camera.foam = !state.camera.foam
+                    }
+                    PhysicalKey::Code(KeyCode::ArrowUp) => {
+                        state.camera.gain = (state.camera.gain + 0.1).min(2.0)
+                    }
+                    PhysicalKey::Code(KeyCode::ArrowDown) => {
+                        state.camera.gain = (state.camera.gain - 0.1).max(0.1)
+                    }
+                    PhysicalKey::Code(KeyCode::KeyR) => {
+                        state.camera = if state.gui.optics.beach {
+                            Camera::beach(state.ocean.config.length)
+                        } else {
+                            Camera::new(state.ocean.config.length)
+                        };
+                        state.time = 0.0;
+                        state.gui.clear_foam = true;
+                    }
+                    _ => {}
+                }
+            }
+            WindowEvent::RedrawRequested => {
+                if state.window.inner_size().width == 0 || state.window.inner_size().height == 0 {
+                    return;
+                }
+                match state.draw() {
+                    Ok(_) if self.frame_limit.is_some_and(|limit| state.frames >= limit) => {
+                        event_loop.exit()
+                    }
+                    Ok(_) => {}
+                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                        state.resize(state.config.width, state.config.height)
+                    }
+                    Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => {}
+                    Err(error) => {
+                        self.error = Some(error.to_string());
+                        event_loop.exit();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        if let Some(state) = &mut self.state {
+            state.persist(true);
+        }
+    }
+
+    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+        if let Some(state) = &self.state {
+            state.window.request_redraw();
+        }
+    }
+}
+
+pub fn run(
+    initial: SavedSettings,
+    frame_limit: Option<u32>,
+    settings: Option<SettingsStore>,
+) -> Result<(), Error> {
+    initial.validate()?;
+    let mut app = App {
+        initial,
+        settings,
+        state: None,
+        error: None,
+        frame_limit,
+    };
+    EventLoop::new()?.run_app(&mut app)?;
+    if let Some(error) = app.error {
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// 和窗口共用相同的计算与渲染管线，方便无窗口验证和保存结果。
+pub async fn snapshot(
+    config: OceanConfig,
+    time: f32,
+    path: &std::path::Path,
+    foam_view: u32,
+    optics: OpticsConfig,
+) -> Result<(), Error> {
+    let gpu = Gpu::new(&wgpu::Instance::default(), None).await?;
+    eprintln!("GPU: {}", gpu.name);
+    let ocean = Ocean::new(&gpu, config)?;
+    let (width, height) = (1280, 800);
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let foam_field = Foam::new(&gpu, &ocean.fields, config.resolution);
+    let mut renderer = Renderer::new(&gpu, &ocean, &foam_field, format, width, height);
+    renderer.update_optics(&gpu, &optics);
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("snapshot"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let bytes_per_row = (width * 4).div_ceil(256) * 256;
+    let staging = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("image readback"),
+        size: u64::from(bytes_per_row * height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    // Deterministic history warm-up: up to 60 s for wet sand, 8 s for open ocean.
+    let preset = if optics.beach {
+        Camera::beach(config.length)
+    } else {
+        Camera::new(config.length)
+    };
+    let mut camera = preset.uniform(config, width as f32 / height as f32);
+    camera.misc[2] = foam_view as f32;
+    let duration = time.min(if optics.beach && optics.shore.enabled {
+        60.0
+    } else {
+        8.0
+    });
+    let steps = (duration * 60.0).ceil() as u32;
+    if steps > 0 {
+        let dt = duration / steps as f32;
+        for i in 1..=steps {
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            // Roundoff must not put the last warm-up step beyond the target:
+            // the final render would otherwise look like a time rewind/reset.
+            let step_time = (time - duration + i as f32 * dt).min(time);
+            ocean.encode(&gpu, &mut encoder, step_time);
+            renderer.shore.encode(
+                &gpu,
+                &mut encoder,
+                &optics,
+                step_time,
+                false,
+                camera.ocean[3],
+            );
+            foam_field.encode(
+                &gpu,
+                &mut encoder,
+                FoamStep::new(
+                    config.resolution,
+                    config.length,
+                    camera.ocean[2] * camera.ocean[3],
+                    dt,
+                    FoamConfig::default(),
+                    false,
+                ),
+            );
+            gpu.queue.submit([encoder.finish()]);
+        }
+    }
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    ocean.encode(&gpu, &mut encoder, time);
+    renderer
+        .shore
+        .encode(&gpu, &mut encoder, &optics, time, false, camera.ocean[3]);
+    foam_field.encode(
+        &gpu,
+        &mut encoder,
+        FoamStep::new(
+            config.resolution,
+            config.length,
+            camera.ocean[2] * camera.ocean[3],
+            0.0,
+            FoamConfig::default(),
+            false,
+        ),
+    );
+    renderer.encode(
+        &gpu,
+        &mut encoder,
+        &texture.create_view(&Default::default()),
+        &camera,
+    );
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &staging,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    gpu.queue.submit([encoder.finish()]);
+    let foam_bytes = gpu.read_buffer(&foam_field.field, foam_field.field.size())?;
+    let diagnostics: Vec<[f32; 2]> = foam_bytes
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|b| bytemuck::pod_read_unaligned(b))
+        .collect();
+    let min_j = diagnostics
+        .iter()
+        .map(|v| v[1])
+        .fold(f32::INFINITY, f32::min);
+    let max_f = diagnostics.iter().map(|v| v[0]).fold(0.0_f32, f32::max);
+    let covered = diagnostics.iter().filter(|v| v[0] > 0.02).count();
+    eprintln!(
+        "Foam: J min={min_j:.3}, F max={max_f:.3}, coverage F>0.02={:.1}%",
+        100.0 * covered as f32 / diagnostics.len() as f32
+    );
+    let mapped = gpu.map_buffer(&staging)?;
+    if optics.beach && optics.shore.enabled {
+        let bytes = gpu.read_buffer(
+            &renderer.shore.field,
+            u64::from(super::shore::RESOLUTION * super::shore::RESOLUTION) * 16,
+        )?;
+        let samples: Vec<[f32; 4]> = bytes
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|b| bytemuck::pod_read_unaligned(b))
+            .collect();
+        let foam = samples.iter().map(|v| v[0]).fold(0.0_f32, f32::max);
+        let wet = samples
+            .iter()
+            .filter(|v| v[2] < 0.005 && v[1] > 0.1)
+            .count();
+        eprintln!("Shore: foam max={foam:.3}, exposed wet sand cells={wet}");
+    }
+    let pixels: Vec<u8> = mapped
+        .chunks_exact(bytes_per_row as usize)
+        .flat_map(|row| row[..(width * 4) as usize].iter().copied())
+        .collect();
+    let mut png = png::Encoder::new(
+        std::io::BufWriter::new(std::fs::File::create_new(path)?),
+        width,
+        height,
+    );
+    png.set_color(png::ColorType::Rgba);
+    png.set_depth(png::BitDepth::Eight);
+    png.write_header()?.write_image_data(&pixels)?;
+    eprintln!("Saved {} at t={time:.2}s", path.display());
+    Ok(())
+}

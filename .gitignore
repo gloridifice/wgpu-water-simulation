@@ -1,0 +1,31 @@
+# Rust build artifacts and rustfmt backups
+/target/
+**/*.rs.bk
+*.profraw
+*.profdata
+
+# Simulation exports in the repository root; keep bundled assets
+/*.csv
+/*.png
+
+# Local ocean settings, recovery backups, and temporary writes
+/ocean-settings.json
+/ocean-settings.invalid-*.json
+/.ocean-settings-*.tmp
+/water-simulation/ocean-settings.json
+/water-simulation/ocean-settings.invalid-*.json
+/water-simulation/.ocean-settings-*.tmp
+
+# Local IDE state and editor temporary files
+/.idea/
+/.vs/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Keep Cargo.lock: this repository ships runnable applications.
