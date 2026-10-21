@@ -19,6 +19,10 @@ pub const VIEW_NAMES: [&str; 6] = [
 #[serde(default)]
 pub struct ShoreConfig {
     pub enabled: bool,
+    pub filter_enabled: bool,
+    pub filter_cutoff: f32,
+    pub filter_transition: f32,
+    pub normal_strength: f32,
     pub breaking_depth: f32,
     pub generation: f32,
     pub decay: f32,
@@ -29,6 +33,10 @@ impl Default for ShoreConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            filter_enabled: true,
+            filter_cutoff: 12.0,
+            filter_transition: 12.0,
+            normal_strength: 1.0,
             breaking_depth: 2.0,
             generation: 4.0,
             decay: 0.45,
@@ -40,6 +48,9 @@ impl Default for ShoreConfig {
 impl ShoreConfig {
     pub fn validate(self) -> Result<(), String> {
         for (name, value, low, high) in [
+            ("SWE filter cutoff", self.filter_cutoff, 0.0, 512.0),
+            ("SWE filter transition", self.filter_transition, 0.0, 512.0),
+            ("shore normal strength", self.normal_strength, 0.0, 3.0),
             ("breaking depth", self.breaking_depth, 0.5, 5.0),
             ("shore foam generation", self.generation, 0.0, 15.0),
             ("shore foam decay", self.decay, 0.0, 4.0),
@@ -64,6 +75,8 @@ pub struct ShoreUniform {
     pub domain: [f32; 4],
     pub timing: [f32; 4],
     pub coupling: [f32; 4],
+    pub filter: [f32; 4],
+    pub visual: [f32; 4],
     pub options: [f32; 4],
 }
 pub struct Shore {
@@ -243,10 +256,18 @@ impl Shore {
             ],
             timing: [time, 0.0, c.decay, c.drying_time],
             coupling: [self.fft_resolution as f32, self.length, gain, 1.0],
+            filter: [
+                f32::from(c.filter_enabled),
+                c.filter_cutoff,
+                c.filter_transition,
+                0.0,
+            ],
+            visual: [c.normal_strength, 0.0, 0.0, 0.0],
             options: [c.generation, c.view as f32, RESOLUTION as f32, 0.0],
         };
         let changed = self.last.is_none_or(|old| {
-            old.terrain != s.terrain
+            old.filter != s.filter
+                || old.terrain != s.terrain
                 || old.waves[2..] != s.waves[2..]
                 || old.domain != s.domain
                 || time < old.timing[0]
@@ -507,7 +528,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     let gain = 0.0;
     let advance = |shore: &mut Shore, optics: &OpticsConfig, time, reset, gain| {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        ocean.encode(gpu, &mut encoder, time);
+        ocean.encode_filtered(gpu, &mut encoder, time, &optics.shore);
         shore.encode(gpu, &mut encoder, optics, time, reset, gain);
         gpu.queue.submit([encoder.finish()]);
     };
@@ -622,6 +643,26 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
         return Err("SWE disable failed".into());
     }
     optics.shore.enabled = true;
+    advance(&mut shore, &optics, 24.1, false, gain);
+    let before_normal_edit = read(&shore)?;
+    optics.shore.normal_strength = 0.0;
+    advance(&mut shore, &optics, 24.1, false, gain);
+    if shore.last.unwrap().options[3] != 0.0 || read(&shore)? != before_normal_edit {
+        return Err("render-only normal edit changed SWE history".into());
+    }
+    optics.shore.normal_strength = 1.0;
+    optics.shore.filter_cutoff = 3.0;
+    advance(&mut shore, &optics, 24.1, false, gain);
+    if shore.last.unwrap().options[3] != 1.0 {
+        return Err("SWE filter edit did not reset history".into());
+    }
+    optics.shore.filter_enabled = false;
+    advance(&mut shore, &optics, 24.1, false, gain);
+    if shore.last.unwrap().options[3] != 1.0 {
+        return Err("SWE filter toggle did not reset history".into());
+    }
+    optics.shore.filter_enabled = true;
+    optics.shore.filter_cutoff = 12.0;
     let gain = 2.0;
     for slope in [0.01, 1.0] {
         optics.beach_slope = slope;
@@ -688,6 +729,14 @@ mod tests {
     #[test]
     fn rejects_singular_and_nonfinite_controls() {
         for c in [
+            ShoreConfig {
+                filter_cutoff: f32::NAN,
+                ..Default::default()
+            },
+            ShoreConfig {
+                filter_transition: -1.0,
+                ..Default::default()
+            },
             ShoreConfig {
                 breaking_depth: 0.0,
                 ..Default::default()

@@ -40,7 +40,7 @@ fn image(
         mapped_at_creation: false,
     });
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    ocean.encode(gpu, &mut encoder, 0.0);
+    ocean.encode_filtered(gpu, &mut encoder, 0.0, &optics.shore);
     renderer.encode(
         gpu,
         &mut encoder,
@@ -335,7 +335,7 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
     renderer.update_optics(gpu, &settings);
     for i in 0..=1440 {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        ocean.encode(gpu, &mut encoder, i as f32 / 60.0);
+        ocean.encode_filtered(gpu, &mut encoder, i as f32 / 60.0, &settings.shore);
         renderer
             .shore
             .encode(gpu, &mut encoder, &settings, i as f32 / 60.0, i == 0, 0.22);

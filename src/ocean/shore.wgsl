@@ -5,6 +5,8 @@ struct ShoreParams {
     domain: vec4<f32>,  // origin X/Z, extent X/Z
     timing: vec4<f32>,  // time, dt, foam decay /s, wetness drying seconds
     coupling: vec4<f32>, // FFT resolution, tile length, height gain, time interpolation
+    filter_settings: vec4<f32>, // enabled, rejected wavelength, transition width, padding
+    visual: vec4<f32>, // normal detail strength (render only), reserved
     options: vec4<f32>, // foam generation /s, debug view, resolution, reset
 }
 

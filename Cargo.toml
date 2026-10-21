@@ -10,7 +10,7 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 
 [features]
 default = []
-ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json"]
+ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:egui", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:ron"]
 
 [dependencies.wgpu]
 version = "27.0.1"
@@ -44,6 +44,7 @@ required-features = ["ocean"]
 
 [dependencies.egui]
 version = "0.33.3"
+features = ["serde"]
 optional = true
 
 [dependencies.egui-winit]
@@ -61,4 +62,13 @@ optional = true
 
 [dependencies.serde_json]
 version = "1.0"
+optional = true
+
+[dependencies.egui_dock]
+version = "0.18.0"
+features = ["serde"]
+optional = true
+
+[dependencies.ron]
+version = "0.8"
 optional = true

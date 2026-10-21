@@ -5,6 +5,7 @@ pub mod verify;
 pub mod viewer;
 
 mod gui;
+mod theme;
 
 mod color_editor;
 pub mod foam;

@@ -113,8 +113,26 @@ fn foam_detail(grid: vec2<f32>) -> f32 {
     // Fade subpixel detail to its mean to avoid sparkling at distance.
     return mix(noise, 0.5, smoothstep(0.5, 2.0, length(fwidth(p))));
 }
+// Render-only high-frequency slope: subtract a wider finite difference from
+// the local FFT slope. This is independent of the SWE inlet filter and does
+// not add displacement or momentum. Derivatives suppress subpixel detail.
+fn fft_detail_slope(grid: vec2<f32>, step: f32) -> vec2<f32> {
+    let dx = sample_field(grid + vec2(step, 0.0), 0u) - sample_field(grid - vec2(step, 0.0), 0u);
+    let dz = sample_field(grid + vec2(0.0, step), 0u) - sample_field(grid - vec2(0.0, step), 0u);
+    return vec2(dx, dz) * camera.ocean.w / (2.0 * step * camera.ocean.y / camera.ocean.x);
+}
+fn shore_detail_normal(base: vec3<f32>, grid: vec2<f32>, world: vec3<f32>, depth: f32, footprint: f32) -> vec3<f32> {
+    if !shore_active(shore) || shore.visual.x <= 0.0 { return base; }
+    let weight = (1.0 - ocean_weight(world.xz, shore)) * smoothstep(0.02, 0.25, depth)
+        * (1.0 - smoothstep(0.5, 2.0, footprint)) * shore.visual.x;
+    if weight <= 0.0 { return base; }
+    let slope = (fft_detail_slope(grid, 1.0) - fft_detail_slope(grid, 4.0)) * weight;
+    return normalize(vec3(base.x - base.y * slope.x, base.y, base.z - base.y * slope.y));
+}
+
 @fragment
 fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
+    let detail_footprint = max(length(dpdx(input.grid)), length(dpdy(input.grid)));
     let shore_history = sample_shore_history(input.world.xz);
     let local_depth = max(input.world.y - bottom_height(input.world.xz, shore), 0.0);
     if shore_active(shore) {
@@ -170,7 +188,7 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
         if j < 1.0 { return vec4(mix(vec3(1.0, 0.25, 0.02), vec3(1.0), j), 1.0); }
         return vec4(mix(vec3(1.0), vec3(0.02, 0.3, 0.9), clamp(j - 1.0, 0.0, 1.0)), 1.0);
     }
-    let normal = normalize(input.normal);
+    let normal = shore_detail_normal(normalize(input.normal), input.grid, input.world, local_depth, detail_footprint);
     let view = normalize(camera.eye.xyz - input.world);
     let facing = max(dot(normal, view), 0.0);
     let fresnel = (0.02 + 0.98 * pow(1.0 - facing, 5.0)) * optics.options.y;

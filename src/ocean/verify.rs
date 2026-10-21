@@ -26,11 +26,11 @@ fn reference(config: OceanConfig, time: f32) -> Vec<[f64; 2]> {
             let b = mul([other[0].into(), -f64::from(other[1])], [p[0], -p[1]]);
             let h = [a[0] + b[0], a[1] + b[1]];
             frequency[i] = h;
-            let minimum = 8.0
-                * (config.length / config.resolution as f32)
-                    .max(3.0 * config.length / super::shore::RESOLUTION as f32);
+            let minimum = super::shore::ShoreConfig::default().filter_cutoff;
             let wavelength = TAU / k.max(1e-6);
-            let t = ((wavelength - f64::from(minimum)) / f64::from(minimum)).clamp(0.0, 1.0);
+            let t = ((wavelength - f64::from(minimum))
+                / f64::from(super::shore::ShoreConfig::default().filter_transition))
+            .clamp(0.0, 1.0);
             let filter = t * t * (3.0 - 2.0 * t);
             frequency[3 * count + i] = [h[0] * filter, h[1] * filter];
             if k > 0.0 {
@@ -124,6 +124,49 @@ fn verify_coupling(gpu: &Gpu) -> Result<(), Error> {
                     }
                 }
             }
+        }
+    }
+    // Compare filter modes at identical time: far-ocean channels must stay identical.
+    let ocean = Ocean::new(gpu, config)?;
+    let mut unfiltered = Vec::new();
+    for (index, enabled, cutoff, width) in [
+        (0, false, 12.0, 12.0),
+        (1, true, 0.0, 0.0),
+        (2, true, 512.0, 0.0),
+        (3, true, 3.0, 6.0),
+    ] {
+        let shore = super::shore::ShoreConfig {
+            filter_enabled: enabled,
+            filter_cutoff: cutoff,
+            filter_transition: width,
+            ..Default::default()
+        };
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        ocean.encode_filtered(gpu, &mut encoder, 1.25, &shore);
+        gpu.queue.submit([encoder.finish()]);
+        let actual = ocean.read_fields(gpu)?;
+        if index == 0 {
+            unfiltered = actual.clone();
+        }
+        if actual[..3 * count] != unfiltered[..3 * count] {
+            return Err("SWE filter changed FFT render channels".into());
+        }
+        if index <= 1
+            && actual[3 * count..4 * count]
+                .iter()
+                .zip(&actual[..count])
+                .any(|(a, b)| (a[0] - b[0]).abs() > 1e-5)
+        {
+            return Err("disabled/zero cutoff lost inlet elevation".into());
+        }
+        if index == 1 && actual != unfiltered {
+            return Err("zero cutoff does not pass all modes".into());
+        }
+        if index == 2 && actual[3 * count..].iter().flatten().any(|v| v.abs() > 1e-6) {
+            return Err("hard cutoff did not reject inlet modes".into());
+        }
+        if actual.iter().flatten().any(|v| !v.is_finite()) {
+            return Err("invalid configurable filter output".into());
         }
     }
     println!(

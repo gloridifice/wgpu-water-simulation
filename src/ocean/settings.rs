@@ -114,6 +114,16 @@ impl SavedSettings {
                 "--no-skylight" | "--skylight" => self.optics.sky.enabled = optics.sky.enabled,
                 "--water-view" => self.optics.view = optics.view,
                 "--shore-view" => self.optics.shore.view = optics.shore.view,
+                "--swe-filter-cutoff" => {
+                    self.optics.shore.filter_cutoff = optics.shore.filter_cutoff
+                }
+                "--swe-filter-transition" => {
+                    self.optics.shore.filter_transition = optics.shore.filter_transition
+                }
+                "--shore-normal-strength" => {
+                    self.optics.shore.normal_strength = optics.shore.normal_strength
+                }
+                "--no-swe-filter" => self.optics.shore.filter_enabled = false,
                 "--no-shore" => self.optics.shore.enabled = false,
                 _ => {}
             }
@@ -332,6 +342,9 @@ mod tests {
         s.optics.beach = true;
         s.optics.beach_slope = 0.23;
         s.optics.shore_x = -19.0;
+        s.optics.shore.filter_enabled = false;
+        s.optics.shore.filter_cutoff = 3.0;
+        s.optics.shore.filter_transition = 5.0;
         s.optics.shore.drying_time = 27.0;
         s.optics.shore.view = 4;
         s.camera.yaw = 1.6;

@@ -22,6 +22,10 @@ Usage: cargo run --release --features ocean --bin ocean -- [options]
   --snapshot PATH  Render an offscreen PNG; file must not exist
   --beach         Sloped sand beach preset, shallow-to-deep water and overview camera
   --shore-view N  0=shaded, 1=water depth, 2=flow, 3=shore foam, 4=sand wetness, 5=stranded foam
+  --swe-filter-cutoff M    Reject inlet wavelengths <= M (0..512, default: 12)
+  --swe-filter-transition M  Transition width in meters (0..512, default: 12)
+  --shore-normal-strength N  Nearshore FFT normal detail (0..3, default: 1)
+  --no-swe-filter  Pass all FFT waves into SWE
   --no-shore      Disable shore waves and wet sand history
   --seabed-depth M Seabed depth below mean water level (default: 6)
   --sigma-t R,G,B  Linear RGB extinction per meter (default: 0.18,0.06,0.025)
@@ -104,6 +108,10 @@ fn run() -> Result<(), Error> {
             "--beach" => optics = OpticsConfig::beach_scene(),
             "--shore-view" => optics.shore.view = value(&mut args, &arg)?,
             "--shore-amplitude" | "--shore-period" => return Err("Independent shore waves were removed; use FFT --amplitude / --wind and Height gain".into()),
+            "--swe-filter-cutoff" => optics.shore.filter_cutoff = value(&mut args, &arg)?,
+            "--swe-filter-transition" => optics.shore.filter_transition = value(&mut args, &arg)?,
+            "--shore-normal-strength" => optics.shore.normal_strength = value(&mut args, &arg)?,
+            "--no-swe-filter" => optics.shore.filter_enabled = false,
             "--no-shore" => optics.shore.enabled = false,
             "--seabed-depth" => optics.depth = value(&mut args, &arg)?,
             "--sigma-t" => optics.sigma_t = rgb(&mut args, &arg)?,

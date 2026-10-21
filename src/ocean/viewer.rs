@@ -10,7 +10,7 @@ use glam::{Mat4, Vec3};
 use std::{sync::Arc, time::Instant};
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
@@ -106,8 +106,7 @@ struct State {
     gui: Gui,
     time: f32,
     paused: bool,
-    dragging: bool,
-    cursor: Option<(f64, f64)>,
+    render_size: [u32; 2],
     last: Instant,
     title_time: Instant,
     title_frames: u32,
@@ -151,8 +150,7 @@ impl State {
             camera: Camera::new(ocean_config.length),
             time: 0.0,
             paused: false,
-            dragging: false,
-            cursor: None,
+            render_size: [0, 0],
             last: Instant::now(),
             title_time: Instant::now(),
             title_frames: 0,
@@ -190,7 +188,6 @@ impl State {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.gpu.device, &self.config);
-        self.renderer.resize(&self.gpu.device, width, height);
     }
 
     fn draw(&mut self) -> Result<bool, wgpu::SurfaceError> {
@@ -219,8 +216,8 @@ impl State {
                         &ocean,
                         &foam_field,
                         self.config.format,
-                        self.config.width,
-                        self.config.height,
+                        self.gui.viewport_size[0],
+                        self.gui.viewport_size[1],
                     );
                     self.ocean = ocean;
                     self.foam_field = foam_field;
@@ -229,13 +226,20 @@ impl State {
                 Err(error) => self.gui.error = Some(error.to_string()),
             }
         }
+        if self.render_size != self.gui.viewport_size {
+            self.render_size = self.gui.viewport_size;
+            self.gui.resize_view(&self.gpu, self.config.format);
+            self.renderer
+                .resize(&self.gpu.device, self.render_size[0], self.render_size[1]);
+        }
         let force_save = std::mem::take(&mut self.gui.save_now);
         self.persist(force_save);
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
-        self.ocean.encode(&self.gpu, &mut encoder, self.time);
+        self.ocean
+            .encode_filtered(&self.gpu, &mut encoder, self.time, &self.gui.optics.shore);
         let camera = self.camera.uniform(
             self.ocean.config,
-            self.config.width as f32 / self.config.height as f32,
+            self.render_size[0] as f32 / self.render_size[1] as f32,
         );
         let reset = std::mem::take(&mut self.gui.clear_foam) || self.time < self.foam_time;
         let dt = if reset {
@@ -266,7 +270,7 @@ impl State {
             camera.ocean[3],
         );
         self.renderer
-            .encode(&self.gpu, &mut encoder, &view, &camera);
+            .encode(&self.gpu, &mut encoder, &self.gui.viewport_view, &camera);
         let extra = self
             .gui
             .encode(&self.window, &self.gpu, &mut encoder, &view, gui_output);
@@ -346,16 +350,6 @@ impl ApplicationHandler for App {
             return;
         }
         let response = state.gui.input.on_window_event(&state.window, &event);
-        // 即使鼠标在面板内释放，也必须结束此前的相机拖动。
-        if matches!(
-            &event,
-            WindowEvent::MouseInput {
-                state: ElementState::Released,
-                ..
-            }
-        ) {
-            state.dragging = false;
-        }
         if response.consumed
             && matches!(
                 &event,
@@ -366,8 +360,6 @@ impl ApplicationHandler for App {
                     | WindowEvent::Ime(_)
             )
         {
-            state.dragging = false;
-            state.cursor = None;
             return;
         }
         match event {
@@ -375,30 +367,6 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::Focused(false) => {
                 state.persist(true);
-                state.dragging = false;
-                state.cursor = None;
-            }
-            WindowEvent::MouseInput {
-                button: MouseButton::Left,
-                state: pressed,
-                ..
-            } => state.dragging = pressed == ElementState::Pressed,
-            WindowEvent::CursorMoved { position, .. } => {
-                if let Some((x, y)) = state.cursor.filter(|_| state.dragging) {
-                    state.camera.yaw -= (position.x - x) as f32 * 0.005;
-                    state.camera.pitch =
-                        (state.camera.pitch + (position.y - y) as f32 * 0.005).clamp(0.07, 1.35);
-                }
-                state.cursor = Some((position.x, position.y));
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let amount = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 50.0,
-                };
-                let length = state.ocean.config.length;
-                state.camera.distance = (state.camera.distance * (-amount * 0.1).exp())
-                    .clamp(length * 0.12, length * 0.95);
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.physical_key {
@@ -544,7 +512,7 @@ pub async fn snapshot(
             // Roundoff must not put the last warm-up step beyond the target:
             // the final render would otherwise look like a time rewind/reset.
             let step_time = (time - duration + i as f32 * dt).min(time);
-            ocean.encode(&gpu, &mut encoder, step_time);
+            ocean.encode_filtered(&gpu, &mut encoder, step_time, &optics.shore);
             renderer.shore.encode(
                 &gpu,
                 &mut encoder,
@@ -569,7 +537,7 @@ pub async fn snapshot(
         }
     }
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    ocean.encode(&gpu, &mut encoder, time);
+    ocean.encode_filtered(&gpu, &mut encoder, time, &optics.shore);
     renderer
         .shore
         .encode(&gpu, &mut encoder, &optics, time, false, camera.ocean[3]);

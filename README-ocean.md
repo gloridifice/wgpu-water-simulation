@@ -29,6 +29,8 @@ cargo run --release --features ocean --bin ocean -- --resolution 256 --wind 18 -
 
 ## egui 参数面板
 
+egui 控件和 egui_dock 使用从 `wgpu_pbr` 移植的深色主题与 MiSans 字体。主题保存在 `assets/egui_themes/default.ron`，字体保存在 `assets/fonts/MiSans-Normal.ttf`；两者在编译时内嵌，运行时无需访问原项目或从特定目录启动。修改主题后需重新编译。
+
 启动后左上角显示 Ocean controls。面板使用英文标签，可拖动标题栏移动；小窗口内可以滚动。修改频谱、尺寸或种子后点击 **Apply changes**；播放和外观参数即时生效。Defaults 只恢复待应用值，再点击 Apply。
 
 | 控件 | 含义 |
@@ -274,7 +276,7 @@ CPU 测试包含零距离、零消光、纯衰减、RGB 独立性、源项缩放
 
 ### 沙滩观察场景
 
-启动时添加 `--beach`，或点击 Water optics 面板的 **Beach scene**，即可载入沙坡、水体光学参数和俯视斜向岸线的相机预设。预设使用较小波幅，手动 S 为零、天光开启，方便比较从可见沙底的浅水到深色深水的变化。
+启动时添加 `--beach`，或点击 Shallow water (SWE) 面板的 **Beach scene**，即可载入沙坡、水体光学参数和俯视斜向岸线的相机预设。预设使用较小波幅，手动 S 为零、天光开启，方便比较从可见沙底的浅水到深色深水的变化。
 
 沙坡是实际几何平面 `y = -beach_slope * (x - shore_x)`，负 X 为陆地、正 X 为深水。面板 **Beach slope** 控制坡度，**Shore X** 移动平均水位岸线，**Beach camera** 恢复观察角度；取消 **Sloped sand** 返回水平棋盘海底。沙坡启用时平底深度控件禁用，实际水深由坡面决定。上述设置支持自动保存。
 
@@ -357,7 +359,7 @@ cargo run --release --features ocean --bin ocean -- --beach --shore-view 5 --sna
 cargo run --release --features ocean --bin ocean -- --beach --no-shore
 ```
 
-Water optics → Sloped sand → **Shore waves and wet sand** contains the SWE controls and opens by default. FFT Phillips power, wind direction and spectral length now drive both the ocean and the SWE inlet. Height gain scales inlet elevation and both momentum components together. The independent shore amplitude/period controls have been removed; old saved fields are ignored. The retired `--shore-amplitude` / `--shore-period` flags report a migration message. Allow roughly 15–25 simulated seconds for the default incoming waves to reach the shore and establish repeated run-up. CLI overrides belong after `--beach`, which installs the beach preset.
+The independent **Shallow water (SWE)** panel contains the SWE, foam, wet-sand and beach controls and opens by default. FFT Phillips power, wind direction and spectral length now drive both the ocean and the SWE inlet. Height gain scales inlet elevation and both momentum components together. The independent shore amplitude/period controls have been removed; old saved fields are ignored. The retired `--shore-amplitude` / `--shore-period` flags report a migration message. Allow roughly 15–25 simulated seconds for the default incoming waves to reach the shore and establish repeated run-up. CLI overrides belong after `--beach`, which installs the beach preset.
 
 | Shore view | Meaning |
 | --- | --- |
@@ -396,7 +398,14 @@ omega = sqrt(g |k|)
 
 `Q` is depth-integrated horizontal momentum in m²/s, derived from linear continuity. It is not the FFT choppiness displacement and not the time derivative of that displacement. Both signed branches are retained, so the boundary carries the prescribed external FFT field, including its directional distribution; this is a relaxation boundary, not a characteristic decomposition that injects only incoming waves.
 
-The three boundary spectra `(H, Qx, Qz)` receive the same smooth low-pass. With `lambda_min = 8 * max(FFT cell size, alongshore SWE cell size)`, wavelengths at or below lambda_min are rejected, and those above 2*lambda_min pass fully. Default 128² / 128 m input gives a 12–24 m transition. Very coarse FFT grids can have no resolvable coupling modes. The filter does not adapt to an unusually coarse cross-shore grid on very gentle slopes.
+The three boundary spectra `(H, Qx, Qz)` receive the same configurable smooth low-pass. In **Shallow water (SWE) → FFT input filter**, **Filter short waves** enables it; **Reject wavelength <= (m)** sets the rejected wavelength limit, and **Transition width (m)** sets the smooth transition above that limit. The default is a fixed 12 m cutoff plus a 12 m transition: wavelengths <= 12 m are rejected and >= 24 m pass fully. Unlike the earlier automatic rule, these values do not change with FFT resolution. A zero transition gives a hard cutoff. Disabling the filter passes all FFT modes. The **3–6 m** preset admits more short waves for comparison, but the first-order SWE grid can still dissipate unresolved waves and does not recover their dispersion.
+
+Filter changes apply immediately and reset SWE water/foam/sand history, while FFT time keeps advancing. Allow approximately 15–25 simulated seconds for arrival at the default shoreline. The settings persist with the other controls. No additional short-wave normal detail is added. CLI equivalents (put overrides after `--beach`):
+
+```powershell
+cargo run --release --features ocean --bin ocean -- --beach --swe-filter-cutoff 3 --swe-filter-transition 3
+cargo run --release --features ocean --bin ocean -- --beach --no-swe-filter
+```
 
 The six spectra share the existing IFFT stages. SWE samples channels 3–5 at `(world / FFT_tile_length + 0.5) * FFT_resolution`, with periodic wrapping and bilinear interpolation. This matches the ocean's undeformed world-coordinate convention. It interpolates the previous and current FFT boundary frames at each SWE substep; no FFT or momentum readback to the CPU is required.
 
@@ -423,3 +432,21 @@ Pause freezes simulation and texture flow. R, Restart time and **Reset shallow w
 `--verify` exercises the actual GPU shader: lake at rest, local pulse mass conservation away from the inlet, propagation and foam transport in both axes, stranded deposition/decay/rewetting, extreme slope/amplitude settings, terrain reset, run-up, finite/nonnegative states, pause, reset and disable. Raster verification prewarms 24 seconds and checks water history at two target sizes. The FFT test compares all six channels to a double-precision direct DFT and checks analytic oblique waves in both directions. An inlet probe checks production world-coordinate wrapping, time interpolation and gain against CPU samples. Zero FFT power must generate no shoreline flow/foam. Existing optics and sky tests remain enabled. `cargo test --all-features` covers configuration compatibility and the existing CPU suites.
 
 The heightfield cannot overturn or produce airborne spray. First-order numerical diffusion and the coarse alongshore spacing limit small-scale hydrodynamic detail; the lace texture supplies visual detail. Refraction remains the existing optical path implementation. Performance depends on substep count, mesh resolution and GPU; no frame-rate guarantee is implied.
+
+
+### Dock 参数工作区
+
+交互窗口使用 `egui_dock 0.18`（匹配 egui 0.33），替代原有浮动参数窗口：
+
+- 左侧：Ocean controls，下方 Jacobian foam。
+- 中央：Ocean view，按实际区域和显示缩放比例创建渲染目标；拖动旋转相机，滚轮缩放。
+- 右侧：Shallow water (SWE) / Water optics 标签，点击切换。
+
+可以拖动标签重新停靠、拖动分隔线调整宽度，顶部 **Reset layout** 恢复默认布局。参数区各自滚动，不会触发相机旋转或缩放。为避免丢失入口，标签不提供关闭或浮动到独立窗口的操作。布局在当前运行期间保留，重启恢复默认；已有参数保存方式保持不变。命令行离屏截图仍输出完整海面，不包含 Dock 界面。
+
+
+### 近岸小波法线
+
+SWE 面板的 **Small-wave normals → Normal detail strength** 控制近岸视觉细节，默认 1，范围 0～3，0 为关闭。调整即时生效，不重置 SWE；参数随其他设置保存。CLI 对应 `--shore-normal-strength`（放在 `--beach` 后）。
+
+片元着色器读取未过滤 FFT 水位，以 1 格与 4 格跨度的中心差分坡度之差构造近似高频细节；它独立于 SWE 输入过滤，不是严格的频域带通。细节按近岸混合权重补入法线，在 2～25 厘米水深内渐隐，并按像素足迹抑制远处闪烁。只影响水面反射、高光及表面光照，不修改几何位移、水位、流动、泡沫生成和沙滩残留。需启用 Water optics 的 Sky reflection and highlights；物理调试视图保持原样。这不是短波在 SWE 中的真实传播或折射。

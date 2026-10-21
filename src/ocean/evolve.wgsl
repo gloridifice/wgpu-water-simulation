@@ -1,4 +1,4 @@
-struct Params { n: u32, time: f32, length: f32, min_wavelength: f32 }
+struct Params { n: u32, time: f32, length: f32, min_wavelength: f32, filter_params: vec4<f32> }
 @group(0) @binding(0) var<storage, read> initial: array<vec4<f32>>;
 @group(0) @binding(1) var<storage, read_write> output: array<vec2<f32>>;
 @group(0) @binding(2) var<uniform> params: Params;
@@ -33,7 +33,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // Continuity gives Q(k) = (omega/k) * k_hat * (b-a), not displacement.
     // Both elevation and momentum receive exactly the same spatial low-pass.
     let wavelength = 6.2831853 / max(k, 0.000001);
-    let lowpass = smoothstep(params.min_wavelength, 2.0 * params.min_wavelength, wavelength);
+    var lowpass = 1.0;
+    if params.filter_params.y > 0.5 {
+        if params.filter_params.x > 0.0 {
+            lowpass = smoothstep(params.min_wavelength, params.min_wavelength + params.filter_params.x, wavelength);
+        } else {
+            lowpass = select(0.0, 1.0, wavelength > params.min_wavelength);
+        }
+    }
     let flux = (b-a) * sqrt(9.81*k) / max(k*k,0.00000001) * lowpass;
     output[3u*n*n+index] = h * lowpass;
     output[4u*n*n+index] = flux * mode.z;

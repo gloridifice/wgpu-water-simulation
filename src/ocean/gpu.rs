@@ -162,9 +162,11 @@ impl Ocean {
                 config.resolution,
                 0,
                 config.length.to_bits(),
-                (8.0 * (config.length / config.resolution as f32)
-                    .max(3.0 * config.length / super::shore::RESOLUTION as f32))
-                .to_bits(),
+                12.0_f32.to_bits(),
+                12.0_f32.to_bits(),
+                1.0_f32.to_bits(),
+                0,
+                0,
             ],
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
@@ -214,8 +216,30 @@ impl Ocean {
     }
 
     pub fn encode(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, time: f32) {
+        self.encode_filtered(gpu, encoder, time, &super::shore::ShoreConfig::default());
+    }
+
+    /// Filter only the three SWE input channels; far-ocean rendering is unchanged.
+    pub fn encode_filtered(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        time: f32,
+        shore: &super::shore::ShoreConfig,
+    ) {
+        let params = [
+            self.config.resolution,
+            time.to_bits(),
+            self.config.length.to_bits(),
+            shore.filter_cutoff.to_bits(),
+            shore.filter_transition.to_bits(),
+            f32::from(shore.filter_enabled).to_bits(),
+            0,
+            0,
+        ];
         gpu.queue
-            .write_buffer(&self.time_buffer, 4, bytemuck::bytes_of(&time));
+            .write_buffer(&self.time_buffer, 0, bytemuck::cast_slice(&params));
+
         let count = self.config.resolution.pow(2);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -349,7 +373,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
