@@ -69,17 +69,20 @@ fn ground_fragment(input: GroundOut) -> @location(0) vec4<f32> {
             wetness = sample_shore_history(input.world.xz).y;
             // Submerged sand outside the narrow history strip remains wet.
             wetness = max(wetness, smoothstep(0.0, 0.15, -input.world.y));
-            if shore.options.y > 4.5 { return vec4(vec3(sample_shore_extra(input.world.xz).x), 1.0); }
-            if shore.options.y > 3.5 { return vec4(vec3(wetness), 1.0); }
+            if shore.options.y > 4.5 && shore.options.y < 5.5 { return vec4(vec3(foam_density_level(sample_shore_extra(input.world.xz).x,shore)), 1.0); }
+            if shore.options.y > 3.5 && shore.options.y < 4.5 { return vec4(vec3(wetness), 1.0); }
         }
         albedo *= mix(1.0, select(0.70, 0.53, shore_active(shore)), wetness);
     }
-    if shore_active(shore) {
+    if shore_active(shore) && shore.options.y < 5.5 {
         let stranded=sample_shore_extra(input.world.xz).x;
         let lace=lace_sample(input.world.xz/9.0);
         let aa=max(0.03,fwidth(lace));
-        let mask=smoothstep(1.0-stranded-aa,1.0-stranded+0.3+aa,lace)*smoothstep(0.0,0.02,stranded);
-        albedo=mix(albedo,vec3(0.82),mask*camera.misc.x);
+        // Concentration controls opacity, not a threshold against the lace.
+        // A threshold erased dilute deposits (especially after mip filtering).
+        let pattern=mix(0.35,1.0,smoothstep(0.2-aa,0.75+aa,lace));
+        let mask=pow(foam_density_level(stranded,shore),0.65)*pattern*smoothstep(0.0,0.02,stranded);
+        albedo=mix(albedo,shore.stranded_foam_color.rgb,mask*camera.misc.x);
     }
     let lighting = 0.35 + 0.65 * max(dot(normal, camera.sun.xyz), 0.0);
     var color = albedo * lighting;
@@ -88,6 +91,10 @@ fn ground_fragment(input: GroundOut) -> @location(0) vec4<f32> {
         let view = normalize(camera.eye.xyz - input.world);
         let half_vector = normalize(view + camera.sun.xyz);
         color += vec3(0.20, 0.22, 0.23) * wetness * pow(max(dot(normal, half_vector), 0.0), 100.0);
+    }
+    if shore_active(shore) && shore.options.y > 5.5 {
+        let stranded=sample_shore_extra(input.world.xz).x;
+        color=mix(color,foam_density_color(stranded,shore),smoothstep(0.0,0.01,stranded));
     }
     return vec4(color, 1.0);
 }

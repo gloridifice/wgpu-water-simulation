@@ -89,6 +89,7 @@ pub struct Gui {
     renderer: egui_wgpu::Renderer,
     pub draft: OceanConfig,
     pub speed: f32,
+    pub swe_timing: String,
     pub error: Option<String>,
     pub foam_settings: FoamConfig,
     pub clear_foam: bool,
@@ -146,6 +147,7 @@ impl Gui {
             renderer,
             draft: config,
             speed: 1.0,
+            swe_timing: "SWE GPU: waiting".into(),
             error: None,
             foam_settings: FoamConfig::default(),
             clear_foam: false,
@@ -401,13 +403,52 @@ Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                             });
                             let shore = &mut self.optics.shore;
                             ui.checkbox(&mut shore.enabled, "Enable shore waves");
+                            egui::ComboBox::from_label("SWE solver")
+                                .selected_text(if shore.order == 2 {"Second order (MUSCL + RK2)"} else {"First order (Euler)"})
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut shore.order, 1, "First order (Euler)");
+                                    ui.selectable_value(&mut shore.order, 2, "Second order (MUSCL + RK2)");
+                                });
+                            ui.label(&self.swe_timing);
+                            ui.small("GPU span includes SWE, foam and substep copies; excludes FFT/render.");
+                            ui.small("Changing solver resets SWE. Set normals to 0 for wave comparison.");
                             ui.small("Incoming waves follow FFT sea state and Height gain.");
+                            ui.separator();
+                            ui.heading("Foam colors");
+                            ui.horizontal(|ui| {
+                                ui.color_edit_button_rgb(&mut shore.water_foam_color);
+                                ui.label("Water foam");
+                            });
+                            ui.horizontal(|ui| {
+                                ui.color_edit_button_rgb(&mut shore.stranded_foam_color);
+                                ui.label("Stranded foam (sand)");
+                            });
+                            ui.horizontal(|ui| {
+                                if ui.button("Distinct defaults").clicked() {
+                                    shore.water_foam_color=[0.87,0.92,0.90];
+                                    shore.stranded_foam_color=[0.36,0.50,0.58];
+                                }
+                                if ui.button("Match previous colors").clicked() {
+                                    shore.water_foam_color=[0.87,0.92,0.90];
+                                    shore.stranded_foam_color=[0.82;3];
+                                }
+                            });
+                            if ui.button("Identify foam: water green / sand red").clicked() {
+                                shore.water_foam_color=[0.0,1.0,0.0];
+                                shore.stranded_foam_color=[1.0,0.0,0.0];
+                            }
+                            ui.small("Residue is the thin trail on exposed sand, not the wider water foam band.");
+                            ui.small("Live colors; no simulation reset. Water includes offshore foam.");
                             ui.separator();
                             ui.heading("Small-wave normals");
                             ui.add(egui::Slider::new(&mut shore.normal_strength, 0.0..=3.0).text("Normal detail strength"));
                             ui.small("0 = off, 1 = default. Live shading only; no SWE reset.");
                             ui.small("Fades out in thin water. Enable reflections in Water optics.");
                             ui.separator();
+                            ui.heading("FFT input");
+                            ui.add(egui::Slider::new(&mut shore.input_gain, 0.0..=3.0).text("FFT to SWE gain"));
+                            ui.small("Scales height and momentum together. 0 = no input; 1 = matched; 3 = triple.");
+                            ui.small("Changes reinitialize the whole SWE patch from the current FFT.");
                             ui.heading("FFT input filter");
                             ui.checkbox(&mut shore.filter_enabled, "Filter short waves");
                             ui.add_enabled_ui(shore.filter_enabled, |ui| {
@@ -426,7 +467,7 @@ Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                                 if ui.button("12–24 m default").clicked() { shore.filter_enabled=true; shore.filter_cutoff=12.0; shore.filter_transition=12.0; }
                                 if ui.button("3–6 m").clicked() { shore.filter_enabled=true; shore.filter_cutoff=3.0; shore.filter_transition=3.0; }
                             });
-                            ui.small("Live changes restart SWE history, not FFT time. Wait for waves to reach shore.");
+                            ui.small("Filter changes reinitialize SWE from FFT; shoreline flow still needs time to settle.");
                             ui.small("Height and momentum use the same filter. Far-ocean detail is unchanged.");
                             ui.separator();
 
@@ -436,12 +477,26 @@ Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                             );
                             ui.add(
                                 egui::Slider::new(&mut shore.generation, 0.0..=15.0)
-                                    .text("Shore foam / s"),
+                                    .text("Foam generation / s"),
                             );
                             ui.add(
                                 egui::Slider::new(&mut shore.decay, 0.0..=4.0)
                                     .text("Shore foam decay / s"),
                             );
+                            ui.add(
+                                egui::Slider::new(&mut shore.foam_compression_threshold, 0.0..=4.0)
+                                    .text("Foam compression threshold / s"),
+                            );
+                            ui.add(
+                                egui::Slider::new(&mut shore.foam_density_reference, 0.01..=20.0)
+                                    .logarithmic(true).text("Density color reference"),
+                            );
+                            if ui.button("Debug foam density: green / red").clicked() {
+                                shore.view = 6;
+                            }
+                            ui.small("Green = dilute; red = reference or higher. No texture in this view.");
+                            ui.small("Density is amount per surface area; convergence concentrates it.");
+                            ui.small("Color reference changes display only. Water and sand use the same scale.");
                             ui.add(
                                 egui::Slider::new(&mut shore.drying_time, 1.0..=120.0)
                                     .text("Sand drying time (s)"),

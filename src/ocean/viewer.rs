@@ -128,7 +128,7 @@ impl State {
         surface.configure(&gpu.device, &config);
         let ocean = Ocean::new(&gpu, ocean_config)?;
         let foam_field = Foam::new(&gpu, &ocean.fields, ocean_config.resolution);
-        let renderer = Renderer::new(
+        let mut renderer = Renderer::new(
             &gpu,
             &ocean,
             &foam_field,
@@ -136,6 +136,7 @@ impl State {
             config.width,
             config.height,
         );
+        renderer.shore.timer = super::gpu_timer::GpuTimer::new(&gpu);
         let gui = Gui::new(&window, &gpu, config.format, ocean_config);
         Ok(Self {
             gui,
@@ -199,6 +200,30 @@ impl State {
         }
         let frame = self.surface.get_current_texture()?;
         let view = frame.texture.create_view(&Default::default());
+        self.gui.swe_timing = if let Some(timer) = &mut self.renderer.shore.timer {
+            timer.poll(&self.gpu);
+            if timer.failed {
+                "SWE GPU: timestamp readback failed".into()
+            } else if self.paused || !self.gui.optics.beach || !self.gui.optics.shore.enabled {
+                "SWE GPU: idle (no simulation steps)".into()
+            } else if let Some(s) = timer
+                .latest
+                .filter(|s| s.order == self.gui.optics.shore.order)
+            {
+                format!(
+                    "SWE GPU: {:.3} ms | {} substeps | {:.1} ms simulated\n{:.3} ms/substep | order {} (last sample)",
+                    s.ms,
+                    s.substeps,
+                    s.simulated_dt * 1000.0,
+                    s.ms / s.substeps.max(1) as f64,
+                    s.order
+                )
+            } else {
+                "SWE GPU: waiting for current solver sample".into()
+            }
+        } else {
+            "SWE GPU: timestamps unsupported".into()
+        };
         let (gui_output, apply) = self.gui.frame(
             &self.window,
             self.ocean.config,
@@ -219,6 +244,7 @@ impl State {
                         self.gui.viewport_size[0],
                         self.gui.viewport_size[1],
                     );
+                    self.renderer.shore.timer = super::gpu_timer::GpuTimer::new(&self.gpu);
                     self.ocean = ocean;
                     self.foam_field = foam_field;
                     self.foam_time = self.time;

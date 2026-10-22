@@ -6,8 +6,21 @@ struct ShoreParams {
     timing: vec4<f32>,  // time, dt, foam decay /s, wetness drying seconds
     coupling: vec4<f32>, // FFT resolution, tile length, height gain, time interpolation
     filter_settings: vec4<f32>, // enabled, rejected wavelength, transition width, padding
+    solver: vec4<f32>, // order (1/2), RK stage (0/1/2), render height gain, SWE input gain
     visual: vec4<f32>, // normal detail strength (render only), reserved
+    density: vec4<f32>, // compression threshold /s, display reference (amount/area), reserved
+    water_foam_color: vec4<f32>, // linear RGB, render only
+    stranded_foam_color: vec4<f32>, // linear RGB, render only
     options: vec4<f32>, // foam generation /s, debug view, resolution, reset
+}
+
+// Density is not clipped in the solver; this reference only sets the color scale.
+fn foam_density_level(amount: f32, s: ShoreParams) -> f32 {
+    return clamp(amount/s.density.y,0.0,1.0);
+}
+fn foam_density_color(amount: f32, s: ShoreParams) -> vec3<f32> {
+    let level=foam_density_level(amount,s);
+    return mix(vec3(0.0,1.0,0.0),vec3(1.0,0.0,0.0),level);
 }
 
 fn shore_distance(p: vec2<f32>, s: ShoreParams) -> f32 {

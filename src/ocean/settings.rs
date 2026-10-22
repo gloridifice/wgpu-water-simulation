@@ -120,6 +120,14 @@ impl SavedSettings {
                 "--swe-filter-transition" => {
                     self.optics.shore.filter_transition = optics.shore.filter_transition
                 }
+                "--water-foam-color" => {
+                    self.optics.shore.water_foam_color = optics.shore.water_foam_color
+                }
+                "--stranded-foam-color" => {
+                    self.optics.shore.stranded_foam_color = optics.shore.stranded_foam_color
+                }
+                "--swe-input-gain" => self.optics.shore.input_gain = optics.shore.input_gain,
+                "--swe-order" => self.optics.shore.order = optics.shore.order,
                 "--shore-normal-strength" => {
                     self.optics.shore.normal_strength = optics.shore.normal_strength
                 }
@@ -342,6 +350,9 @@ mod tests {
         s.optics.beach = true;
         s.optics.beach_slope = 0.23;
         s.optics.shore_x = -19.0;
+        s.optics.shore.water_foam_color = [0.7, 0.8, 0.9];
+        s.optics.shore.stranded_foam_color = [0.6, 0.4, 0.2];
+        s.optics.shore.order = 2;
         s.optics.shore.filter_enabled = false;
         s.optics.shore.filter_cutoff = 3.0;
         s.optics.shore.filter_transition = 5.0;
@@ -440,5 +451,9 @@ mod tests {
         assert_eq!(s.draft.length, 256.0);
         assert_eq!(s.optics.depth, 19.0);
         assert_eq!(s.camera.distance, Camera::default().distance * 2.0);
+        let mut optics = OpticsConfig::default();
+        optics.shore.order = 2;
+        s.apply_cli(ocean, optics, &["--swe-order".into()]);
+        assert_eq!(s.optics.shore.order, 2);
     }
 }

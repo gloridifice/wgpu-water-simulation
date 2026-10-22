@@ -6,26 +6,33 @@ use super::{
 use wgpu::util::DeviceExt;
 
 pub const RESOLUTION: u32 = 256;
-pub const VIEW_NAMES: [&str; 6] = [
+pub const VIEW_NAMES: [&str; 7] = [
     "Shaded",
     "Water depth",
     "Flow direction",
     "Shore foam",
     "Sand wetness",
     "Stranded foam",
+    "Foam density (green / red)",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ShoreConfig {
     pub enabled: bool,
+    pub order: u32,
+    pub input_gain: f32,
     pub filter_enabled: bool,
     pub filter_cutoff: f32,
     pub filter_transition: f32,
     pub normal_strength: f32,
+    pub water_foam_color: [f32; 3],
+    pub stranded_foam_color: [f32; 3],
     pub breaking_depth: f32,
     pub generation: f32,
     pub decay: f32,
+    pub foam_compression_threshold: f32,
+    pub foam_density_reference: f32,
     pub drying_time: f32,
     pub view: u32,
 }
@@ -33,13 +40,19 @@ impl Default for ShoreConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            order: 1,
+            input_gain: 1.0,
             filter_enabled: true,
             filter_cutoff: 12.0,
             filter_transition: 12.0,
             normal_strength: 1.0,
+            water_foam_color: [0.87, 0.92, 0.90],
+            stranded_foam_color: [0.36, 0.50, 0.58],
             breaking_depth: 2.0,
             generation: 4.0,
             decay: 0.45,
+            foam_compression_threshold: 0.1,
+            foam_density_reference: 2.0,
             drying_time: 18.0,
             view: 0,
         }
@@ -48,17 +61,41 @@ impl Default for ShoreConfig {
 impl ShoreConfig {
     pub fn validate(self) -> Result<(), String> {
         for (name, value, low, high) in [
+            ("SWE input gain", self.input_gain, 0.0, 3.0),
             ("SWE filter cutoff", self.filter_cutoff, 0.0, 512.0),
             ("SWE filter transition", self.filter_transition, 0.0, 512.0),
             ("shore normal strength", self.normal_strength, 0.0, 3.0),
             ("breaking depth", self.breaking_depth, 0.5, 5.0),
             ("shore foam generation", self.generation, 0.0, 15.0),
             ("shore foam decay", self.decay, 0.0, 4.0),
+            (
+                "foam compression threshold",
+                self.foam_compression_threshold,
+                0.0,
+                4.0,
+            ),
+            (
+                "foam density reference",
+                self.foam_density_reference,
+                0.01,
+                20.0,
+            ),
             ("sand drying time", self.drying_time, 1.0, 120.0),
         ] {
             if !value.is_finite() || !(low..=high).contains(&value) {
                 return Err(format!("{name} must be finite and in {low}..={high}"));
             }
+        }
+        for color in [self.water_foam_color, self.stranded_foam_color] {
+            if color
+                .iter()
+                .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+            {
+                return Err("foam colors must be finite linear RGB in 0..=1".into());
+            }
+        }
+        if !(1..=2).contains(&self.order) {
+            return Err("SWE order must be 1 or 2".into());
         }
         if self.view >= VIEW_NAMES.len() as u32 {
             return Err("invalid shore view".into());
@@ -76,7 +113,11 @@ pub struct ShoreUniform {
     pub timing: [f32; 4],
     pub coupling: [f32; 4],
     pub filter: [f32; 4],
+    pub solver: [f32; 4],
     pub visual: [f32; 4],
+    pub density: [f32; 4],
+    pub water_foam_color: [f32; 4],
+    pub stranded_foam_color: [f32; 4],
     pub options: [f32; 4],
 }
 pub struct Shore {
@@ -86,6 +127,11 @@ pub struct Shore {
     previous: wgpu::Buffer,
     pipeline: wgpu::ComputePipeline,
     bind: wgpu::BindGroup,
+    predictor_bind: wgpu::BindGroup,
+    corrector_bind: wgpu::BindGroup,
+    pub substeps: u32,
+    pub simulated_dt: f32,
+    pub timer: Option<super::gpu_timer::GpuTimer>,
     length: f32,
     fft_resolution: u32,
     height_bound: f32,
@@ -116,6 +162,7 @@ impl Shore {
         };
         let field = make_field("SWE visible, conservative and ground blocks");
         let previous = make_field("previous shore history");
+        let stage = make_field("SWE RK predictor");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("local shallow water compute"),
             source: wgpu::ShaderSource::Wgsl(
@@ -141,32 +188,41 @@ impl Shore {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shore compute bindings"),
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: ocean.fields.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: fft_previous.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: previous.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: field.as_entire_binding(),
-                },
-            ],
-        });
+        let make_bind = |input: &wgpu::Buffer, output: &wgpu::Buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("SWE stage bindings"),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: input.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: output.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: ocean.fields.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: fft_previous.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: previous.as_entire_binding(),
+                    },
+                ],
+            })
+        };
+        let bind = make_bind(&previous, &field);
+        let predictor_bind = make_bind(&previous, &stage);
+        let corrector_bind = make_bind(&stage, &field);
         let mut reader = png::Decoder::new(std::io::Cursor::new(include_bytes!(
             "../../assets/shorewaves/voronoi_lace.png"
         )))
@@ -213,6 +269,11 @@ impl Shore {
             previous,
             pipeline,
             bind,
+            predictor_bind,
+            corrector_bind,
+            substeps: 0,
+            simulated_dt: 0.0,
+            timer: None,
             length,
             fft_resolution: ocean.config.resolution,
             height_bound: ocean.height_bound,
@@ -231,9 +292,11 @@ impl Shore {
         gain: f32,
     ) -> ShoreUniform {
         let c = optics.shore;
+        let effective_gain = gain * c.input_gain;
         // Cover the whole beach along Z, with a fine cross-shore strip.
         // Widen for gentle slopes so the wet/dry front cannot leave the history.
-        let inland = (self.height_bound * gain.abs() * 2.0 / optics.beach_slope).clamp(12.0, 64.0);
+        let inland =
+            (self.height_bound * effective_gain.abs() * 2.0 / optics.beach_slope).clamp(12.0, 64.0);
         let offshore = (c.breaking_depth * 2.5 / optics.beach_slope).max(52.0);
         let mut s = ShoreUniform {
             terrain: [
@@ -243,7 +306,7 @@ impl Shore {
                 optics.depth,
             ],
             waves: [
-                self.height_bound * gain.abs(),
+                self.height_bound * effective_gain.abs(),
                 (time - self.start_time).max(0.0),
                 c.breaking_depth,
                 f32::from(c.enabled),
@@ -255,18 +318,39 @@ impl Shore {
                 self.length * 3.0,
             ],
             timing: [time, 0.0, c.decay, c.drying_time],
-            coupling: [self.fft_resolution as f32, self.length, gain, 1.0],
+            coupling: [self.fft_resolution as f32, self.length, effective_gain, 1.0],
             filter: [
                 f32::from(c.filter_enabled),
                 c.filter_cutoff,
                 c.filter_transition,
                 0.0,
             ],
+            solver: [c.order as f32, 0.0, gain, c.input_gain],
             visual: [c.normal_strength, 0.0, 0.0, 0.0],
+            density: [
+                c.foam_compression_threshold,
+                c.foam_density_reference,
+                0.0,
+                0.0,
+            ],
+            water_foam_color: [
+                c.water_foam_color[0],
+                c.water_foam_color[1],
+                c.water_foam_color[2],
+                1.0,
+            ],
+            stranded_foam_color: [
+                c.stranded_foam_color[0],
+                c.stranded_foam_color[1],
+                c.stranded_foam_color[2],
+                1.0,
+            ],
             options: [c.generation, c.view as f32, RESOLUTION as f32, 0.0],
         };
         let changed = self.last.is_none_or(|old| {
-            old.filter != s.filter
+            old.solver[0] != s.solver[0]
+                || old.solver[2..] != s.solver[2..]
+                || old.filter != s.filter
                 || old.terrain != s.terrain
                 || old.waves[2..] != s.waves[2..]
                 || old.domain != s.domain
@@ -284,12 +368,7 @@ impl Shore {
     /// During simulation call this before encode, never after it in a submission.
     pub fn configure(&self, gpu: &Gpu, optics: &OpticsConfig) {
         let time = self.last.map_or(0.0, |s| s.timing[0]);
-        let step = self.parameters(
-            optics,
-            time,
-            false,
-            self.last.map_or(0.22, |s| s.coupling[2]),
-        );
+        let step = self.parameters(optics, time, false, self.last.map_or(0.22, |s| s.solver[2]));
         gpu.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&step));
     }
@@ -304,10 +383,9 @@ impl Shore {
         reset: bool,
         height_gain: f32,
     ) {
-        let gain_changed = self.last.is_some_and(|s| s.coupling[2] != height_gain);
-        let mut step = self.parameters(optics, time, reset || gain_changed, height_gain);
-        step.coupling[2] = height_gain;
-        step.waves[0] = self.height_bound * height_gain.abs();
+        self.substeps = 0;
+        self.simulated_dt = 0.0;
+        let mut step = self.parameters(optics, time, reset, height_gain);
         if step.options[3] > 0.5 {
             self.start_time = time;
         }
@@ -330,18 +408,32 @@ impl Shore {
         let elapsed = step.timing[1].min(0.1).min(stable_dt * 128.0);
         let count = (elapsed / stable_dt).ceil().max(1.0) as u32;
         let dt = elapsed / count as f32;
+        self.substeps = count;
+        self.simulated_dt = elapsed;
+        let stages = if optics.shore.order == 2 && step.options[3] == 0.0 {
+            2
+        } else {
+            1
+        };
         let mut uniforms = Vec::new();
         for i in 0..count {
-            let mut sub = step;
-            sub.timing[0] = time - elapsed + (i + 1) as f32 * dt;
-            sub.timing[1] = dt;
-            sub.waves[1] = (sub.timing[0] - self.start_time).max(0.0);
-            sub.coupling[3] = ((sub.timing[0] - (time - step.timing[1]))
-                / step.timing[1].max(0.000001))
-            .clamp(0.0, 1.0);
-            uniforms.push(sub);
+            for stage in 0..stages {
+                let mut sub = step;
+                // SSP-RK2 evaluates its RHS at t_n and t_n+dt.
+                let fraction = if stages == 2 { stage } else { 1 };
+                sub.timing[0] = time - elapsed + (i + fraction) as f32 * dt;
+                sub.timing[1] = dt;
+                sub.waves[1] = (sub.timing[0] - self.start_time).max(0.0);
+                sub.coupling[3] = ((sub.timing[0] - (time - step.timing[1]))
+                    / step.timing[1].max(0.000001))
+                .clamp(0.0, 1.0);
+                if step.options[3] > 0.5 {
+                    sub.coupling[3] = 1.0;
+                }
+                sub.solver[1] = if stages == 2 { (stage + 1) as f32 } else { 0.0 };
+                uniforms.push(sub);
+            }
         }
-        // Copies ordered in the command buffer avoid queue-write aliasing across substeps.
         uniforms.push(step);
         let upload = gpu
             .device
@@ -351,20 +443,61 @@ impl Shore {
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
         let stride = std::mem::size_of::<ShoreUniform>() as u64;
-        for i in 0..count {
+        let timed = self.timer.as_ref().is_some_and(|t| t.ready())
+            && elapsed > 0.0
+            && step.options[3] == 0.0;
+        for i in 0..count * stages {
             encoder.copy_buffer_to_buffer(&upload, i as u64 * stride, &self.uniform, 0, stride);
             {
+                let timestamps = if timed {
+                    Some(wgpu::ComputePassTimestampWrites {
+                        query_set: &self.timer.as_ref().unwrap().queries,
+                        beginning_of_pass_write_index: if i == 0 { Some(0) } else { None },
+                        end_of_pass_write_index: if i + 1 == count * stages {
+                            Some(1)
+                        } else {
+                            None
+                        },
+                    })
+                } else {
+                    None
+                };
+                // Middle passes have neither timestamp; omit descriptor entirely.
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("local SWE and stranded foam"),
-                    timestamp_writes: None,
+                    timestamp_writes: timestamps.filter(|t| {
+                        t.beginning_of_pass_write_index.is_some()
+                            || t.end_of_pass_write_index.is_some()
+                    }),
                 });
                 pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bind, &[]);
+                let bind = if stages == 1 {
+                    &self.bind
+                } else if i % 2 == 0 {
+                    &self.predictor_bind
+                } else {
+                    &self.corrector_bind
+                };
+                pass.set_bind_group(0, bind, &[]);
                 pass.dispatch_workgroups(RESOLUTION.div_ceil(8), RESOLUTION.div_ceil(8), 1);
             }
-            encoder.copy_buffer_to_buffer(&self.field, 0, &self.previous, 0, self.field.size());
+            if (i + 1) % stages == 0 {
+                encoder.copy_buffer_to_buffer(&self.field, 0, &self.previous, 0, self.field.size());
+            }
         }
-        encoder.copy_buffer_to_buffer(&upload, count as u64 * stride, &self.uniform, 0, stride);
+        if timed {
+            self.timer
+                .as_mut()
+                .unwrap()
+                .resolve(encoder, optics.shore.order, count, elapsed);
+        }
+        encoder.copy_buffer_to_buffer(
+            &upload,
+            (count * stages) as u64 * stride,
+            &self.uniform,
+            0,
+            stride,
+        );
         encoder.copy_buffer_to_buffer(
             &self.fft_fields,
             self.fft_previous.size(),
@@ -374,6 +507,119 @@ impl Shore {
         );
         self.last = Some(step);
     }
+}
+
+/// Deterministic FFT field tests reset sampling, the entire patch and gain changes
+/// at paused time. The previous FFT is intentionally unrelated to this field.
+fn verify_fft_initialization(gpu: &Gpu) -> Result<(), super::gpu::Error> {
+    let ocean = Ocean::new(
+        gpu,
+        super::spectrum::OceanConfig {
+            resolution: 32,
+            ..Default::default()
+        },
+    )?;
+    let shader = gpu
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("synthetic FFT initialization test"),
+            source: wgpu::ShaderSource::Wgsl(
+                r#"
+@group(0) @binding(0) var<storage,read_write> data:array<vec2<f32>>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id:vec3<u32>) {
+    if id.x>=6144u {return;}
+    var value=0.0;
+    if id.x>=3072u && id.x<4096u {value=0.02;}
+    if id.x>=4096u && id.x<5120u {value=0.03;}
+    if id.x>=5120u {value=-0.01;}
+    data[id.x]=vec2(value,0.0);
+}"#
+                .into(),
+            ),
+        });
+    let pipeline = gpu
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("synthetic FFT fill"),
+            layout: None,
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+    let bind = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: ocean.fields.as_entire_binding(),
+        }],
+    });
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind, &[]);
+        pass.dispatch_workgroups(96, 1, 1);
+    }
+    gpu.queue.submit([encoder.finish()]);
+    let mut shore = Shore::new(gpu, &ocean);
+    let mut optics = OpticsConfig::beach_scene();
+    let cells = (RESOLUTION * RESOLUTION) as usize;
+    for gain in [0.0, 1.0, 3.0, 0.5] {
+        optics.shore.input_gain = gain;
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        shore.encode(gpu, &mut enc, &optics, 2.0, false, 0.5);
+        gpu.queue.submit([enc.finish()]);
+        let p = shore.last.unwrap();
+        if p.options[3] != 1.0 || p.coupling[2] != 0.5 * gain {
+            return Err("FFT input gain did not reset/scale".into());
+        }
+        let bytes = gpu.read_buffer(&shore.field, shore.field.size())?;
+        let data: Vec<[f32; 4]> = bytes
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|b| bytemuck::pod_read_unaligned(b))
+            .collect();
+        for y in 0..RESOLUTION as usize {
+            for x in 0..RESOLUTION as usize {
+                let i = y * RESOLUTION as usize + x;
+                let world_x = p.domain[0] + (x as f32 + 0.5) * p.domain[2] / RESOLUTION as f32;
+                let bottom = -optics.beach_slope * (world_x - optics.shore_x);
+                let h = (0.02 * 0.5 * gain - bottom).max(0.0);
+                let mut mx = 0.03 * 0.5 * gain;
+                let mut mz = -0.01 * 0.5 * gain;
+                let limit = (8.0 * h / mx.hypot(mz).max(1e-6)).min(1.0);
+                mx *= limit;
+                mz *= limit;
+                if h <= 0.003 {
+                    mx = 0.0;
+                    mz = 0.0;
+                }
+                let actual = data[cells + i];
+                if (actual[0] - h).abs() > 2e-5
+                    || (actual[1] - mx).abs() > 2e-5
+                    || (actual[2] - mz).abs() > 2e-5
+                    || data[i][0] != 0.0
+                    || data[2 * cells + i][0] != 0.0
+                {
+                    return Err(format!("FFT initialization mismatch gain={gain} cell={i}: {actual:?}, expected {h}/{mx}/{mz}").into());
+                }
+            }
+        }
+        // Render-only refresh must not multiply the input gain twice.
+        shore.configure(gpu, &optics);
+        let refreshed = shore.parameters(&optics, 2.0, false, p.solver[2]);
+        if refreshed.coupling[2] != p.coupling[2] || refreshed.options[3] != 0.0 {
+            return Err("FFT gain changed on refresh".into());
+        }
+    }
+    eprintln!(
+        "SWE FFT initialization: whole patch, current-frame sampling, dry momentum, paused gain resets 0/1/3/0.5 OK"
+    );
+    Ok(())
 }
 
 /// Check production inlet sampling against CPU bilinear/time interpolation.
@@ -513,9 +759,126 @@ fn inlet_probe(@builtin(global_invocation_id) id:vec3<u32>) {
     Ok(())
 }
 
+/// Compare both orders against a linear traveling gravity wave (16 cells/wavelength).
+/// Flat bed and an interior measurement region isolate propagation from the sponge.
+fn verify_wave_accuracy(gpu: &Gpu) -> Result<(), super::gpu::Error> {
+    let ocean = Ocean::new(
+        gpu,
+        super::spectrum::OceanConfig {
+            amplitude: 0.0,
+            ..Default::default()
+        },
+    )?;
+    let n = RESOLUTION as usize;
+    let cells = n * n;
+    let depth = 2.0_f32;
+    let amplitude = 0.001_f32;
+    let speed = (9.81 * depth).sqrt();
+    let k = std::f32::consts::TAU / 4.0;
+    let dt = 0.004_f32;
+    let steps = 250;
+    let mut errors = [0.0_f64; 2];
+    for order in [1u32, 2] {
+        let shore = Shore::new(gpu, &ocean);
+        let mut seed = vec![[0.0_f32; 4]; cells * 3];
+        for z in 0..n {
+            for x in 0..n {
+                let eta = amplitude * (k * (x as f32 + 0.5) * 0.25).sin();
+                let i = z * n + x;
+                seed[i] = [0.0, 1.0, depth + eta, 0.0];
+                seed[cells + i] = [depth + eta, speed * eta, 0.0, 0.0];
+                seed[2 * cells + i] = [0.0, 0.0, depth + eta, 0.0];
+            }
+        }
+        gpu.queue
+            .write_buffer(&shore.previous, 0, bytemuck::cast_slice(&seed));
+        let optics = OpticsConfig::beach_scene();
+        let mut p = shore.parameters(&optics, 0.0, false, 0.0);
+        p.terrain[1] = 0.0;
+        p.terrain[2] = 0.0;
+        p.domain = [0.0, 0.0, 64.0, 64.0];
+        p.options[0] = 0.0;
+        p.options[3] = 0.0;
+        p.timing[1] = dt;
+        p.solver[0] = order as f32;
+        for _ in 0..steps {
+            for stage in 0..order {
+                p.solver[1] = if order == 2 { (stage + 1) as f32 } else { 0.0 };
+                gpu.queue
+                    .write_buffer(&shore.uniform, 0, bytemuck::bytes_of(&p));
+                let mut enc = gpu.device.create_command_encoder(&Default::default());
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&shore.pipeline);
+                    pass.set_bind_group(
+                        0,
+                        if order == 1 {
+                            &shore.bind
+                        } else if stage == 0 {
+                            &shore.predictor_bind
+                        } else {
+                            &shore.corrector_bind
+                        },
+                        &[],
+                    );
+                    pass.dispatch_workgroups(RESOLUTION.div_ceil(8), RESOLUTION.div_ceil(8), 1);
+                }
+                if stage + 1 == order {
+                    enc.copy_buffer_to_buffer(
+                        &shore.field,
+                        0,
+                        &shore.previous,
+                        0,
+                        shore.field.size(),
+                    );
+                }
+                gpu.queue.submit([enc.finish()]);
+            }
+        }
+        let bytes = gpu.read_buffer(&shore.field, shore.field.size())?;
+        let data: Vec<[f32; 4]> = bytes
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|b| bytemuck::pod_read_unaligned(b))
+            .collect();
+        if data.iter().flatten().any(|v| !v.is_finite()) {
+            return Err("nonfinite traveling wave".into());
+        }
+        let mut error = 0.0;
+        let mut norm = 0.0;
+        for x in 48..160 {
+            let expected =
+                amplitude * (k * ((x as f32 + 0.5) * 0.25 - speed * dt * steps as f32)).sin();
+            let actual = data[cells + n / 2 * n + x][0] - depth;
+            error += (actual - expected).powi(2) as f64;
+            norm += expected.powi(2) as f64;
+        }
+        errors[(order - 1) as usize] = (error / norm).sqrt();
+    }
+    if errors[1] >= errors[0] * 0.75 || errors[1] > 0.25 {
+        return Err(format!("second-order wave accuracy did not improve: {errors:?}").into());
+    }
+    eprintln!(
+        "SWE 4 m wave after 1 s: relative L2 error first={:.3}, second={:.3}",
+        errors[0], errors[1]
+    );
+    Ok(())
+}
+
 /// Run the production solver on the GPU, including stationary and moving water.
 pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     verify_inlet(gpu)?;
+    verify_fft_initialization(gpu)?;
+    verify_wave_accuracy(gpu)?;
+    verify_surface_foam(gpu)?;
+    for order in [1, 2] {
+        verify_order(gpu, order)?;
+    }
+    Ok(())
+}
+
+fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
     let ocean = Ocean::new(
         gpu,
         super::spectrum::OceanConfig {
@@ -525,6 +888,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     )?;
     let mut shore = Shore::new(gpu, &ocean);
     let mut optics = OpticsConfig::beach_scene();
+    optics.shore.order = order;
     let gain = 0.0;
     let advance = |shore: &mut Shore, optics: &OpticsConfig, time, reset, gain| {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
@@ -581,11 +945,12 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
         )
         .into());
     }
-    // Ground memory: a wet-to-dry transition deposits the last concentration.
+    // Ground memory: a dry cell deposits its remaining surface foam amount.
     let mut seed = still.clone();
     let dry = n / 8 + n / 2 * n;
     seed[dry] = [0.8, 1.0, 0.01, 0.0];
     seed[2 * cells + dry][1] = 0.8;
+    seed[cells + dry][3] = 0.8;
     gpu.queue
         .write_buffer(&shore.previous, 0, bytemuck::cast_slice(&seed));
     advance(&mut shore, &optics, 1.10, false, gain);
@@ -611,6 +976,36 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     if washed[2 * cells + center][0] >= 0.6 || washed[center][1] < 0.99 {
         return Err("rewetting did not wash away ground foam".into());
     }
+    // Mode changes reset water and ground history, even with time paused.
+    optics.shore.order = 3 - order;
+    advance(&mut shore, &optics, 1.20, false, gain);
+    if shore.last.unwrap().options[3] != 1.0 {
+        return Err("SWE order switch did not reset".into());
+    }
+    optics.shore.order = order;
+    // Timestamp path is optional; check real asynchronous readback on supporting devices.
+    shore.timer = super::gpu_timer::GpuTimer::new(gpu);
+    advance(&mut shore, &optics, 1.20, true, gain);
+    advance(&mut shore, &optics, 1.25, false, gain);
+    let _ = read(&shore)?;
+    if let Some(timer) = &mut shore.timer {
+        timer.poll(gpu);
+        let sample = timer.latest.ok_or("SWE timestamp readback missing")?;
+        if !sample.ms.is_finite()
+            || sample.ms <= 0.0
+            || sample.order != order
+            || sample.substeps == 0
+        {
+            return Err("invalid SWE GPU timing".into());
+        }
+        eprintln!(
+            "SWE order {order}: GPU {:.3} ms / {} substeps / {:.1} simulated ms",
+            sample.ms,
+            sample.substeps,
+            sample.simulated_dt * 1000.0
+        );
+    }
+    shore.timer = None;
     let gain = 1.0;
     advance(&mut shore, &optics, 0.0, true, gain);
     for i in 1..=1440 {
@@ -620,7 +1015,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     if active.iter().flatten().any(|v| !v.is_finite())
         || active[cells..2 * cells]
             .iter()
-            .any(|q| q[0] < 0.0 || q[3] < 0.0 || q[3] > q[0] + 1e-5)
+            .any(|q| q[0] < 0.0 || q[3] < 0.0 || q[3] > 1e6)
         || !active[..cells].iter().any(|q| q[0] > 0.1)
         || !active[2 * cells..].iter().any(|q| q[0] > 0.01)
     {
@@ -646,9 +1041,11 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     advance(&mut shore, &optics, 24.1, false, gain);
     let before_normal_edit = read(&shore)?;
     optics.shore.normal_strength = 0.0;
+    optics.shore.water_foam_color = [0.2, 0.7, 0.9];
+    optics.shore.stranded_foam_color = [0.8, 0.3, 0.2];
     advance(&mut shore, &optics, 24.1, false, gain);
     if shore.last.unwrap().options[3] != 0.0 || read(&shore)? != before_normal_edit {
-        return Err("render-only normal edit changed SWE history".into());
+        return Err("render-only normal/color edit changed SWE history".into());
     }
     optics.shore.normal_strength = 1.0;
     optics.shore.filter_cutoff = 3.0;
@@ -674,7 +1071,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
         if extreme.iter().flatten().any(|v| !v.is_finite())
             || extreme[cells..2 * cells]
                 .iter()
-                .any(|q| q[0] < 0.0 || q[3] < 0.0 || q[3] > q[0] + 1e-5)
+                .any(|q| q[0] < 0.0 || q[3] < 0.0 || q[3] > 1e6)
         {
             return Err(format!("SWE invalid state at slope {slope}").into());
         }
@@ -693,7 +1090,8 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
         },
     )?;
     let mut quiet = Shore::new(gpu, &zero);
-    let quiet_optics = OpticsConfig::beach_scene();
+    let mut quiet_optics = OpticsConfig::beach_scene();
+    quiet_optics.shore.order = order;
     for i in 0..=120 {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         let time = i as f32 / 30.0;
@@ -709,7 +1107,111 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
         return Err("zero FFT amplitude generated shore waves/foam".into());
     }
     eprintln!(
-        "SWE GPU: lake at rest ({error:.2e}), pulse mass/2D foam transport, stranded deposition/decay/rewet, run-up, pause/reset/disable, terrain reset and extreme slopes OK"
+        "SWE GPU order {order}: lake at rest ({error:.2e}), pulse mass/2D foam transport, stranded deposition/decay/rewet, run-up, pause/reset/disable, terrain reset and extreme slopes OK"
+    );
+    Ok(())
+}
+
+/// Exercise production surface flux with sources disabled: mass conservation,
+/// translation, convergence, expansion and decay, for both SWE integration modes.
+fn verify_surface_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
+    let ocean = Ocean::new(
+        gpu,
+        super::spectrum::OceanConfig {
+            amplitude: 0.0,
+            ..Default::default()
+        },
+    )?;
+    let n = RESOLUTION as usize;
+    let cells = n * n;
+    let dt = 0.004_f32;
+    for order in [1, 2] {
+        for mode in 0..5 {
+            let shore = Shore::new(gpu, &ocean);
+            let mut seed = vec![[0.0_f32; 4]; cells * 3];
+            for y in 0..n {
+                for x in 0..n {
+                    let i = y * n + x;
+                    let u = match mode {
+                        0 | 4 => 1.0,
+                        1 => (24.0 - (x as f32 + 0.5) * 0.25) * 0.1,
+                        2 => ((x as f32 + 0.5) * 0.25 - 24.0) * 0.1,
+                        _ => 0.0,
+                    };
+                    let density = if (64..128).contains(&x) && (64..128).contains(&y) {
+                        0.5
+                    } else {
+                        0.0
+                    };
+                    let depth = if mode == 4 { 0.2 } else { 2.0 };
+                    seed[i] = [density, 1.0, depth, u];
+                    seed[cells + i] = [depth, depth * u, 0.0, density];
+                    seed[2 * cells + i] = [0.0, density, 2.0, 0.0];
+                }
+            }
+            gpu.queue
+                .write_buffer(&shore.previous, 0, bytemuck::cast_slice(&seed));
+            let mut p = shore.parameters(&OpticsConfig::beach_scene(), 0.0, false, 0.0);
+            p.terrain[1] = 0.0;
+            p.domain = [0.0, 0.0, 64.0, 64.0];
+            p.options[0] = 0.0;
+            p.options[3] = 0.0;
+            p.timing[1] = dt;
+            p.timing[2] = if mode == 3 { 0.7 } else { 0.0 };
+            p.solver[0] = order as f32;
+            for stage in 0..order {
+                p.solver[1] = if order == 2 { (stage + 1) as f32 } else { 0.0 };
+                gpu.queue
+                    .write_buffer(&shore.uniform, 0, bytemuck::bytes_of(&p));
+                let mut enc = gpu.device.create_command_encoder(&Default::default());
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&shore.pipeline);
+                    pass.set_bind_group(
+                        0,
+                        if order == 1 {
+                            &shore.bind
+                        } else if stage == 0 {
+                            &shore.predictor_bind
+                        } else {
+                            &shore.corrector_bind
+                        },
+                        &[],
+                    );
+                    pass.dispatch_workgroups(RESOLUTION / 8, RESOLUTION / 8, 1);
+                }
+                gpu.queue.submit([enc.finish()]);
+            }
+            let bytes = gpu.read_buffer(&shore.field, shore.field.size())?;
+            let data: Vec<[f32; 4]> = bytes
+                .as_chunks::<16>()
+                .0
+                .iter()
+                .map(|b| bytemuck::pod_read_unaligned(b))
+                .collect();
+            let total: f64 = data[cells..2 * cells].iter().map(|q| q[3] as f64).sum();
+            let expected = 2048.0
+                * if mode == 3 {
+                    (-0.7 * dt).exp() as f64
+                } else {
+                    1.0
+                };
+            let center = data[cells + 96 * n + 96][3];
+            if data.iter().flatten().any(|v| !v.is_finite())
+                || data[cells..2 * cells].iter().any(|q| q[3] < 0.0)
+                || (total - expected).abs() > 0.002
+                || ((mode == 0 || mode == 4)
+                    && (data[cells + 96 * n + 128][3] <= 0.0 || (center - 0.5).abs() > 1e-6))
+                || (mode == 1 && center <= 0.5)
+                || (mode == 2 && center >= 0.5)
+                || (mode == 3 && (center - 0.5 * (-0.7 * dt).exp()).abs() > 1e-6)
+            {
+                return Err(format!("surface foam order {order} mode {mode}: total {total}, expected {expected}, center {center}").into());
+            }
+        }
+    }
+    eprintln!(
+        "Surface foam: both orders conserve area amount, transport, concentrate/dilute and decay independently of depth OK"
     );
     Ok(())
 }
@@ -729,6 +1231,18 @@ mod tests {
     #[test]
     fn rejects_singular_and_nonfinite_controls() {
         for c in [
+            ShoreConfig {
+                input_gain: 3.1,
+                ..Default::default()
+            },
+            ShoreConfig {
+                input_gain: f32::NAN,
+                ..Default::default()
+            },
+            ShoreConfig {
+                order: 3,
+                ..Default::default()
+            },
             ShoreConfig {
                 filter_cutoff: f32::NAN,
                 ..Default::default()
@@ -750,7 +1264,15 @@ mod tests {
                 ..Default::default()
             },
             ShoreConfig {
-                view: 6,
+                foam_density_reference: 0.0,
+                ..Default::default()
+            },
+            ShoreConfig {
+                foam_compression_threshold: f32::NAN,
+                ..Default::default()
+            },
+            ShoreConfig {
+                view: 7,
                 ..Default::default()
             },
         ] {

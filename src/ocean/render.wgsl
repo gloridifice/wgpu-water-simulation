@@ -134,7 +134,13 @@ fn shore_detail_normal(base: vec3<f32>, grid: vec2<f32>, world: vec3<f32>, depth
 fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     let detail_footprint = max(length(dpdx(input.grid)), length(dpdy(input.grid)));
     let shore_history = sample_shore_history(input.world.xz);
-    let local_depth = max(input.world.y - bottom_height(input.world.xz, shore), 0.0);
+    let geometric_depth = max(input.world.y - bottom_height(input.world.xz, shore), 0.0);
+    // The render mesh is coarser than SWE: interpolated geometry can bridge dry
+    // cells and cover the stranded foam. Use simulated depth for nearshore coverage.
+    var local_depth=geometric_depth;
+    if shore_active(shore) {
+        local_depth=mix(max(shore_history.z,0.0),geometric_depth,ocean_weight(input.world.xz,shore));
+    }
     if shore_active(shore) {
         if local_depth < 0.008 { discard; }
         if shore.options.y > 0.5 && shore.options.y < 1.5 {
@@ -144,9 +150,9 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
             let u = shore_history.w;
             return vec4(mix(vec3(0.08), select(vec3(0.95, 0.32, 0.08), vec3(0.05, 0.65, 1.0), u < 0.0), clamp(abs(u) / 2.0, 0.0, 1.0)), 1.0);
         }
-        if shore.options.y > 2.5 && shore.options.y < 3.5 { return vec4(vec3(shore_history.x), 1.0); }
-        if shore.options.y > 4.5 { return vec4(vec3(sample_shore_extra(input.world.xz).x), 1.0); }
-        if shore.options.y > 3.5 { return vec4(vec3(shore_history.y), 1.0); }
+        if shore.options.y > 2.5 && shore.options.y < 3.5 { return vec4(vec3(foam_density_level(shore_history.x,shore)), 1.0); }
+        if shore.options.y > 4.5 && shore.options.y < 5.5 { return vec4(vec3(foam_density_level(sample_shore_extra(input.world.xz).x,shore)), 1.0); }
+        if shore.options.y > 3.5 && shore.options.y < 4.5 { return vec4(vec3(shore_history.y), 1.0); }
     }
     let pixel = vec2<i32>(input.position.xy);
     let size = vec2<f32>(textureDimensions(scene_depth));
@@ -180,7 +186,7 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     if mode == 10u { return vec4(manual.scattering, 1.0); }
     if mode == 11u { return vec4(optics.source_view.xyz + sky_source_at(input.world + ray * distance * 0.5), 1.0); }
     var foam_data = sample_foam(input.grid);
-    foam_data.x = 1.0 - (1.0 - foam_data.x * ocean_weight(input.world.xz, shore)) * (1.0 - shore_history.x);
+    foam_data.x = 1.0 - (1.0 - foam_data.x * ocean_weight(input.world.xz, shore)) * (1.0 - foam_density_level(shore_history.x,shore));
     if camera.misc.z > 1.5 { return vec4(vec3(foam_data.x), 1.0); }
     if camera.misc.z > 0.5 {
         let j = foam_data.y;
@@ -204,14 +210,20 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     if shore_active(shore) {
         let flow=vec2(shore_history.w,sample_shore_extra(input.world.xz).w);
         let lace=0.72*flowing_lace(input.world.xz,flow,12.0)+0.28*flowing_lace(input.world.xz,flow,1.2);
-        let amount=pow(shore_history.x,1.5)*smoothstep(0.003,0.02,local_depth);
+        let amount=pow(foam_density_level(shore_history.x,shore),1.5)*smoothstep(0.003,0.02,local_depth);
         let aa=max(0.04,fwidth(lace));
         let shore_foam=smoothstep(1.0-amount-aa,1.0-amount+0.38+aa,lace)*smoothstep(0.0,0.02,amount);
         let deep_foam = smoothstep(0.015, 0.25, sample_foam(input.grid).x)
             * ocean_weight(input.world.xz, shore) * (0.55 + 0.45 * foam_detail(input.grid));
         foam = camera.misc.x * (1.0 - (1.0 - deep_foam) * (1.0 - shore_foam));
     }
-    let foam_color = vec3(0.87, 0.92, 0.90) * (0.65 + 0.35 * max(dot(normal, camera.sun.xyz), 0.0));
+    let foam_color = shore.water_foam_color.rgb * (0.65 + 0.35 * max(dot(normal, camera.sun.xyz), 0.0));
     color = mix(color, foam_color, foam);
+    if shore_active(shore) && shore.options.y > 5.5 {
+        // No texture, lighting or FFT foam in density debug colors.
+        let presence=smoothstep(0.0,0.01,shore_history.x);
+        color=mix(mix(medium.background+medium.scattering,reflected,fresnel),
+            foam_density_color(shore_history.x,shore),presence);
+    }
     return vec4(color, 1.0);
 }

@@ -21,9 +21,13 @@ Usage: cargo run --release --features ocean --bin ocean -- [options]
   --verify         Headless GPU IFFT vs independent direct DFT; then exit
   --snapshot PATH  Render an offscreen PNG; file must not exist
   --beach         Sloped sand beach preset, shallow-to-deep water and overview camera
-  --shore-view N  0=shaded, 1=water depth, 2=flow, 3=shore foam, 4=sand wetness, 5=stranded foam
+  --shore-view N  0=shaded, 1=water depth, 2=flow, 3=shore foam, 4=sand wetness, 5=stranded foam, 6=foam density (green/red)
   --swe-filter-cutoff M    Reject inlet wavelengths <= M (0..512, default: 12)
   --swe-filter-transition M  Transition width in meters (0..512, default: 12)
+  --water-foam-color R,G,B    Water foam linear RGB (each 0..1)
+  --stranded-foam-color R,G,B Sand residue linear RGB (each 0..1)
+  --swe-input-gain N  FFT elevation and momentum multiplier (0..3, default: 1)
+  --swe-order N   SWE solver order: 1=Euler, 2=MUSCL+RK2 (default: 1)
   --shore-normal-strength N  Nearshore FFT normal detail (0..3, default: 1)
   --no-swe-filter  Pass all FFT waves into SWE
   --no-shore      Disable shore waves and wet sand history
@@ -110,6 +114,10 @@ fn run() -> Result<(), Error> {
             "--shore-amplitude" | "--shore-period" => return Err("Independent shore waves were removed; use FFT --amplitude / --wind and Height gain".into()),
             "--swe-filter-cutoff" => optics.shore.filter_cutoff = value(&mut args, &arg)?,
             "--swe-filter-transition" => optics.shore.filter_transition = value(&mut args, &arg)?,
+            "--water-foam-color" => optics.shore.water_foam_color = rgb(&mut args, &arg)?,
+            "--stranded-foam-color" => optics.shore.stranded_foam_color = rgb(&mut args, &arg)?,
+            "--swe-input-gain" => optics.shore.input_gain = value(&mut args, &arg)?,
+            "--swe-order" => optics.shore.order = value(&mut args, &arg)?,
             "--shore-normal-strength" => optics.shore.normal_strength = value(&mut args, &arg)?,
             "--no-swe-filter" => optics.shore.filter_enabled = false,
             "--no-shore" => optics.shore.enabled = false,

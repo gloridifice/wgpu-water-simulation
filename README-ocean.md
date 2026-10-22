@@ -359,7 +359,7 @@ cargo run --release --features ocean --bin ocean -- --beach --shore-view 5 --sna
 cargo run --release --features ocean --bin ocean -- --beach --no-shore
 ```
 
-The independent **Shallow water (SWE)** panel contains the SWE, foam, wet-sand and beach controls and opens by default. FFT Phillips power, wind direction and spectral length now drive both the ocean and the SWE inlet. Height gain scales inlet elevation and both momentum components together. The independent shore amplitude/period controls have been removed; old saved fields are ignored. The retired `--shore-amplitude` / `--shore-period` flags report a migration message. Allow roughly 15–25 simulated seconds for the default incoming waves to reach the shore and establish repeated run-up. CLI overrides belong after `--beach`, which installs the beach preset.
+The independent **Shallow water (SWE)** panel contains the SWE, foam, wet-sand and beach controls and opens by default. FFT Phillips power, wind direction and spectral length now drive both the ocean and the SWE inlet. Height gain scales inlet elevation and both momentum components together. The independent shore amplitude/period controls have been removed; old saved fields are ignored. The retired `--shore-amplitude` / `--shore-period` flags report a migration message. The entire SWE patch starts with FFT elevation and momentum; repeated run-up and foam still need time to develop. CLI overrides belong after `--beach`, which installs the beach preset.
 
 | Shore view | Meaning |
 | --- | --- |
@@ -369,12 +369,15 @@ The independent **Shallow water (SWE)** panel contains the SWE, foam, wet-sand a
 | 3 | Waterborne foam concentration |
 | 4 | Stationary sand wetness |
 | 5 | Stranded foam on the ground |
+| 6 | Surface/deposited foam density: green (low) to red (reference or higher), no texture |
 
 ### Solver and rendering
 
-`shore_compute.wgsl` advances a rectangular, world-space 256² finite-volume grid. It uses hydrostatic reconstruction with Rusanov fluxes, forward Euler integration, bottom friction, wet/dry handling and a 12 m/s velocity safeguard. Reconstruction and pressure-source correction balance a stationary free surface over the sloped bed. This is a first-order solver, not a port of the reference project's second-order KP07 reconstruction.
+`shore_compute.wgsl` advances a rectangular, world-space 256² finite-volume grid. It offers the original first-order hydrostatic Rusanov + Euler solver and a second-order MUSCL + SSP-RK2 solver. The latter reconstructs free surface, velocity and bed using a generalized minmod limiter (theta=1.3), with hydrostatic face corrections and a matching centered bed source. Reconstruction falls back to first order near dry cells and patch boundaries. Both retain wet/dry handling and the 12 m/s velocity safeguard; RK2 stages include boundary relaxation and bottom friction. Foam generation/decay and ground memory update once per completed substep and remain split first-order source updates. This is not a port of the reference project's KP07 solver.
 
-The conservative variables are `(h, hu, hv, hc)`: water depth, two horizontal momenta and depth-weighted foam concentration. The same face flux transports water and foam. Foam birth uses rapid surface rise, Froude number and moving shallow water; these are visual heuristics, not resolved bubbles or overturning waves. Foam decays exponentially, with concentration clamped to [0, 1].
+The stored variables are `(h, hu, hv, surface_foam_density)`. Foam is an effective amount per unit surface area in arbitrary units, not a depth-weighted concentration or physical mass density. A separate conservative upwind flux transports foam using shared face velocities: convergence concentrates it and divergence dilutes it, without creating foam. Both orders use first-order spatial foam transport; second-order SWE uses RK2 for its transport time integration. Foam is not divided by water depth or clipped at 1. The offshore sponge removes foam; dry cells deposit their remaining amount on the sand. Closed boundaries have zero foam flux.
+
+Generation uses rapid water-level rise gated by wet depth, with a stronger source at a supercritical/compressive front. It is a visual proxy for air entrainment, not resolved overturning. Fast shallow backwash alone no longer generates foam. Generation and exponential decay are integrated analytically with a frozen source per completed substep. Density may exceed the color reference, retaining accumulated amount rather than clipping it.
 
 The patch spans at least 64 m across the beach and 384 m along it for a 128 m FFT tile. Its inland coverage expands with a conservative spectral height bound and Height gain, up to 64 m inland. Gentle slopes can also expand the offshore region. Alongshore spacing is 1.5 m at the default tile size. The bed remains the existing straight sand slope, shared by simulation and rendering. Landward and alongshore boundaries reflect; the offshore edge samples FFT elevation and matching depth-integrated momentum in a relaxation zone occupying the outer 20% of the patch. There is no arbitrary obstacle editor or terrain SDF in this version.
 
@@ -400,7 +403,7 @@ omega = sqrt(g |k|)
 
 The three boundary spectra `(H, Qx, Qz)` receive the same configurable smooth low-pass. In **Shallow water (SWE) → FFT input filter**, **Filter short waves** enables it; **Reject wavelength <= (m)** sets the rejected wavelength limit, and **Transition width (m)** sets the smooth transition above that limit. The default is a fixed 12 m cutoff plus a 12 m transition: wavelengths <= 12 m are rejected and >= 24 m pass fully. Unlike the earlier automatic rule, these values do not change with FFT resolution. A zero transition gives a hard cutoff. Disabling the filter passes all FFT modes. The **3–6 m** preset admits more short waves for comparison, but the first-order SWE grid can still dissipate unresolved waves and does not recover their dispersion.
 
-Filter changes apply immediately and reset SWE water/foam/sand history, while FFT time keeps advancing. Allow approximately 15–25 simulated seconds for arrival at the default shoreline. The settings persist with the other controls. No additional short-wave normal detail is added. CLI equivalents (put overrides after `--beach`):
+Filter changes apply immediately and reset SWE water/foam/sand history, while FFT time keeps advancing. The patch is reseeded from the current filtered FFT, rather than restarted as still water. The settings persist with the other controls. No additional short-wave normal detail is added. CLI equivalents (put overrides after `--beach`):
 
 ```powershell
 cargo run --release --features ocean --bin ocean -- --beach --swe-filter-cutoff 3 --swe-filter-transition 3
@@ -409,7 +412,7 @@ cargo run --release --features ocean --bin ocean -- --beach --no-swe-filter
 
 The six spectra share the existing IFFT stages. SWE samples channels 3–5 at `(world / FFT_tile_length + 0.5) * FFT_resolution`, with periodic wrapping and bilinear interpolation. This matches the ocean's undeformed world-coordinate convention. It interpolates the previous and current FFT boundary frames at each SWE substep; no FFT or momentum readback to the CPU is required.
 
-After reset, a six-second smooth ramp introduces the external field. Height gain applies to elevation and momentum equally. For extreme inputs, a common safety scale limits elevation to half the local still-water depth and momentum magnitude to eight times that depth. The scale preserves their ratio, although those clipped cases no longer reproduce the raw FFT amplitude.
+On reset, the entire patch samples the current filtered FFT elevation and momentum. The six-second startup ramp has been removed. Height gain multiplied by the SWE-specific input gain applies to elevation and momentum equally. For extreme inputs, a common safety scale limits elevation to half the local still-water depth and momentum magnitude to eight times that depth. The scale preserves their ratio, although those clipped cases no longer reproduce the raw FFT amplitude.
 
 The relaxed target is `(max(eta-Bed, 0), Qx, Qz, 0)`, blended with weight `1-exp(-4*edge_weight*dt)`. Foam is generated inside the SWE region rather than imported from FFT. The existing Jacobian foam remains on the far ocean.
 
@@ -427,7 +430,7 @@ The bundled `assets/shorewaves/voronoi_lace.png` comes from Reboot16 / Enrico K.
 
 ### Lifecycle and validation
 
-Pause freezes simulation and texture flow. R, Restart time and **Reset shallow water, foam and sand** reset the local simulation to a lake at rest. Terrain, Height gain, blend-depth and enable changes also reset it; applying a new FFT spectrum rebuilds the coupled resources; foam-rate, drying-time and view changes preserve history. Settings persist, but simulation state does not. Snapshot mode prewarms up to 60 seconds of shore history (8 seconds offshore); later snapshots approximate a finite history window.
+Pause freezes simulation and texture flow. R, Restart time and **Reset shallow water, foam and sand** reinitialize the local simulation from the current FFT and clear foam/sand history. Terrain, Height gain, SWE input gain, blend-depth and enable changes also reset it; applying a new FFT spectrum rebuilds the coupled resources; foam-rate, drying-time and view changes preserve history. Settings persist, but simulation state does not. Snapshot mode prewarms up to 60 seconds of shore history (8 seconds offshore); later snapshots approximate a finite history window.
 
 `--verify` exercises the actual GPU shader: lake at rest, local pulse mass conservation away from the inlet, propagation and foam transport in both axes, stranded deposition/decay/rewetting, extreme slope/amplitude settings, terrain reset, run-up, finite/nonnegative states, pause, reset and disable. Raster verification prewarms 24 seconds and checks water history at two target sizes. The FFT test compares all six channels to a double-precision direct DFT and checks analytic oblique waves in both directions. An inlet probe checks production world-coordinate wrapping, time interpolation and gain against CPU samples. Zero FFT power must generate no shoreline flow/foam. Existing optics and sky tests remain enabled. `cargo test --all-features` covers configuration compatibility and the existing CPU suites.
 
@@ -450,3 +453,47 @@ The heightfield cannot overturn or produce airborne spray. First-order numerical
 SWE 面板的 **Small-wave normals → Normal detail strength** 控制近岸视觉细节，默认 1，范围 0～3，0 为关闭。调整即时生效，不重置 SWE；参数随其他设置保存。CLI 对应 `--shore-normal-strength`（放在 `--beach` 后）。
 
 片元着色器读取未过滤 FFT 水位，以 1 格与 4 格跨度的中心差分坡度之差构造近似高频细节；它独立于 SWE 输入过滤，不是严格的频域带通。细节按近岸混合权重补入法线，在 2～25 厘米水深内渐隐，并按像素足迹抑制远处闪烁。只影响水面反射、高光及表面光照，不修改几何位移、水位、流动、泡沫生成和沙滩残留。需启用 Water optics 的 Sky reflection and highlights；物理调试视图保持原样。这不是短波在 SWE 中的真实传播或折射。
+
+
+### SWE 一阶／二阶与 GPU 计时
+
+**Shallow water (SWE) → SWE solver** 可切换 **First order (Euler)** 和 **Second order (MUSCL + RK2)**。默认保留一阶，选择会保存。切换会重置近岸水体、泡沫和湿沙，FFT 时间继续推进。两种模式使用相同 256² 网格和 CFL 子步条件，二阶每子步执行两阶段并额外使用 3 MiB 预测状态缓存。
+
+面板显示最近异步采样的 **SWE GPU 毫秒数、子步数、推进的模拟毫秒数及每子步耗时**。时间戳覆盖本帧首个 SWE pass 开始至最后一个 pass 结束，包括中间参数拷贝、子步状态拷贝和泡沫/湿沙更新；不包含 FFT、渲染、CPU 提交、末尾状态拷贝及计时读回。只有一个读回在途，未完成时跳过采样，不阻塞帧循环。暂停/关闭显示 idle；不支持 timestamp query 的显卡显示 unsupported，不以 CPU 时间冒充 GPU 时间。
+
+对比时先将 **Normal detail strength** 设为 0，使用相同 FFT、过滤参数、网格和时间倍率。切换后等待波重新到岸；需要同一相位时点击 Ocean controls 的 Restart time。比较耗时时同时检查子步数，避免帧长变化造成工作量差异。二阶仍是非色散 SWE，不能恢复网格无法分辨的波。
+
+```powershell
+cargo run --release --features ocean --bin ocean -- --beach --swe-order 2 --shore-normal-strength 0
+```
+
+GPU 验证包含两种模式的静水保持、局部脉冲质量与输运、湿干及退水泡沫、极端坡度、切换重置，以及 4 米波长小振幅波在平底上的传播误差检查。该波形测试每波长 16 格，不代表默认沿岸 1.5 米格距也能分辨 4 米波。
+
+
+### 水面泡沫与沙滩残留颜色
+
+SWE 面板新增 **Foam colors**：**Water foam** 控制水面泡沫（含远海白沫），**Stranded foam (sand)** 控制退水后的沙滩残留泡沫。默认水面近白，残留为较暗的冷灰蓝，便于区分。**Distinct defaults** 恢复这组配色，**Match previous colors** 恢复原来的近白配色。颜色即时生效、自动保存，不重置水体或残留历史；光照和水下吸收仍会影响最终显示色。CLI 对应 `--water-foam-color R,G,B` 和 `--stranded-foam-color R,G,B`，使用 0～1 线性 RGB，放在 `--beach` 后。
+
+
+残留可见性修正：沙滩残留现在以浓度调节透明度，纹理只调制斑驳程度，避免低浓度残留被纹理阈值整体抹掉。近岸水面覆盖改用采样的 SWE 水深，避免较粗的水面三角形横跨干格子遮住残留。**Identify foam: water green / sand red** 可用绿色标记水面泡沫、红色标记真正的沙滩残留，**Distinct defaults** 恢复正常配色。较宽的临水泡沫带通常仍属于水面泡沫；残留是靠陆一侧的细窄退水痕迹。
+
+
+### 泡沫面密度调试
+
+在 **Shallow water (SWE)** 面板点击 **Debug foam density: green / red**，或在 **Shore view** 选择 **Foam density (green / red)**。CLI：`--beach --shore-view 6`。水面与沙滩残留使用同一色标：低密度绿色，中间黄色，达到参考值及以上红色；无泡沫保留背景。调试颜色不经过泡沫纹理、光照或远海白沫混合，低于 0.01 的极弱密度淡入背景。正常 Shaded 视图保留已有材质。
+
+- **Foam generation / s**：有效泡沫生成速率，设为 0 可观察已有泡沫的输送与汇聚。
+- **Shore foam decay / s**：每秒指数衰减系数，0 表示关闭水面泡沫衰减。
+- **Foam compression threshold / s**：生成模型中压缩增强项的阈值；不改变守恒输送本身的汇聚效果。
+- **Density color reference**：红色对应的密度，默认 2；只调整显示映射，不裁剪模拟密度。
+
+这些参数即时生效；需要公平比较时使用 **Reset shallow water, foam and sand** 或重启时间。退水残留由干格子剩余泡沫量沉积，沿用 10 秒衰减时间与再淹没洗除。此阶段不新增孔隙纹理模型。GPU 验证覆盖两种求解模式的泡沫总量守恒、平移、汇聚增密、扩散减密、指数衰减及干湿转换。
+
+
+### FFT 初始化与输入增益
+
+**Shallow water (SWE) → FFT input → FFT to SWE gain**，范围 **0～3**，默认 **1**。该系数同时乘到 FFT 水位扰动与两个水平动量分量上，并同时用于全域初始化和持续边界输入；远海 FFT 的显示不受此系数影响。它与原有 **Height gain** 相乘，0 会把 SWE 重置为静水并关闭后续输入。参数自动保存；修改后即使暂停也重新初始化 SWE，清除泡沫和湿沙历史。
+
+初始化取当前时刻、经过当前过滤参数的 FFT 场，不使用上一帧 FFT，也不再等待 6 秒渐强。水深由“FFT 水位减地形高度”得到并限制为非负，干区动量清零；极浅水保留速度保护。因此强增益受安全限幅时，不保证实际振幅严格增至三倍。初始化不是完整的浅水稳态解，之后仍会调整传播相位、建立冲岸和泡沫。
+
+CLI 示例：`cargo run --release --features ocean --bin ocean -- --beach --swe-input-gain 1.5`。

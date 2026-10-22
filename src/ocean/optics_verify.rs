@@ -356,6 +356,27 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
             .into());
         }
     }
+    // Regression: changing only the stranded tint must reach visible pixels,
+    // including dilute deposits that used to disappear under the lace threshold.
+    let size = [385, 289];
+    renderer.resize(&gpu.device, size[0], size[1]);
+    let camera = Camera::beach(config.length).uniform(config, size[0] as f32 / size[1] as f32);
+    let mut tint = settings;
+    tint.shore.view = 0;
+    tint.shore.water_foam_color = [0.0, 1.0, 0.0];
+    tint.shore.stranded_foam_color = [1.0, 0.0, 0.0];
+    let red = image(gpu, &renderer, &ocean, &camera, tint, size)?;
+    tint.shore.stranded_foam_color = [0.0, 0.0, 1.0];
+    let blue = image(gpu, &renderer, &ocean, &camera, tint, size)?;
+    let changed = red
+        .iter()
+        .zip(&blue)
+        .filter(|(a, b)| a[0] > b[0] + 0.005 && b[2] > a[2] + 0.005)
+        .count();
+    if changed < 4 {
+        return Err(format!("stranded foam tint invisible: {changed} pixels").into());
+    }
+    println!("GPU stranded tint: {changed} visible pixels respond independently of water foam");
     println!("GPU shore raster: world-space history reaches water shading at both target sizes OK");
     Ok(())
 }

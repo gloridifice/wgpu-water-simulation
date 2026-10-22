@@ -4,6 +4,7 @@ pub mod spectrum;
 pub mod verify;
 pub mod viewer;
 
+pub(crate) mod gpu_timer;
 mod gui;
 mod theme;
 
