@@ -36,8 +36,9 @@ pub struct ShoreConfig {
     pub foam_front_distance: f32,
     // Legacy serialized name retained; now measures free-surface elevation drop.
     pub foam_front_depth_drop: f32,
-    pub foam_front_gain_points: [f32; 4],
     pub foam_background_multiplier: f32,
+    pub foam_follow: f32,
+    pub foam_response_time: f32,
     pub decay: f32,
     pub foam_compression_threshold: f32,
     pub foam_density_reference: f32,
@@ -64,8 +65,9 @@ impl Default for ShoreConfig {
             foam_front_generation: 8.0,
             foam_front_distance: 1.0,
             foam_front_depth_drop: 0.03,
-            foam_front_gain_points: [0.0, 0.2, 0.8, 1.0],
             foam_background_multiplier: 0.15,
+            foam_follow: 0.8,
+            foam_response_time: 0.35,
             decay: 0.45,
             foam_compression_threshold: 0.1,
             foam_density_reference: 2.0,
@@ -97,6 +99,8 @@ impl ShoreConfig {
                 2.0,
             ),
             ("shore foam decay", self.decay, 0.0, 4.0),
+            ("foam follow multiplier", self.foam_follow, 0.0, 1.0),
+            ("foam response time", self.foam_response_time, 0.0, 5.0),
             (
                 "front foam generation",
                 self.foam_front_generation,
@@ -140,17 +144,6 @@ impl ShoreConfig {
                 return Err(format!("{name} must be finite and in {low}..={high}"));
             }
         }
-        if self
-            .foam_front_gain_points
-            .iter()
-            .any(|v| !v.is_finite() || !(0.0..=20.0).contains(v))
-            || self
-                .foam_front_gain_points
-                .windows(2)
-                .any(|pair| pair[0] > pair[1])
-        {
-            return Err("front gain points must be finite, ordered and within 0..=20".into());
-        }
         for color in [self.water_foam_color, self.stranded_foam_color] {
             if color
                 .iter()
@@ -169,26 +162,6 @@ impl ShoreConfig {
     }
 }
 
-/// Four-point gain for the GUI preview. Output is a multiplier, not a density cap.
-pub fn front_foam_gain(value: f32, points: [f32; 4]) -> f32 {
-    let [start, full, fade, end] = points;
-    let ramp = |low: f32, high: f32| {
-        let t = ((value - low) / (high - low)).clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
-    };
-    let rise = if full > start {
-        ramp(start, full)
-    } else {
-        f32::from(value >= full)
-    };
-    let fall = if end > fade {
-        1.0 - ramp(fade, end)
-    } else {
-        f32::from(value <= fade)
-    };
-    rise * fall
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ShoreUniform {
@@ -203,7 +176,7 @@ pub struct ShoreUniform {
     pub density: [f32; 4],
     pub foam_generation: [f32; 4],
     pub foam_front: [f32; 4],
-    pub foam_front_gain: [f32; 4],
+    pub foam_motion: [f32; 4],
     pub water_foam_color: [f32; 4],
     pub stranded_foam_color: [f32; 4],
     pub options: [f32; 4],
@@ -241,14 +214,14 @@ impl Shore {
         let make_field = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: u64::from(RESOLUTION * RESOLUTION) * 48,
+                size: u64::from(RESOLUTION * RESOLUTION) * 80,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
         };
-        let field = make_field("SWE visible, conservative and ground blocks");
+        let field = make_field("SWE visible, conservative, ground, foam motion and texture blocks");
         let previous = make_field("previous shore history");
         let stage = make_field("SWE RK predictor");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -433,7 +406,7 @@ impl Shore {
                 c.foam_front_depth_drop,
                 c.foam_background_multiplier,
             ],
-            foam_front_gain: c.foam_front_gain_points,
+            foam_motion: [c.foam_follow, c.foam_response_time, 0.0, 0.0],
             water_foam_color: [
                 c.water_foam_color[0],
                 c.water_foam_color[1],
@@ -881,7 +854,7 @@ fn verify_wave_accuracy(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     let mut errors = [0.0_f64; 2];
     for order in [1u32, 2] {
         let shore = Shore::new(gpu, &ocean);
-        let mut seed = vec![[0.0_f32; 4]; cells * 3];
+        let mut seed = vec![[0.0_f32; 4]; cells * 5];
         for z in 0..n {
             for x in 0..n {
                 let eta = amplitude * (k * (x as f32 + 0.5) * 0.25).sin();
@@ -974,6 +947,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     verify_fft_initialization(gpu)?;
     verify_wave_accuracy(gpu)?;
     verify_surface_foam(gpu)?;
+    verify_foam_motion(gpu)?;
     verify_foam_generation_controls(gpu)?;
     verify_front_foam(gpu)?;
     for order in [1, 2] {
@@ -1121,7 +1095,7 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
             .iter()
             .any(|q| q[0] < 0.0 || q[3] < 0.0 || q[3] > 1e6)
         || !active[..cells].iter().any(|q| q[0] > 0.1)
-        || !active[2 * cells..].iter().any(|q| q[0] > 0.01)
+        || !active[2 * cells..3 * cells].iter().any(|q| q[0] > 0.01)
     {
         return Err("SWE run-up: invalid state or missing water/stranded foam".into());
     }
@@ -1132,7 +1106,8 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
     advance(&mut shore, &optics, 24.0, true, gain);
     let cleared = read(&shore)?;
     if cleared[..cells].iter().any(|q| q[0] != 0.0 || q[1] != 0.0)
-        || cleared[2 * cells..].iter().any(|q| q[0] != 0.0)
+        || cleared[2 * cells..3 * cells].iter().any(|q| q[0] != 0.0)
+        || cleared[3 * cells..].iter().any(|q| *q != [0.0; 4])
     {
         return Err("SWE reset failed".into());
     }
@@ -1150,7 +1125,8 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
     optics.shore.foam_front_generation = 5.0;
     optics.shore.foam_front_distance = 0.5;
     optics.shore.foam_front_depth_drop = 0.01;
-    optics.shore.foam_front_gain_points = [0.1, 0.3, 0.6, 0.9];
+    optics.shore.foam_follow = 0.6;
+    optics.shore.foam_response_time = 0.7;
     optics.shore.foam_background_multiplier = 0.05;
     optics.shore.water_foam_color = [0.2, 0.7, 0.9];
     optics.shore.stranded_foam_color = [0.8, 0.3, 0.2];
@@ -1164,7 +1140,8 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
     optics.shore.foam_front_generation = 8.0;
     optics.shore.foam_front_distance = 1.0;
     optics.shore.foam_front_depth_drop = 0.03;
-    optics.shore.foam_front_gain_points = ShoreConfig::default().foam_front_gain_points;
+    optics.shore.foam_follow = 0.8;
+    optics.shore.foam_response_time = 0.35;
     optics.shore.foam_background_multiplier = 0.15;
     optics.shore.filter_cutoff = 3.0;
     advance(&mut shore, &optics, 24.1, false, gain);
@@ -1242,9 +1219,8 @@ fn verify_foam_generation_controls(gpu: &Gpu) -> Result<(), super::gpu::Error> {
 @compute @workgroup_size(8)
 fn generation_probe(@builtin(global_invocation_id) id: vec3<u32>) {
     let samples=array<f32,8>(0.0,0.05,0.1,0.25,0.45,0.65,1.0,4.0);
-    let gain_samples=array<f32,8>(0.0,0.1,0.2,0.5,0.8,0.9,1.0,1.1);
     if id.x>=8u { return; }
-    new_shore[id.x]=vec4(samples[id.x],foam_breaking_weight(samples[id.x]),foam_front_gain(gain_samples[id.x]),gain_samples[id.x]);
+    new_shore[id.x]=vec4(samples[id.x],foam_breaking_weight(samples[id.x]),0.0,0.0);
 }"#
     );
     let shader = gpu
@@ -1300,7 +1276,7 @@ fn generation_probe(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         gpu.queue.submit([encoder.finish()]);
         let bytes = gpu.read_buffer(&shore.field, 8 * 16)?;
-        for (index, b) in bytes.as_chunks::<16>().0.iter().enumerate() {
+        for b in bytes.as_chunks::<16>().0 {
             let sample: [f32; 4] = bytemuck::pod_read_unaligned(b);
             let expected = if transition == 0.0 {
                 f32::from(sample[0] > threshold)
@@ -1310,13 +1286,6 @@ fn generation_probe(@builtin(global_invocation_id) id: vec3<u32>) {
             };
             if !sample[1].is_finite() || (sample[1] - expected).abs() > 1e-6 {
                 return Err(format!("foam generation threshold={threshold} width={transition}: {sample:?} expected={expected}").into());
-            }
-            let expected_gain = [0.0, 0.5, 1.0, 1.0, 1.0, 0.5, 0.0, 0.0][index];
-            if !sample[2].is_finite() || (sample[2] - expected_gain).abs() > 1e-5 {
-                return Err(format!(
-                    "front gain ramp/plateau/endpoints: {sample:?}, expected {expected_gain}"
-                )
-                .into());
             }
         }
     }
@@ -1385,24 +1354,14 @@ fn verify_front_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
         ([1.0, 0.0], [-0.02, 0.0], 1.0, 0.03, 8.0, 96, full),
         ([-1.0, 0.0], [0.02, 0.0], 1.0, 0.03, 8.0, 96, full),
         ([1.0, 0.0], [0.0, 0.0], 1.0, 0.03, 8.0, 96, 0.0),
-        ([1.0, 0.0], [-0.02, 0.0], 1.0, 0.03, 8.0, 96, full),
-        ([1.0, 0.0], [-0.02, 0.0], 1.0, 0.03, 8.0, 96, full),
-        ([1.0, 0.0], [-0.02, 0.0], 1.0, 0.03, 8.0, 96, full),
-        ([1.0, 0.0], [0.0, 0.0], 1.0, 0.03, 8.0, 96, 0.0),
+        ([1.0, 0.0], [-0.03, 0.0], 1.0, 0.03, 8.0, 96, 1.0),
+        ([1.0, 0.0], [-0.06, 0.0], 1.0, 0.03, 8.0, 96, 1.0),
     ]
     .into_iter()
     .enumerate()
     {
         let bed_slope = if (11..14).contains(&case) { 0.18 } else { 0.0 };
-        let gain_points = match case {
-            15 => [0.0, 0.2, 0.5, 1.0], // Falling side.
-            16 => [0.0, 1.0, 1.0, 1.0], // Rising side; hard right edge.
-            17 => [0.8, 0.8, 1.0, 1.0], // Rejected below hard left edge.
-            18 => [0.0, 0.0, 1.0, 1.0], // Unity gain must preserve a zero source.
-            _ => ShoreConfig::default().foam_front_gain_points,
-        };
-        let expected = expected * front_foam_gain(expected, gain_points);
-        let mut seed = vec![[0.0_f32; 4]; 3 * cells];
+        let mut seed = vec![[0.0_f32; 4]; 5 * cells];
         for z in 0..n {
             for x in 0..n {
                 let mut h = (2.0
@@ -1423,7 +1382,6 @@ fn verify_front_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
         p.terrain[1] = bed_slope;
         p.terrain[2] = 0.0;
         p.foam_front = [rate, distance, drop, 0.0];
-        p.foam_front_gain = gain_points;
         p.visual[1] = x as f32;
         gpu.queue
             .write_buffer(&shore.uniform, 0, bytemuck::bytes_of(&p));
@@ -1483,7 +1441,7 @@ fn verify_front_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
         }
     }
     eprintln!(
-        "Front foam: falling/rising/flat surfaces, stationary/disabled/edge/dry samples, sloping-bed cancellation, anisotropic oblique sampling, four-point gain on rising/flat/falling/hard edges and both solver source updates OK"
+        "Front foam: falling/rising/flat surfaces, stationary/disabled/edge/dry samples, sloping-bed cancellation, anisotropic oblique sampling, full-strength saturation without gain suppression and both solver source updates OK"
     );
     Ok(())
 }
@@ -1504,7 +1462,7 @@ fn verify_surface_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     for order in [1, 2] {
         for mode in 0..7 {
             let shore = Shore::new(gpu, &ocean);
-            let mut seed = vec![[0.0_f32; 4]; cells * 3];
+            let mut seed = vec![[0.0_f32; 4]; cells * 5];
             for y in 0..n {
                 for x in 0..n {
                     let i = y * n + x;
@@ -1536,6 +1494,7 @@ fn verify_surface_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
             let mut p = shore.parameters(&OpticsConfig::beach_scene(), 0.0, false, 0.0);
             p.terrain[1] = 0.0;
             p.domain = [0.0, 0.0, 64.0, 64.0];
+            p.foam_motion = [1.0, 0.0, 0.0, 0.0];
             p.options[0] = 0.0;
             p.foam_front[0] = 0.0;
             p.options[3] = 0.0;
@@ -1608,38 +1567,261 @@ fn verify_surface_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     Ok(())
 }
 
+/// Prescribed water flow isolates production foam flux/motion from water dynamics.
+/// Check material displacement against analytic trajectories, not texture phase.
+fn verify_foam_motion(gpu: &Gpu) -> Result<(), super::gpu::Error> {
+    let ocean = Ocean::new(gpu, super::spectrum::OceanConfig::default())?;
+    let shore = Shore::new(gpu, &ocean);
+    let shader = gpu
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("foam motion trajectory probe"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}\n{}",
+                    include_str!("shore.wgsl"),
+                    include_str!("shore_compute.wgsl"),
+                    r#"
+@compute @workgroup_size(8,8)
+fn motion_probe(@builtin(global_invocation_id) id: vec3<u32>) {
+    let n=u32(shore.options.z); if id.x>=n || id.y>=n { return; }
+    let cells=n*n; let index=id.y*n+id.x; let c=vec2<i32>(id.xy);
+    if shore.foam_motion.w>0.5 {
+        new_shore[index]=sample_initial_texture(vec2(shore.foam_motion.z,96.0)); return;
+    }
+    let original=state(c); var q=original;
+    let spacing=shore.domain.zw/f32(n);
+    q.w=max(0.0,q.w-shore.timing.y*((foam_flux(c,vec2(1,0),0u)+foam_flux(c,vec2(-1,0),0u))/spacing.x
+        +(foam_flux(c,vec2(0,1),1u)+foam_flux(c,vec2(0,-1),1u))/spacing.y));
+    new_shore[index]=vec4(q.w,1.0,q.x,velocity(q).x);
+    new_shore[cells+index]=q;
+    new_shore[2u*cells+index]=initial_shore[2u*cells+index];
+    let motion=advance_foam_motion(c,q,original);
+    new_shore[3u*cells+index]=motion.motion;
+    new_shore[4u*cells+index]=motion.texture;
+}"#
+                )
+                .into(),
+            ),
+        });
+    let pipeline = gpu
+        .device
+        .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: &shader,
+            entry_point: Some("motion_probe"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+    let bind = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: shore.uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: shore.previous.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: shore.field.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: shore.previous.as_entire_binding(),
+            },
+        ],
+    });
+    let n = RESOLUTION as usize;
+    let cells = n * n;
+    // Follow, response, water speed, initial foam speed, stretching, dt, steps.
+    for (case, (follow, response, water, initial, stretch, dt, steps)) in [
+        (0.5_f32, 0.0_f32, 1.0_f32, 0.0_f32, false, 0.02_f32, 120),
+        (0.0, 0.0, 1.0, 0.0, false, 0.02, 120),
+        (0.8, 0.35, 1.0, 0.0, false, 0.02, 120),
+        (0.8, 0.35, -1.0, 0.8, false, 0.02, 120),
+        (1.0, 0.0, 0.0, 0.0, true, 0.02, 120),
+        (0.8, 0.35, 1.0, 0.0, false, 0.01, 240),
+        (0.5, 0.0, 1.0, 0.0, false, 0.02, 1020),
+        (1.0, 0.0, 0.0, 0.0, true, 0.02, 1020),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut seed = vec![[0.0_f32; 4]; 5 * cells];
+        for z in 0..n {
+            for x in 0..n {
+                let i = z * n + x;
+                let u = if stretch {
+                    (x as f32 - 96.0) * 0.25 * 0.1
+                } else {
+                    water
+                };
+                let density = if (64..128).contains(&x) && (64..128).contains(&z) {
+                    0.5
+                } else {
+                    0.0
+                };
+                seed[i] = [density, 1.0, 2.0, u];
+                seed[cells + i] = [2.0, 2.0 * u, 0.0, density];
+                seed[2 * cells + i] = [0.0, 0.0, 2.0, 0.0];
+                seed[3 * cells + i] = [initial, 0.0, 0.0, 0.0];
+            }
+        }
+        gpu.queue
+            .write_buffer(&shore.previous, 0, bytemuck::cast_slice(&seed));
+        let mut p = shore.parameters(&OpticsConfig::beach_scene(), 0.0, false, 0.0);
+        p.domain = [0.0, 0.0, 64.0, 64.0];
+        p.timing[1] = dt;
+        p.foam_motion = [follow, response, 0.0, 0.0];
+        gpu.queue
+            .write_buffer(&shore.uniform, 0, bytemuck::bytes_of(&p));
+        for step in 0..steps {
+            let mut enc = gpu.device.create_command_encoder(&Default::default());
+            {
+                let mut pass = enc.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &bind, &[]);
+                pass.dispatch_workgroups(RESOLUTION / 8, RESOLUTION / 8, 1);
+            }
+            enc.copy_buffer_to_buffer(&shore.field, 0, &shore.previous, 0, shore.field.size());
+            gpu.queue.submit([enc.finish()]);
+            if case == 3 && step == 0 {
+                let bytes = gpu.read_buffer(&shore.field, shore.field.size())?;
+                let i = 3 * cells + 96 * n + 96;
+                let m: [f32; 4] = bytemuck::pod_read_unaligned(&bytes[16 * i..16 * (i + 1)]);
+                if m[0] <= 0.0 || m[2] <= 0.0 {
+                    return Err("foam reversal lost initial inertia".into());
+                }
+            }
+        }
+        let bytes = gpu.read_buffer(&shore.field, shore.field.size())?;
+        let data: Vec<[f32; 4]> = bytes
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|b| bytemuck::pod_read_unaligned(b))
+            .collect();
+        let mass: f64 = data[cells..2 * cells].iter().map(|q| q[3] as f64).sum();
+        if data.iter().flatten().any(|v| !v.is_finite()) || (mass - 2048.0).abs() > 0.02 {
+            return Err(format!("foam motion case {case} mass/finite failed: {mass}").into());
+        }
+        let time = dt * steps as f32;
+        let mid = 96 * n + 96;
+        let motion = data[3 * cells + mid];
+        let texture = data[4 * cells + mid];
+        let age_a = time % 2.0;
+        let age_b = if time < 1.0 { time } else { (time + 1.0) % 2.0 };
+        if (texture[2] - age_a / 2.0).abs() > 0.0001 {
+            return Err(format!(
+                "foam texture phase does not track simulated time: {} vs {time}",
+                texture[2]
+            )
+            .into());
+        }
+        if stretch {
+            let material_span = 2.0 - (data[3 * cells + mid + 4][2] - data[3 * cells + mid - 4][2]);
+            let span_b = 2.0 - (data[4 * cells + mid + 4][0] - data[4 * cells + mid - 4][0]);
+            if (material_span / 2.0 - (-0.1 * age_a).exp()).abs() > 0.002
+                || (span_b / 2.0 - (-0.1 * age_b).exp()).abs() > 0.002
+                || (data[cells + mid][3] / 0.5 - (-0.1 * time).exp()).abs() > 0.002
+            {
+                return Err(format!(
+                    "foam stretch: material span {material_span}, density {}",
+                    data[cells + mid][3]
+                )
+                .into());
+            }
+        } else {
+            let target = follow * water;
+            let (expected_velocity, expected_distance) = if response == 0.0 {
+                (target, target * time)
+            } else {
+                let attenuation = (-time / response).exp();
+                (
+                    target + (initial - target) * attenuation,
+                    target * time + (initial - target) * response * (1.0 - attenuation),
+                )
+            };
+            let center: f64 = data[cells..2 * cells]
+                .iter()
+                .enumerate()
+                .map(|(i, q)| (i % n) as f64 * 0.25 * q[3] as f64)
+                .sum::<f64>()
+                / mass;
+            let density_distance = center - 95.5 * 0.25;
+            let layer_distance = |age: f32| {
+                target * age
+                    + if response == 0.0 {
+                        0.0
+                    } else {
+                        (initial - target)
+                            * response
+                            * ((-(time - age) / response).exp() - (-time / response).exp())
+                    }
+            };
+            if (motion[0] - expected_velocity).abs() > 0.001
+                || (motion[2] - layer_distance(age_a)).abs() > 0.002
+                || (texture[0] - layer_distance(age_b)).abs() > 0.002
+                || (density_distance - expected_distance as f64).abs() > 0.002
+            {
+                return Err(format!("foam motion {case}: velocity {}, texture {}, density {density_distance}; expected {expected_velocity}, {expected_distance}",motion[0],motion[2]).into());
+            }
+        }
+    }
+    // A wet donor retains its coordinates next to dry/outside samples, rather
+    // than interpolating toward cleared zero displacement. All-dry is finite.
+    let mut seed = vec![[0.0_f32; 4]; 5 * cells];
+    let donor = 96 * n + 64;
+    seed[cells + donor][0] = 2.0;
+    seed[3 * cells + donor] = [0.0, 0.0, 3.0, -2.0];
+    seed[4 * cells + donor] = [5.0, -4.0, 0.0, 0.0];
+    gpu.queue
+        .write_buffer(&shore.previous, 0, bytemuck::cast_slice(&seed));
+    for (x, expected) in [(63.75, [3.0, -2.0, 5.0, -4.0]), (62.25, [0.0; 4])] {
+        let mut p = shore.parameters(&OpticsConfig::beach_scene(), 0.0, false, 0.0);
+        p.foam_motion = [0.8, 0.35, x, 1.0];
+        gpu.queue
+            .write_buffer(&shore.uniform, 0, bytemuck::bytes_of(&p));
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        gpu.queue.submit([enc.finish()]);
+        let bytes = gpu.read_buffer(&shore.field, 16)?;
+        let actual: [f32; 4] = bytemuck::pod_read_unaligned(&bytes[..16]);
+        if actual != expected {
+            return Err(
+                format!("foam wet/dry texture interpolation: {actual:?} vs {expected:?}").into(),
+            );
+        }
+    }
+    eprintln!(
+        "Foam motion: follow/stop/reversal, density transport independent of two staggered texture resets, 20 s bounded stretch, wet/dry interpolation and timestep consistency OK"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn front_gain_window_and_saved_controls() {
-        let points = [0.0, 0.2, 0.8, 1.0];
-        for (value, expected) in [
-            (0.0, 0.0),
-            (0.1, 0.5),
-            (0.2, 1.0),
-            (0.5, 1.0),
-            (0.8, 1.0),
-            (0.9, 0.5),
-            (1.0, 0.0),
-        ] {
-            assert!((front_foam_gain(value, points) - expected).abs() < 1e-5);
-        }
-        for (value, expected) in [(0.1, 0.0), (0.2, 1.0), (0.5, 1.0), (0.8, 1.0), (0.9, 0.0)] {
-            assert_eq!(front_foam_gain(value, [0.2, 0.2, 0.8, 0.8]), expected);
-        }
-        let legacy: ShoreConfig = serde_json::from_str(r#"{"foam_front_power":2.0}"#).unwrap();
-        assert_eq!(legacy.foam_front_gain_points, points);
-        let config = ShoreConfig {
-            foam_front_gain_points: [2.0, 6.0, 12.0, 18.0],
-            ..Default::default()
-        };
+    fn removed_gain_settings_preserve_other_controls() {
+        let config: ShoreConfig = serde_json::from_str(
+            r#"{"foam_front_gain_points":[0,1.2,1.62,2.5],"foam_front_power":2,"foam_front_generation":3.5,"foam_background_multiplier":0.05}"#,
+        ).unwrap();
         config.validate().unwrap();
-        assert_eq!(front_foam_gain(4.0, config.foam_front_gain_points), 0.5);
-        assert_eq!(front_foam_gain(9.0, config.foam_front_gain_points), 1.0);
-        assert_eq!(front_foam_gain(15.0, config.foam_front_gain_points), 0.5);
-        assert_eq!(front_foam_gain(20.0, config.foam_front_gain_points), 0.0);
+        assert_eq!(config.foam_front_generation, 3.5);
+        assert_eq!(config.foam_background_multiplier, 0.05);
         let saved = serde_json::to_string(&config).unwrap();
+        assert!(!saved.contains("foam_front_gain_points"));
         assert!(!saved.contains("foam_front_power"));
         assert_eq!(serde_json::from_str::<ShoreConfig>(&saved).unwrap(), config);
     }
@@ -1655,6 +1837,18 @@ mod tests {
     #[test]
     fn rejects_singular_and_nonfinite_controls() {
         for c in [
+            ShoreConfig {
+                foam_follow: 1.01,
+                ..Default::default()
+            },
+            ShoreConfig {
+                foam_response_time: -0.01,
+                ..Default::default()
+            },
+            ShoreConfig {
+                foam_response_time: f32::NAN,
+                ..Default::default()
+            },
             ShoreConfig {
                 input_gain: 3.1,
                 ..Default::default()
@@ -1693,14 +1887,6 @@ mod tests {
             },
             ShoreConfig {
                 foam_front_generation: f32::NAN,
-                ..Default::default()
-            },
-            ShoreConfig {
-                foam_front_gain_points: [0.0, 0.8, 0.2, 1.0],
-                ..Default::default()
-            },
-            ShoreConfig {
-                foam_front_gain_points: [0.0, f32::NAN, 0.8, 1.0],
                 ..Default::default()
             },
             ShoreConfig {

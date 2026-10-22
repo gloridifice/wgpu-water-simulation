@@ -172,42 +172,6 @@ pub(crate) fn parameter<R>(
     value
 }
 
-fn front_foam_gain_preview(ui: &mut egui::Ui, points: [f32; 4]) {
-    let (bounds, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 88.0), egui::Sense::hover());
-    response.on_hover_text("横轴显示范围：0～20；纵轴：增益 0～1。当前计算仍输入原始前沿权重（0～1），不做缩放。红线只限制前沿生成量，不裁剪累计泡沫密度。四个控制点在上方表格调整。");
-    let plot = bounds.shrink(6.0);
-    let painter = ui.painter();
-    painter.rect_filled(bounds, 3.0, egui::Color32::from_gray(24));
-    let position = |x: f32, y: f32| {
-        egui::pos2(
-            plot.left() + x / 20.0 * plot.width(),
-            plot.bottom() - y * plot.height(),
-        )
-    };
-    for (index, x) in points.into_iter().enumerate() {
-        painter.line_segment(
-            [position(x, 0.0), position(x, 1.0)],
-            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(65)),
-        );
-        painter.circle_filled(
-            position(x, if index == 0 || index == 3 { 0.0 } else { 1.0 }),
-            2.5,
-            egui::Color32::LIGHT_RED,
-        );
-    }
-    let curve = (0..=128)
-        .map(|i| {
-            let x = i as f32 / 128.0 * 20.0;
-            position(x, super::shore::front_foam_gain(x, points))
-        })
-        .collect();
-    painter.add(egui::Shape::line(
-        curve,
-        egui::Stroke::new(1.5_f32, egui::Color32::LIGHT_RED),
-    ));
-}
-
 fn help(name: &str) -> &'static str {
     match name {
         "波谱强度 A" => "Phillips 波谱强度；波高与 A 的平方根成正比。点击应用后重建波谱。",
@@ -701,15 +665,16 @@ parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui
                             parameter_table(ui, "front foam table", |ui| {
                             parameter(ui, "前沿生成速率（每秒）", "沿流向发现前方水面更低时的独立泡沫生成速率。0 关闭前沿生成；不要求前方接近干地，也不使用背景上涨阈值。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_generation, 0.0..=30.0)));
                             parameter(ui, "前沿采样距离（米）", "沿当前水流方向，在此距离内均匀采样 4 个位置。越远通常覆盖越宽，默认 1 米。按世界距离采样，兼容非正方形网格。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_distance, 0.05..=10.0).max_decimals(2)));
-                            parameter(ui, "前沿满强度水面落差（米）", "比较实际水面高度（地形高度＋水深）。当前水面减去前方最低水面，从 0 到此值平滑增强；达到此值时原始权重为 1，再由四点增益曲线限制。干燥采样点跳过，不把沙坡高度当成水面。越小越敏感，默认 0.03 米。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_depth_drop, 0.001..=1.0).logarithmic(true).max_decimals(3)));
-                            for (index, name) in ["增益起升位置", "增益满强位置", "增益回落位置", "增益归零位置"].into_iter().enumerate() {
-                                let low=if index==0 {0.0} else {shore.foam_front_gain_points[index-1]};
-                                let high=if index==3 {20.0} else {shore.foam_front_gain_points[index+1]};
-                                parameter(ui, name, "四个横坐标的范围是 0～20，纵轴是增益（0～1）。当前计算仍输入原始前沿权重（0～1），不做缩放。四点依次控制起升、满强、回落、归零；增益乘到原前沿生成权重上。相邻点重合表示硬切换。只影响新增前沿泡沫，参数实时生效并自动保存。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_gain_points[index], low..=high).max_decimals(3)));
-                            }
+                            parameter(ui, "前沿满强度水面落差（米）", "比较实际水面高度（地形高度＋水深）。当前水面减去前方最低水面，从 0 到此值平滑增强；达到或超过此值时权重保持为 1。干燥采样点跳过，不把沙坡高度当成水面。越小越敏感，默认 0.03 米。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_depth_drop, 0.001..=1.0).logarithmic(true).max_decimals(3)));
                             parameter(ui, "背景生成倍率", "缩放原有泡沫生成量，默认 0.15，使后方泡沫较弱。0 关闭背景生成。前沿速率设为 0、此倍率设为 1，可恢复原生成算法。", |ui| ui.add(egui::Slider::new(&mut shore.foam_background_multiplier, 0.0..=1.0).max_decimals(2)));
                             });
-                            front_foam_gain_preview(ui, shore.foam_front_gain_points);
+                            ui.separator();
+
+                            ui.label(egui::RichText::new("泡沫随流运动").strong());
+                            parameter_table(ui, "foam motion table", |ui| {
+                                parameter(ui, "水流跟随倍率", "泡沫目标速度 = 水流速度 × 此倍率。默认 0.8；1 为等速跟随，0 时泡沫速度逐渐降到零。密度和孔隙纹理共用泡沫速度，水流本身不受影响。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_follow, 0.0..=1.0).max_decimals(2)));
+                                parameter(ui, "速度响应时间（秒）", "泡沫速度追随目标速度的时间常数，默认 0.35 秒。越大越迟缓，转向后仍会短暂沿原方向漂移；0 为立即跟随。约经过此时间完成 63% 的速度变化。沙地残留不移动。", |ui| ui.add(egui::Slider::new(&mut shore.foam_response_time, 0.0..=5.0).max_decimals(2)));
+                            });
                             ui.separator();
 
                             parameter_table(ui, "shore foam table", |ui| {

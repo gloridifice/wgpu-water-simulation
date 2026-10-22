@@ -1,6 +1,8 @@
 // Hydrostatic reconstruction + local Lax-Friedrichs flux on a rectangular grid.
 // State blocks: visible (surface foam density,wetness,h,u),
 // conservative (h,hu,hv,surface foam amount per area), ground (deposit,last wet density,eta,v).
+// Fourth block: foam velocity X/Z and texture A displacement X/Z in meters.
+// Fifth block: texture B displacement X/Z, shared cycle phase, reserved.
 @group(0) @binding(0) var<uniform> shore: ShoreParams;
 @group(0) @binding(1) var<storage, read> old_shore: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read_write> new_shore: array<vec4<f32>>;
@@ -25,13 +27,83 @@ fn velocity(q: vec4<f32>) -> vec2<f32> {
 }
 // Shared face velocity: identical on either side, zero at closed boundaries.
 // Dry cells may receive foam from advancing water but cannot export it.
-fn foam_velocity(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> f32 {
+fn water_face_velocity(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> f32 {
     let b=c+delta; let n=i32(shore.options.z);
     if any(b<vec2(0)) || any(b>=vec2(n)) { return 0.0; }
     let a_state=state(c); let b_state=state(b);
     let speed=0.5*(velocity(a_state)[axis]+velocity(b_state)[axis])*f32(delta[axis]);
     let donor=select(b_state,a_state,speed>=0.0);
     return select(0.0,speed,donor.x>shore.density.z);
+}
+fn foam_response(previous: vec2<f32>, water: vec2<f32>, dt: f32) -> vec2<f32> {
+    let desired_velocity=water*shore.foam_motion.x;
+    if shore.foam_motion.y<=0.0 { return desired_velocity; }
+    return mix(previous,desired_velocity,1.0-exp(-dt/shore.foam_motion.y));
+}
+fn foam_transport_velocity(c: vec2<i32>) -> vec2<f32> {
+    let n=i32(shore.options.z);
+    let motion=old_shore[u32(3*n*n+c.y*n+c.x)];
+    // Midpoint response drives both conservative density flux and texture motion.
+    return foam_response(motion.xy,velocity(state(c)),shore.timing.y*0.5);
+}
+fn foam_velocity(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> f32 {
+    let b=c+delta; let n=i32(shore.options.z);
+    if any(b<vec2(0)) || any(b>=vec2(n)) { return 0.0; }
+    let speed=0.5*(foam_transport_velocity(c)[axis]+foam_transport_velocity(b)[axis])*f32(delta[axis]);
+    let donor=select(state(b),state(c),speed>=0.0);
+    return select(0.0,speed,donor.x>shore.density.z);
+}
+fn initial_motion_at(c: vec2<i32>) -> vec4<f32> {
+    let n=i32(shore.options.z);
+    if any(c<vec2(0)) || any(c>=vec2(n)) { return vec4(0.0); }
+    return initial_shore[u32(3*n*n+c.y*n+c.x)];
+}
+fn sample_initial_motion(grid: vec2<f32>) -> vec4<f32> {
+    let c=vec2<i32>(floor(grid)); let f=fract(grid);
+    return mix(mix(initial_motion_at(c),initial_motion_at(c+vec2(1,0)),f.x),
+        mix(initial_motion_at(c+vec2(0,1)),initial_motion_at(c+vec2(1,1)),f.x),f.y);
+}
+// Interpolate coordinates only across wet donors. Blending against a cleared
+// dry-cell displacement would manufacture shear right at the waterline.
+fn sample_initial_texture(grid: vec2<f32>) -> vec4<f32> {
+    let n=i32(shore.options.z); let base=vec2<i32>(floor(grid)); let f=fract(grid);
+    var value=vec4(0.0); var weight=0.0;
+    for (var y=0; y<2; y++) { for (var x=0; x<2; x++) {
+        let c=base+vec2(x,y);
+        if any(c<vec2(0)) || any(c>=vec2(n)) { continue; }
+        let i=u32(c.y*n+c.x); let cells=u32(n*n);
+        if initial_shore[cells+i].x<=shore.density.z { continue; }
+        let w=select(1.0-f.x,f.x,x==1)*select(1.0-f.y,f.y,y==1);
+        value+=w*vec4(initial_shore[3u*cells+i].zw,initial_shore[4u*cells+i].xy);
+        weight+=w;
+    }}
+    return value/max(weight,0.000001);
+}
+struct FoamMotionStep { motion: vec4<f32>, texture: vec4<f32> }
+fn advance_foam_motion(c: vec2<i32>, q: vec4<f32>, original: vec4<f32>) -> FoamMotionStep {
+    let dt=shore.timing.y;
+    let spacing=shore.domain.zw/shore.options.z;
+    var transport=foam_transport_velocity(c);
+    if shore.solver.y>1.5 {
+        transport=0.5*(transport+foam_response(initial_motion_at(c).xy,velocity(original),dt*0.5));
+    }
+    let grid=vec2<f32>(c)-transport*dt/spacing;
+    let traced=sample_initial_motion(grid);
+    let coords=sample_initial_texture(grid);
+    let n=i32(shore.options.z);
+    // Advance with actual simulation dt, not wall time (pause/stalls/RK2).
+    let phase=initial_shore[u32(4*n*n+c.y*n+c.x)].z;
+    let phase_step=dt/2.0;
+    let next=fract(phase+phase_step);
+    var a=coords.xy+transport*dt;
+    var b=coords.zw+transport*dt;
+    // Reset only the invisible layer, retaining motion after the wrap instant.
+    if phase+phase_step>=1.0 { a=transport*(next*2.0); }
+    if fract(phase+0.5)+phase_step>=1.0 { b=transport*(fract(next+0.5)*2.0); }
+    let wet=q.x>shore.density.z;
+    let speed=select(vec2(0.0),foam_response(traced.xy,velocity(q),dt),wet);
+    return FoamMotionStep(vec4(speed,select(vec2(0.0),a,wet)),
+        vec4(select(vec2(0.0),b,wet),next,0.0));
 }
 fn foam_flux(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> f32 {
     let speed=foam_velocity(c,delta,axis);
@@ -149,15 +221,6 @@ fn foam_surface_at(grid: vec2<f32>) -> vec2<f32> {
     return mix(mix(foam_surface_cell(c),foam_surface_cell(c+vec2(1,0)),f.x),
         mix(foam_surface_cell(c+vec2(0,1)),foam_surface_cell(c+vec2(1,1)),f.x),f.y);
 }
-fn foam_front_gain(value: f32) -> f32 {
-    let p=shore.foam_front_gain;
-    var rise=select(0.0,1.0,value>=p.y);
-    var fall=select(0.0,1.0,value<=p.z);
-    // Coincident control points mean a hard edge, never smoothstep(a,a,x).
-    if p.y>p.x { rise=smoothstep(p.x,p.y,value); }
-    if p.w>p.z { fall=1.0-smoothstep(p.z,p.w,value); }
-    return rise*fall;
-}
 fn foam_front_weight(c: vec2<i32>) -> f32 {
     if shore.foam_front.x<=0.0 { return 0.0; }
     let center=state(c); let flow=velocity(center); let speed=length(flow);
@@ -177,7 +240,7 @@ fn foam_front_weight(c: vec2<i32>) -> f32 {
     }
     // Deliberately no dry-front, rising-water or shore-direction requirement.
     let fall_weight=smoothstep(0.0,shore.foam_front.z,drop);
-    return fall_weight*foam_front_gain(fall_weight)*smoothstep(0.02,0.1,speed);
+    return fall_weight*smoothstep(0.02,0.1,speed);
 }
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -186,7 +249,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let index=id.y*n+id.x; let c=vec2<i32>(id.xy);
     let p=world(c); let z=bed(c); let dt=shore.timing.y;
     if !shore_active(shore) {
-        new_shore[index]=vec4(0.0); new_shore[cells+index]=vec4(0.0); new_shore[2u*cells+index]=vec4(0.0); return;
+        new_shore[index]=vec4(0.0); new_shore[cells+index]=vec4(0.0); new_shore[2u*cells+index]=vec4(0.0);
+        new_shore[3u*cells+index]=vec4(0.0); new_shore[4u*cells+index]=vec4(0.0); return;
     }
     if shore.options.w>0.5 {
         // Seed the entire patch from the CURRENT filtered FFT, not old history.
@@ -199,11 +263,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let v=momentum/max(h,0.005);
         new_shore[index]=vec4(0.0,0.0,h,v.x);
         new_shore[cells+index]=vec4(h,momentum,0.0);
-        new_shore[2u*cells+index]=vec4(0.0,0.0,h+z,v.y); return;
+        new_shore[2u*cells+index]=vec4(0.0,0.0,h+z,v.y);
+        new_shore[3u*cells+index]=vec4(0.0); new_shore[4u*cells+index]=vec4(0.0); return;
     }
     if dt==0.0 {
         new_shore[index]=old_shore[index]; new_shore[cells+index]=old_shore[cells+index];
-        new_shore[2u*cells+index]=old_shore[2u*cells+index]; return;
+        new_shore[2u*cells+index]=old_shore[2u*cells+index];
+        new_shore[3u*cells+index]=old_shore[3u*cells+index];
+        new_shore[4u*cells+index]=old_shore[4u*cells+index]; return;
     }
     let previous=state(c);
     let original=initial_shore[cells+index];
@@ -238,14 +305,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     q.y=q.y*min(1.0,12.0/max(speed,0.00001)); q.z=q.z*min(1.0,12.0/max(speed,0.00001));
     if shore.solver.y>0.5 && shore.solver.y<1.5 {
         new_shore[index]=initial_shore[index]; new_shore[cells+index]=q;
-        new_shore[2u*cells+index]=initial_shore[2u*cells+index]; return;
+        new_shore[2u*cells+index]=initial_shore[2u*cells+index];
+        new_shore[3u*cells+index]=initial_shore[3u*cells+index];
+        new_shore[4u*cells+index]=initial_shore[4u*cells+index]; return;
     }
     let wave_speed=sqrt(9.81*max(q.x,0.001));
     let rising=max(0.0,(q.x-original.x)/dt);
     let breaking=foam_breaking_weight(rising/wave_speed);
     let bore=smoothstep(1.0,1.4,length(velocity(q))/wave_speed);
-    let divergence=(foam_velocity(c,vec2(1,0),0u)+foam_velocity(c,vec2(-1,0),0u))/spacing.x
-        +(foam_velocity(c,vec2(0,1),1u)+foam_velocity(c,vec2(0,-1),1u))/spacing.y;
+    let divergence=(water_face_velocity(c,vec2(1,0),0u)+water_face_velocity(c,vec2(-1,0),0u))/spacing.x
+        +(water_face_velocity(c,vec2(0,1),1u)+water_face_velocity(c,vec2(0,-1),1u))/spacing.y;
     // SWE cannot resolve overturning/air entrainment. Rising water plus a
     // compressive bore is a tunable proxy; shallow fast retreat alone emits none.
     let compression=smoothstep(shore.density.x,shore.density.x+0.5,max(0.0,-divergence));
@@ -262,6 +331,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var stranded=ground.x*exp(-dt/10.0);
     if !wet { stranded+=q.w; q.w=0.0; }
     if wet { stranded*=exp(-dt/0.12); }
+    let motion=advance_foam_motion(c,q,original);
+    new_shore[3u*cells+index]=motion.motion;
+    new_shore[4u*cells+index]=motion.texture;
     let wetness=select(old.y*exp(-dt/shore.timing.w),1.0,q.x>0.003);
     new_shore[index]=vec4(q.w,wetness,q.x,velocity(q).x);
     new_shore[cells+index]=q;

@@ -208,11 +208,16 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     var detail = foam_detail(input.grid);
     var foam = camera.misc.x * smoothstep(0.015, 0.25, foam_data.x) * (0.55 + 0.45 * smoothstep(0.15, 0.75, detail));
     if shore_active(shore) {
-        let flow=vec2(shore_history.w,sample_shore_extra(input.world.xz).w);
-        let lace=0.72*flowing_lace(input.world.xz,flow,12.0)+0.28*flowing_lace(input.world.xz,flow,1.2);
+        let texture_motion=sample_shore_texture(input.world.xz);
+        let material_a=input.world.xz-texture_motion.offsets.xy;
+        let material_b=input.world.xz-texture_motion.offsets.zw;
+        let lace_a=0.72*lace_sample(material_a/12.0)+0.28*lace_sample(material_a/1.2);
+        let lace_b=0.72*lace_sample(material_b/12.0)+0.28*lace_sample(material_b/1.2);
         let amount=pow(foam_density_level(shore_history.x,shore),1.5)*smoothstep(0.003,0.02,local_depth);
-        let aa=max(0.04,fwidth(lace));
-        let shore_foam=smoothstep(1.0-amount-aa,1.0-amount+0.38+aa,lace)*smoothstep(0.0,0.02,amount);
+        let aa_a=max(0.04,fwidth(lace_a)); let aa_b=max(0.04,fwidth(lace_b));
+        let coverage_a=smoothstep(1.0-amount-aa_a,1.0-amount+0.38+aa_a,lace_a);
+        let coverage_b=smoothstep(1.0-amount-aa_b,1.0-amount+0.38+aa_b,lace_b);
+        let shore_foam=mix(coverage_b,coverage_a,texture_motion.blend)*smoothstep(0.0,0.02,amount);
         let deep_foam = smoothstep(0.015, 0.25, sample_foam(input.grid).x)
             * ocean_weight(input.world.xz, shore) * (0.55 + 0.45 * foam_detail(input.grid));
         foam = camera.misc.x * (1.0 - (1.0 - deep_foam) * (1.0 - shore_foam));

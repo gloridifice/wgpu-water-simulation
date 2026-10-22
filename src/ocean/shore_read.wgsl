@@ -52,10 +52,24 @@ fn lace_sample(uv: vec2<f32>) -> f32 {
     let low=u32(floor(lod)); let high=min(low+1u,u32(log2(size)));
     return mix(lace_level(uv,low),lace_level(uv,high),fract(lod));
 }
-fn flowing_lace(p: vec2<f32>, velocity: vec2<f32>, scale: f32) -> f32 {
-    let phase=fract(shore.timing.x*0.5+shore_noise(p/9.7));
-    let other=fract(phase+0.5);
-    let displacement=velocity*min(1.0,0.35/max(length(velocity),0.0001));
-    return mix(lace_sample((p-displacement*(phase-0.5))/scale),
-        lace_sample((p-displacement*(other-0.5))/scale),abs(phase*2.0-1.0));
+struct FoamTextureSample { offsets: vec4<f32>, blend: f32 }
+fn sample_shore_texture(p: vec2<f32>) -> FoamTextureSample {
+    let n=i32(shore.options.z); let cells=u32(n*n);
+    let grid=(p-shore.domain.xy)/shore.domain.zw*shore.options.z-vec2(0.5);
+    let base=vec2<i32>(floor(grid)); let f=fract(grid);
+    var value=vec4(0.0); var weight=0.0;
+    for (var y=0; y<2; y++) { for (var x=0; x<2; x++) {
+        let c=base+vec2(x,y);
+        if any(c<vec2(0)) || any(c>=vec2(n)) { continue; }
+        let i=u32(c.y*n+c.x);
+        if shore_field[cells+i].x<=shore.density.z { continue; }
+        let w=select(1.0-f.x,f.x,x==1)*select(1.0-f.y,f.y,y==1);
+        value+=w*vec4(shore_field[3u*cells+i].zw,shore_field[4u*cells+i].xy);
+        weight+=w;
+    }}
+    let c=clamp(base,vec2(0),vec2(n-1));
+    let phase=shore_field[4u*cells+u32(c.y*n+c.x)].z;
+    // A is invisible at its reset, B at its half-cycle reset; smooth endpoints.
+    let blend=smoothstep(0.0,1.0,1.0-abs(2.0*phase-1.0));
+    return FoamTextureSample(value/max(weight,0.000001),blend);
 }
