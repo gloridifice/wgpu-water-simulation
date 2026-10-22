@@ -1,4 +1,4 @@
-//! Versioned local settings, debounced autosave, validation and atomic replace.
+//! Local sessions and named configurations, with validation and atomic autosave.
 use super::{foam::FoamConfig, optics::OpticsConfig, spectrum::OceanConfig, viewer::Camera};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -148,20 +148,142 @@ pub fn default_path() -> PathBuf {
     base.join("water-simulation").join("ocean-settings.json")
 }
 
-fn read(path: &Path) -> Result<Option<SavedSettings>, String> {
+pub const DEFAULT_CONFIGURATION_NAME: &str = "默认配置";
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct NamedConfiguration {
+    name: String,
+    settings: SavedSettings,
+}
+
+impl NamedConfiguration {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// The original configuration is a snapshot, never an autosave target.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ConfigurationLibrary {
+    default: SavedSettings,
+    profiles: Vec<NamedConfiguration>,
+}
+
+impl ConfigurationLibrary {
+    pub fn new(default: SavedSettings) -> Self {
+        Self {
+            default,
+            profiles: Vec::new(),
+        }
+    }
+
+    pub fn profiles(&self) -> &[NamedConfiguration] {
+        &self.profiles
+    }
+
+    /// `None` identifies the immutable default; indices identify user profiles.
+    pub fn get(&self, index: Option<usize>) -> Result<&SavedSettings, String> {
+        match index {
+            None => Ok(&self.default),
+            Some(index) => self
+                .profiles
+                .get(index)
+                .map(|p| &p.settings)
+                .ok_or_else(|| "配置不存在".into()),
+        }
+    }
+
+    fn check_name(&self, name: &str, except: Option<usize>) -> Result<String, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("请输入配置名称".into());
+        }
+        if name == DEFAULT_CONFIGURATION_NAME
+            || self
+                .profiles
+                .iter()
+                .enumerate()
+                .any(|(i, p)| Some(i) != except && p.name == name)
+        {
+            return Err("配置名称已存在，请使用其他名称".into());
+        }
+        Ok(name.to_owned())
+    }
+
+    pub fn save_as(&mut self, name: &str, settings: SavedSettings) -> Result<usize, String> {
+        let name = self.check_name(name, None)?;
+        settings.validate()?;
+        let index = self.profiles.len();
+        self.profiles.push(NamedConfiguration { name, settings });
+        Ok(index)
+    }
+
+    pub fn rename(&mut self, index: Option<usize>, name: &str) -> Result<(), String> {
+        let index = index.ok_or("默认配置不可重命名")?;
+        let name = self.check_name(name, Some(index))?;
+        self.profiles.get_mut(index).ok_or("配置不存在")?.name = name;
+        Ok(())
+    }
+
+    pub fn overwrite(
+        &mut self,
+        index: Option<usize>,
+        settings: SavedSettings,
+    ) -> Result<(), String> {
+        let index = index.ok_or("默认配置不可覆盖")?;
+        settings.validate()?;
+        self.profiles.get_mut(index).ok_or("配置不存在")?.settings = settings;
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        self.default.validate()?;
+        for (index, profile) in self.profiles.iter().enumerate() {
+            if self.check_name(&profile.name, Some(index))? != profile.name {
+                return Err("配置名称不能包含首尾空格".into());
+            }
+            profile.settings.validate()?;
+        }
+        Ok(())
+    }
+}
+
+/// Keep session fields at the top level for compatibility with existing files.
+#[derive(Serialize, Deserialize)]
+struct SettingsDocument {
+    #[serde(flatten)]
+    current: SavedSettings,
+    #[serde(default)]
+    configurations: Option<ConfigurationLibrary>,
+}
+
+fn read_document(path: &Path) -> Result<Option<SettingsDocument>, String> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.to_string()),
     };
-    let settings: SavedSettings = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    settings.validate()?;
-    Ok(Some(settings))
+    let document: SettingsDocument = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    document.current.validate()?;
+    if let Some(library) = &document.configurations {
+        library.validate()?;
+    }
+    Ok(Some(document))
 }
 
+#[cfg(test)]
+fn read(path: &Path) -> Result<Option<SavedSettings>, String> {
+    Ok(read_document(path)?.map(|d| d.current))
+}
+
+#[cfg(test)]
 fn write_atomic(path: &Path, settings: &SavedSettings) -> Result<(), String> {
     settings.validate()?;
     let bytes = serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?;
+    write_bytes_atomic(path, &bytes)
+}
+
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -180,7 +302,7 @@ fn write_atomic(path: &Path, settings: &SavedSettings) -> Result<(), String> {
             .write(true)
             .create_new(true)
             .open(&temporary)?;
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.write_all(b"\n")?;
         file.sync_all()?;
         drop(file);
@@ -199,6 +321,8 @@ pub struct SettingsStore {
     pub failed: bool,
     observed: SavedSettings,
     saved: Option<SavedSettings>,
+    configurations: ConfigurationLibrary,
+    saved_configurations: Option<ConfigurationLibrary>,
     changed_at: Instant,
     attempted_at: Option<Instant>,
     backup_before_write: bool,
@@ -206,26 +330,30 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn open(path: PathBuf, now: Instant) -> (SavedSettings, Self) {
-        let result = read(&path);
+        let result = read_document(&path);
+        let mut saved_configurations = None;
         let (initial, saved, status, failed, backup_before_write) = match result {
-            Ok(Some(value)) => (
-                value.clone(),
-                Some(value),
-                "Loaded local settings".into(),
-                false,
-                false,
-            ),
+            Ok(Some(document)) => {
+                saved_configurations = document.configurations;
+                (
+                    document.current.clone(),
+                    Some(document.current),
+                    "已载入本地配置".into(),
+                    false,
+                    false,
+                )
+            }
             Ok(None) => (
                 SavedSettings::default(),
                 None,
-                "New settings; auto-save enabled".into(),
+                "新配置，自动保存已启用".into(),
                 false,
                 false,
             ),
             Err(error) => (
                 SavedSettings::default(),
                 None,
-                format!("Load failed: {error}; using defaults"),
+                format!("载入失败：{error}；使用默认配置"),
                 true,
                 true,
             ),
@@ -236,6 +364,10 @@ impl SettingsStore {
             failed,
             observed: initial.clone(),
             saved,
+            configurations: saved_configurations
+                .clone()
+                .unwrap_or_else(|| ConfigurationLibrary::new(initial.clone())),
+            saved_configurations,
             changed_at: now,
             attempted_at: None,
             backup_before_write,
@@ -243,15 +375,29 @@ impl SettingsStore {
         (initial, store)
     }
 
+    pub fn configurations(&self) -> &ConfigurationLibrary {
+        &self.configurations
+    }
+
+    pub fn set_configurations(&mut self, library: &ConfigurationLibrary, now: Instant) {
+        if &self.configurations != library {
+            self.configurations = library.clone();
+            self.changed_at = now;
+            self.status = "更改等待自动保存".into();
+        }
+    }
+
     pub fn update(&mut self, current: SavedSettings, now: Instant, force: bool) {
         if current != self.observed {
             self.observed = current;
             self.changed_at = now;
-            self.status = "Changes pending auto-save".into();
+            self.status = "更改等待自动保存".into();
         }
-        if self.saved.as_ref() == Some(&self.observed) {
+        if self.saved.as_ref() == Some(&self.observed)
+            && self.saved_configurations.as_ref() == Some(&self.configurations)
+        {
             if !self.failed {
-                self.status = "Saved locally".into();
+                self.status = "已保存到本地".into();
             }
             return;
         }
@@ -268,13 +414,14 @@ impl SettingsStore {
         match result {
             Ok(()) => {
                 self.saved = Some(self.observed.clone());
-                self.status = "Saved locally".into();
+                self.saved_configurations = Some(self.configurations.clone());
+                self.status = "已保存到本地".into();
                 self.failed = false;
                 // A successful save shouldn't throttle the next real edit.
                 self.attempted_at = None;
             }
             Err(error) => {
-                self.status = format!("Save failed: {error}");
+                self.status = format!("保存失败：{error}");
                 self.failed = true;
             }
         }
@@ -282,6 +429,7 @@ impl SettingsStore {
 
     fn save(&mut self) -> Result<(), String> {
         self.observed.validate()?;
+        self.configurations.validate()?;
         if self.backup_before_write && self.path.exists() {
             let nonce = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -299,7 +447,12 @@ impl SettingsStore {
                 .map_err(|e| e.to_string())?;
             self.backup_before_write = false;
         }
-        write_atomic(&self.path, &self.observed)
+        let document = SettingsDocument {
+            current: self.observed.clone(),
+            configurations: Some(self.configurations.clone()),
+        };
+        let bytes = serde_json::to_vec_pretty(&document).map_err(|e| e.to_string())?;
+        write_bytes_atomic(&self.path, &bytes)
     }
 }
 
@@ -430,6 +583,115 @@ mod tests {
         assert!(store.failed);
         assert_eq!(fs::read(blocking_parent).unwrap(), b"keep");
     }
+
+    #[test]
+    fn legacy_configuration_becomes_immutable_default_across_autosaves_and_restarts() {
+        let dir = Directory::new();
+        let now = Instant::now();
+        let mut original = SavedSettings::default();
+        original.optics.depth = 17.0;
+        original.draft.seed = 42;
+        original.camera.yaw = 1.2;
+        write_atomic(&dir.file(), &original).unwrap();
+
+        let (mut current, mut store) = SettingsStore::open(dir.file(), now);
+        assert_eq!(current, original);
+        assert_eq!(store.configurations().get(None).unwrap(), &original);
+        current.optics.depth = 7.0;
+        current.draft.seed = 99;
+        store.update(current.clone(), now, true);
+        assert!(!store.failed, "{}", store.status);
+
+        let (restored, mut reopened) = SettingsStore::open(dir.file(), now);
+        assert_eq!(restored, current);
+        assert_eq!(reopened.configurations().get(None).unwrap(), &original);
+        let default = reopened.configurations().get(None).unwrap().clone();
+        reopened.update(default.clone(), now, true);
+        let (restored, reopened) = SettingsStore::open(dir.file(), now);
+        assert_eq!(restored, original);
+        assert_eq!(reopened.configurations().get(None).unwrap(), &default);
+    }
+
+    #[test]
+    fn named_profiles_rename_overwrite_and_persist_independently_of_session() {
+        let dir = Directory::new();
+        let now = Instant::now();
+        let (initial, mut store) = SettingsStore::open(dir.file(), now);
+        let mut library = store.configurations().clone();
+        let mut beach = initial.clone();
+        beach.optics.beach = true;
+        beach.camera = Camera::beach(beach.ocean.length);
+        beach.optics.shore.input_gain = 0.4;
+        beach.draft.amplitude = 0.02;
+        beach.paused = true;
+        let first = library.save_as(" 沙滩方案 ", beach.clone()).unwrap();
+        let second = library.save_as("远海", initial.clone()).unwrap();
+        library.rename(Some(first), "浅水方案").unwrap();
+        let mut revised = initial.clone();
+        revised.optics.sky.intensity = 2.0;
+        library.overwrite(Some(second), revised.clone()).unwrap();
+        store.set_configurations(&library, now);
+        // Named edits must be saved even when the session has not changed.
+        store.update(initial.clone(), now, true);
+        assert!(!store.failed, "{}", store.status);
+
+        let (mut session, mut store) = SettingsStore::open(dir.file(), now);
+        assert_eq!(session, initial);
+        assert_eq!(store.configurations().profiles()[first].name(), "浅水方案");
+        assert_eq!(store.configurations().get(Some(first)).unwrap(), &beach);
+        assert_eq!(store.configurations().get(Some(second)).unwrap(), &revised);
+        session.optics.shore.input_gain = 2.0;
+        store.update(session.clone(), now, true);
+        let (restored, store) = SettingsStore::open(dir.file(), now);
+        assert_eq!(restored, session);
+        assert_eq!(store.configurations(), &library);
+    }
+
+    #[test]
+    fn default_and_invalid_profile_operations_never_modify_the_library() {
+        let initial = SavedSettings::default();
+        let mut library = ConfigurationLibrary::new(initial.clone());
+        let index = library.save_as("方案一", initial.clone()).unwrap();
+        let before = library.clone();
+        assert!(library.rename(None, "新的默认").is_err());
+        assert!(library.overwrite(None, initial.clone()).is_err());
+        assert!(library.save_as("默认配置", initial.clone()).is_err());
+        assert!(library.save_as(" 方案一 ", initial.clone()).is_err());
+        assert!(library.save_as(" \t ", initial.clone()).is_err());
+        assert!(library.rename(Some(index), "默认配置").is_err());
+        assert!(library.rename(Some(99), "不存在").is_err());
+        assert!(library.get(Some(99)).is_err());
+        let mut invalid = initial;
+        invalid.speed = 99.0;
+        assert!(library.overwrite(Some(index), invalid.clone()).is_err());
+        assert!(library.save_as("无效参数", invalid).is_err());
+        assert_eq!(library, before);
+        let other = library.save_as("方案二", SavedSettings::default()).unwrap();
+        assert!(library.rename(Some(other), "方案一").is_err());
+        assert_eq!(library.profiles()[other].name(), "方案二");
+    }
+
+    #[test]
+    fn profile_write_failure_is_reported_and_retry_preserves_profiles() {
+        let dir = Directory::new();
+        let now = Instant::now();
+        let blocker = dir.0.join("blocker");
+        fs::write(&blocker, b"keep").unwrap();
+        let (initial, mut store) = SettingsStore::open(blocker.join("settings.json"), now);
+        let mut library = store.configurations().clone();
+        library.save_as("待保存方案", initial.clone()).unwrap();
+        store.set_configurations(&library, now);
+        store.update(initial.clone(), now, true);
+        assert!(store.failed);
+        assert_eq!(fs::read(&blocker).unwrap(), b"keep");
+        // Retry on a writable path without losing the pending named snapshot.
+        store.path = dir.file();
+        store.update(initial, now + Duration::from_secs(3), false);
+        assert!(!store.failed, "{}", store.status);
+        let (_, reopened) = SettingsStore::open(dir.file(), now);
+        assert_eq!(reopened.configurations(), &library);
+    }
+
     #[test]
     fn cli_overrides_only_explicit_fields() {
         let mut s = SavedSettings::default();

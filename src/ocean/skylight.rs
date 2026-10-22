@@ -196,16 +196,13 @@ pub fn depth_graph(ui: &mut egui::Ui, optics: &super::optics::OpticsConfig) {
     };
     let peak = (0..3).map(|c| source(0.0, c)).fold(0.0_f32, f32::max);
     super::gui::parameter_table(ui, "graph axes", |ui| {
+        super::gui::parameter(ui, "深度范围", "图表横轴，单位为米。", |ui| {
+            ui.label(format!("0 .. {depth:.2} m"))
+        });
         super::gui::parameter(
             ui,
-            "Depth range",
-            "Graph horizontal axis in meters.",
-            |ui| ui.label(format!("0 .. {depth:.2} m")),
-        );
-        super::gui::parameter(
-            ui,
-            "Source range",
-            "Local sky source, radiance per meter, before integration to the eye.",
+            "散射源范围",
+            "局部天空散射源，单位为每米辐亮度，尚未向观察点积分。",
             |ui| ui.label(format!("0 .. {peak:.5}")),
         );
     });

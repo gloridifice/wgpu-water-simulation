@@ -3,7 +3,7 @@ use super::{
     gpu::{CameraUniform, Error, Gpu, Ocean, Renderer},
     gui::Gui,
     optics::OpticsConfig,
-    settings::{SavedSettings, SettingsStore},
+    settings::{ConfigurationLibrary, SavedSettings, SettingsStore},
     spectrum::OceanConfig,
 };
 use glam::{Mat4, Vec3};
@@ -176,10 +176,50 @@ impl State {
     fn persist(&mut self, force: bool) {
         let current = self.saved_settings();
         if let Some(store) = &mut self.settings {
-            store.update(current, Instant::now(), force);
+            let now = Instant::now();
+            store.set_configurations(&self.gui.configuration_panel.library, now);
+            store.update(current, now, force);
             self.gui.save_status = store.status.clone();
             self.gui.save_failed = store.failed;
         }
+    }
+
+    fn rebuild_ocean(&mut self, config: OceanConfig) -> Result<(), Error> {
+        let ocean = Ocean::new(&self.gpu, config)?;
+        let foam_field = Foam::new(&self.gpu, &ocean.fields, config.resolution);
+        let mut renderer = Renderer::new(
+            &self.gpu,
+            &ocean,
+            &foam_field,
+            self.config.format,
+            self.gui.viewport_size[0],
+            self.gui.viewport_size[1],
+        );
+        renderer.shore.timer = super::gpu_timer::GpuTimer::new(&self.gpu);
+        self.ocean = ocean;
+        self.foam_field = foam_field;
+        self.renderer = renderer;
+        self.foam_time = self.time;
+        Ok(())
+    }
+
+    fn load_configuration(&mut self, settings: SavedSettings) -> Result<(), Error> {
+        settings.validate()?;
+        // Build GPU resources before committing any of the restored UI values.
+        if settings.ocean != self.ocean.config {
+            self.rebuild_ocean(settings.ocean)?;
+        }
+        self.gui.draft = settings.draft;
+        self.gui.foam_settings = settings.foam;
+        self.gui.optics = settings.optics;
+        self.gui.speed = settings.speed;
+        self.camera = settings.camera;
+        self.paused = settings.paused;
+        self.time = 0.0;
+        self.gui.clear_foam = true;
+        self.gui.error = None;
+        self.gui.save_now = true;
+        Ok(())
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -203,15 +243,15 @@ impl State {
         self.gui.swe_timing = if let Some(timer) = &mut self.renderer.shore.timer {
             timer.poll(&self.gpu);
             if timer.failed {
-                "SWE GPU: timestamp readback failed".into()
+                "SWE GPU：时间戳读取失败".into()
             } else if self.paused || !self.gui.optics.beach || !self.gui.optics.shore.enabled {
-                "SWE GPU: idle (no simulation steps)".into()
+                "SWE GPU：空闲（没有模拟子步）".into()
             } else if let Some(s) = timer
                 .latest
                 .filter(|s| s.order == self.gui.optics.shore.order)
             {
                 format!(
-                    "SWE GPU: {:.3} ms | {} substeps | {:.1} ms simulated\n{:.3} ms/substep | order {} (last sample)",
+                    "SWE GPU：{:.3} 毫秒 | {} 子步 | 模拟 {:.1} 毫秒\n{:.3} 毫秒／子步 | {} 阶（最近采样）",
                     s.ms,
                     s.substeps,
                     s.simulated_dt * 1000.0,
@@ -219,10 +259,10 @@ impl State {
                     s.order
                 )
             } else {
-                "SWE GPU: waiting for current solver sample".into()
+                "SWE GPU：等待当前求解器采样".into()
             }
         } else {
-            "SWE GPU: timestamps unsupported".into()
+            "SWE GPU：设备不支持时间戳".into()
         };
         let (gui_output, apply) = self.gui.frame(
             &self.window,
@@ -232,25 +272,18 @@ impl State {
             &mut self.time,
         );
         if let Some(config) = apply {
-            match Ocean::new(&self.gpu, config) {
-                Ok(ocean) => {
-                    self.camera.distance *= config.length / self.ocean.config.length;
-                    let foam_field = Foam::new(&self.gpu, &ocean.fields, config.resolution);
-                    self.renderer = Renderer::new(
-                        &self.gpu,
-                        &ocean,
-                        &foam_field,
-                        self.config.format,
-                        self.gui.viewport_size[0],
-                        self.gui.viewport_size[1],
-                    );
-                    self.renderer.shore.timer = super::gpu_timer::GpuTimer::new(&self.gpu);
-                    self.ocean = ocean;
-                    self.foam_field = foam_field;
-                    self.foam_time = self.time;
-                }
+            let distance_scale = config.length / self.ocean.config.length;
+            match self.rebuild_ocean(config) {
+                Ok(()) => self.camera.distance *= distance_scale,
                 Err(error) => self.gui.error = Some(error.to_string()),
             }
+        }
+        if let Some(settings) = self.gui.load_configuration.take() {
+            self.gui.configuration_panel.message = Some(
+                self.load_configuration(settings)
+                    .map(|()| "已载入配置并重置模拟".into())
+                    .map_err(|error| format!("载入失败：{error}")),
+            );
         }
         if self.render_size != self.gui.viewport_size {
             self.render_size = self.gui.viewport_size;
@@ -344,8 +377,11 @@ impl ApplicationHandler for App {
                 state.gui.speed = self.initial.speed;
                 state.paused = self.initial.paused;
                 state.camera = self.initial.camera;
+                state.gui.configuration_panel.library =
+                    ConfigurationLibrary::new(self.initial.clone());
                 state.settings = self.settings.take();
                 if let Some(store) = &state.settings {
+                    state.gui.configuration_panel.library = store.configurations().clone();
                     state.gui.settings_path = Some(store.path.clone());
                     state.gui.save_status = store.status.clone();
                     state.gui.save_failed = store.failed;

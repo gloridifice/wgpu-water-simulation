@@ -1,9 +1,11 @@
 //! egui 参数面板与 GPU 合成；不参与流体计算。
 use super::{
     color_editor::CoefficientEditor,
+    configuration_panel::ConfigurationPanel,
     foam::FoamConfig,
     gpu::Gpu,
     optics::{OpticsConfig, VIEW_NAMES},
+    settings::{ConfigurationLibrary, SavedSettings},
     spectrum::OceanConfig,
     viewer::Camera,
 };
@@ -13,6 +15,7 @@ use winit::window::Window;
 enum Panel {
     View,
     Ocean,
+    Configurations,
     Foam,
     Shore,
     Optics,
@@ -21,9 +24,11 @@ enum Panel {
 fn default_dock() -> egui_dock::DockState<Panel> {
     use egui_dock::{DockState, NodeIndex};
     let mut dock = DockState::new(vec![Panel::View]);
-    let [center, left] =
-        dock.main_surface_mut()
-            .split_left(NodeIndex::root(), 0.23, vec![Panel::Ocean]);
+    let [center, left] = dock.main_surface_mut().split_left(
+        NodeIndex::root(),
+        0.23,
+        vec![Panel::Ocean, Panel::Configurations],
+    );
     dock.main_surface_mut()
         .split_below(left, 0.72, vec![Panel::Foam]);
     dock.main_surface_mut()
@@ -36,11 +41,12 @@ impl<F: FnMut(Panel, &mut egui::Ui)> egui_dock::TabViewer for PanelViewer<F> {
     type Tab = Panel;
     fn title(&mut self, tab: &mut Panel) -> egui::WidgetText {
         match tab {
-            Panel::View => "Ocean view",
-            Panel::Ocean => "Ocean controls",
-            Panel::Foam => "Jacobian foam",
-            Panel::Shore => "Shallow water (SWE)",
-            Panel::Optics => "Water optics",
+            Panel::View => "渲染视图",
+            Panel::Ocean => "海洋参数",
+            Panel::Configurations => "配置保存",
+            Panel::Foam => "远海泡沫",
+            Panel::Shore => "浅水模拟（SWE）",
+            Panel::Optics => "水体光学",
         }
         .into()
     }
@@ -166,118 +172,135 @@ pub(crate) fn parameter<R>(
     value
 }
 
+fn front_foam_gain_preview(ui: &mut egui::Ui, points: [f32; 4]) {
+    let (bounds, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 88.0), egui::Sense::hover());
+    response.on_hover_text("横轴显示范围：0～20；纵轴：增益 0～1。当前计算仍输入原始前沿权重（0～1），不做缩放。红线只限制前沿生成量，不裁剪累计泡沫密度。四个控制点在上方表格调整。");
+    let plot = bounds.shrink(6.0);
+    let painter = ui.painter();
+    painter.rect_filled(bounds, 3.0, egui::Color32::from_gray(24));
+    let position = |x: f32, y: f32| {
+        egui::pos2(
+            plot.left() + x / 20.0 * plot.width(),
+            plot.bottom() - y * plot.height(),
+        )
+    };
+    for (index, x) in points.into_iter().enumerate() {
+        painter.line_segment(
+            [position(x, 0.0), position(x, 1.0)],
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(65)),
+        );
+        painter.circle_filled(
+            position(x, if index == 0 || index == 3 { 0.0 } else { 1.0 }),
+            2.5,
+            egui::Color32::LIGHT_RED,
+        );
+    }
+    let curve = (0..=128)
+        .map(|i| {
+            let x = i as f32 / 128.0 * 20.0;
+            position(x, super::shore::front_foam_gain(x, points))
+        })
+        .collect();
+    painter.add(egui::Shape::line(
+        curve,
+        egui::Stroke::new(1.5_f32, egui::Color32::LIGHT_RED),
+    ));
+}
+
 fn help(name: &str) -> &'static str {
     match name {
-        "A (power)" => {
-            "Phillips spectrum power A. Wave height scales with sqrt(A). P(k) = A exp(-1/(kL)^2) / k^4 * alignment^2. Apply to rebuild."
+        "波谱强度 A" => "Phillips 波谱强度；波高与 A 的平方根成正比。点击应用后重建波谱。",
+        "波谱尺度 L（米）" => {
+            "Phillips 长度尺度，等于风速平方除以重力加速度。点击应用后生效。"
         }
-        "L (m)" => "Phillips length scale L = wind speed squared / gravity. Apply to rebuild.",
-        "Wind angle (deg)" => {
-            "Direction of the wind unit vector, not wave speed. Apply to rebuild the spectrum."
+        "风向（度）" => "风向单位向量的方向，不是波速。点击应用后重建波谱。",
+        "区块边长（米）" => "FFT 周期区块的边长；海面由 3×3 个区块构成。点击应用后生效。",
+        "FFT 分辨率" => "每轴 FFT 采样数；采样间距等于区块边长除以分辨率。点击应用后生效。",
+        "每轴网格数" => {
+            "每个区块每轴的几何网格数，顶点数为网格数加一。网格太粗会丢失短波形状。点击应用后生效。"
         }
-        "Patch side (m)" => {
-            "FFT tile side length. The rendered ocean spans 3 by 3 tiles. Apply to rebuild."
+        "暂停" => "冻结模拟、泡沫和纹理流动，仍可调整渲染参数。",
+        "时间倍率" => "模拟时间的速度倍率，0 表示停止演化。",
+        "波高增益" => "同时缩放 FFT 位移与 SWE 输入；修改后会重新初始化浅水和泡沫历史。",
+        "水平挤浪" | "挤浪强度" => {
+            "FFT 水平位移让浪峰更尖，并改变用于生成远海泡沫的雅可比值。"
         }
-        "FFT spectrum" => {
-            "FFT samples per axis. Grid spacing = patch side / resolution. Apply to rebuild."
+        "显示泡沫" => "只切换泡沫显示，不停止模拟。",
+        "雅可比阈值" => "水面形变的雅可比值低于此阈值时生成远海泡沫。实时生效。",
+        "生成速率（每秒）" => "每模拟秒的远海泡沫生成速率，实时生效。",
+        "衰减系数（每秒）" => "远海泡沫的指数衰减系数；越小存活越久，0 表示不自然衰减。",
+        "泡沫视图" => "选择正常水面、形变雅可比值或远海泡沫覆盖率。",
+        "倾斜沙滩" => "启用倾斜沙滩：负 X 为陆地，正 X 为深水。修改地形会重置浅水模拟。",
+        "启用浅水模拟" => "启用局部浅水模拟及泡沫、沙地历史。切换后重置 SWE。",
+        "SWE 求解器" => {
+            "一阶使用欧拉积分，二阶使用 MUSCL 与 RK2。切换会重置模拟；比较几何时可将法线细节设为 0。"
         }
-        "Mesh cells / axis" => {
-            "Coarse meshes may miss short waves. Geometry cells per tile axis; vertices = cells + 1. Mesh spacing = patch side / cells. Apply to rebuild."
+        "水上泡沫" => "水上泡沫的线性 RGB 颜色，包含远海泡沫。只改变显示。",
+        "沙地残留泡沫" => "暴露沙地上的残留泡沫颜色，采用线性 RGB，只改变显示。",
+        "法线细节强度" => {
+            "来自 FFT 的短波法线细节；0 为关闭，1 为默认。薄水区域逐渐减弱，不重置模拟。开启反射更容易观察。"
         }
-        "Paused" => "Freeze simulation, foam and texture flow. Render controls remain editable.",
-        "Time speed" => "Simulation time multiplier. Zero freezes evolution.",
-        "Height gain" => {
-            "Scales FFT displacement and SWE input. Changing it reinitializes SWE history."
+        "FFT → SWE 增益" => {
+            "同时缩放输入水位和动量：0 为无输入，1 为匹配，3 为三倍。修改后用当前 FFT 初始化整片浅水并清空历史。"
         }
-        "Horizontal choppiness" | "Chop strength" => {
-            "Horizontal FFT displacement sharpens crests and changes the Jacobian used to generate offshore foam."
+        "过滤短波" => {
+            "对输入 SWE 的 FFT 水位与动量使用相同短波过滤，远海细节不变。修改后重新初始化浅水。"
         }
-        "Show foam" => "Toggle foam shading without stopping simulation.",
-        "J threshold" => {
-            "Offshore foam is generated when the surface Jacobian falls below this threshold. Live; no Apply needed."
+        "截止波长（米）" => "不大于此波长的波被过滤；从截止波长加过渡宽度开始完整传入。",
+        "过滤过渡宽度（米）" => {
+            "截止波长以上的平滑过滤范围，0 表示硬切换。修改后重新初始化浅水。"
         }
-        "Generation / s" => {
-            "Offshore foam production rate per simulation second. Live; no Apply needed."
+        "FFT 混合水深（米）" => {
+            "在此水深到其 2.5 倍之间，从 SWE 过渡到 FFT。修改后重置浅水。"
         }
-        "Decay / s" => {
-            "Offshore foam exponential decay rate. Smaller values keep foam longer; zero disables decay."
+        "背景生成速率（每秒）" => {
+            "原有上涨、流速和汇聚判据的泡沫生成速率，还会乘以背景生成倍率。设为 0 仅关闭背景生成，前沿生成独立控制。"
         }
-        "Foam view" => "Show shaded water, the deformation Jacobian, or offshore foam coverage.",
-        "Sloped sand" => {
-            "Use sloped beach geometry. Land is toward -X; deeper water toward +X. Changing terrain resets SWE."
+        "背景生成起始阈值" => {
+            "水深上涨速度除以浅水波速超过此值时开始生成背景泡沫。无量纲，越低越容易生成；默认 0.25。实时生效，不重置。"
         }
-        "Enable shore waves" => {
-            "Enable local shallow-water simulation and foam/ground history. Changes reset SWE."
+        "背景生成过渡范围" => {
+            "从起始阈值到完整生成权重的过渡宽度。默认 0.4，即 0.25 开始、0.65 达到完整权重。0 为硬阈值，不影响前沿生成。"
         }
-        "SWE solver" => {
-            "First order: Euler. Second order: MUSCL + RK2. Switching resets SWE. Set normal detail to zero to compare geometry."
+        "水上泡沫衰减（每秒）" => {
+            "水上泡沫的指数衰减系数；越小存活越久，0 为无自然衰减。不控制沙地残留寿命。"
         }
-        "Water foam" => "Linear RGB for water foam, including offshore foam. Live shading only.",
-        "Stranded foam (sand)" => {
-            "Linear RGB for residue on exposed sand, not the wider water foam band. Live shading only."
+        "汇聚增强阈值（每秒）" => {
+            "增强背景泡沫生成的水流汇聚阈值。已有泡沫仍会通过输送自然堆积，不受此阈值限制。"
         }
-        "Normal detail strength" => {
-            "FFT short-wave normal detail. 0 = off, 1 = default. Fades in thin water. No simulation reset; enable reflections to see it clearly."
+        "密度颜色参考值" => {
+            "达到此密度显示红色，低密度绿色，中间黄色。仅改变色标，不限制模拟密度；水上和沙地共用。"
         }
-        "FFT to SWE gain" => {
-            "Scales input elevation and momentum together: 0 = none, 1 = matched, 3 = triple. Reinitializes the whole SWE patch from current FFT and clears history."
+        "泡沫沉积水深（毫米）" => {
+            "水深不超过此值时，水上泡沫沉积到沙地；超过时冲淡沙地残留。越大越早沉积，0 要求水深为零。实时生效，不改变水面几何或沙地湿度。"
         }
-        "Filter short waves" => {
-            "Apply the same short-wave filter to FFT elevation and momentum before SWE input. Far-ocean detail is unchanged. Changes reinitialize SWE."
+        "沙地干燥时间（秒）" => "湿沙的干燥时间常数，不控制泡沫寿命。",
+        "浅水调试视图" => {
+            "调试视图跳过普通着色。流向：蓝色冲岸、橙色退水。密度：低绿高红，不混合孔隙纹理。"
         }
-        "Reject wavelength <= (m)" => {
-            "Wavelengths at or below this limit are rejected. Full transmission starts at cutoff + transition width."
+        "沙滩坡度（高／宽）" | "岸线 X（米）" => {
+            "负 X 为陆地，正 X 为深水。修改后重新初始化浅水模拟。"
         }
-        "Transition width (m)" => {
-            "Smooth transition above the rejection cutoff. Zero gives a hard cutoff. Changes reinitialize SWE."
+        "海底深度（米）" => "水平海底的深度。倾斜沙滩模式下禁用，水深由地形决定。",
+        "启用天空散射" => {
+            "基于平均海平面与直线光路的各向同性天空散射。手动光源解析积分，天空光源分段解析积分。"
         }
-        "FFT blend depth (m)" => {
-            "Blend from SWE to FFT between this depth and 2.5 times this depth. Changing it resets SWE."
+        "天空颜色（线性 RGB）" => "天空照明的线性 RGB 颜色，同时影响背景和反射。",
+        "天空强度" => "天空照明的辐亮度倍率。",
+        "散射反照率 RGB" => {
+            "散射系数 = 反照率 × 消光系数；吸收系数 =（1 − 反照率）× 消光系数。"
         }
-        "Foam generation / s" => {
-            "Surface foam production rate. Zero lets existing foam transport, concentrate and decay without new production."
+        "天空积分步数" => "天空散射的积分分段数，越多越准确，GPU 开销也越高。",
+        "水体调试视图" => {
+            "光学调试跳过反射和泡沫。透射率按消光系数和光程指数衰减；吸收视图显示衰减后的背景，损失含散射出射。"
         }
-        "Shore foam decay / s" => {
-            "Water foam exponential decay rate per second. Smaller = longer life; 0 = no natural decay. Does not control sand residue."
+        "光程白色参考值（米）" => "光程调试中显示为白色的距离。",
+        "天空反射与高光" => "启用水面的天空反射与太阳高光。",
+        "海底 RGB 测试色带" | "棋盘格尺寸（米）" => {
+            "用于比较不同颜色吸收与光程长度的海底标定图案。"
         }
-        "Foam compression threshold / s" => {
-            "Threshold for compression-enhanced generation. Conservative transport still concentrates foam regardless of this setting."
-        }
-        "Density color reference" => {
-            "Density reaching this value is red; dilute foam is green, intermediate yellow. Display only; does not clip simulated amount. Water and sand share the scale."
-        }
-        "Sand drying time (s)" => {
-            "Wet sand drying time constant. Does not control foam lifetime. Retreat leaves foam on exposed sand."
-        }
-        "Shore view" => {
-            "Diagnostic views bypass normal shading. Flow: blue = run-up, orange = backwash. Density: green = dilute, red = reference or higher, with no pore texture."
-        }
-        "Beach slope (rise/run)" | "Shore X (m)" => {
-            "Beach geometry: land toward -X, deeper water toward +X. Changes reinitialize the shallow-water simulation."
-        }
-        "Seabed depth (m)" => {
-            "Flat seabed depth. Disabled for sloped beach, where depth follows geometry."
-        }
-        "Enable sky scattering" => {
-            "Isotropic sky scattering using the mean sea plane and straight light paths. Manual source is analytic; sky source is piecewise analytic."
-        }
-        "Sky tint (linear RGB)" => {
-            "Linear RGB sky illumination; also controls the sky background and reflection."
-        }
-        "Sky intensity" => "Sky illumination radiance multiplier.",
-        "Scattering albedo RGB" => "sigma_s = albedo * sigma_t; sigma_a = (1 - albedo) * sigma_t.",
-        "Sky integration steps" => {
-            "Number of integration segments for sky scattering. More steps improve accuracy at additional GPU cost."
-        }
-        "Water view" => {
-            "Optical diagnostics bypass reflection and foam. T = exp(-sigma_t * distance). Absorption view displays background * T; loss includes out-scattering."
-        }
-        "Path view white at (m)" => "Distance mapped to white in the optical path diagnostic.",
-        "Sky reflection and highlights" => "Enable surface reflection and sun highlights.",
-        "Seabed RGB test bands" | "Checker size (m)" => {
-            "Seabed calibration pattern for comparing wavelength-dependent absorption and optical path length."
-        }
-        _ => "Live parameter; changes take effect immediately.",
+        _ => "实时参数，修改后立即生效。",
     }
 }
 
@@ -296,6 +319,8 @@ pub struct Gui {
     pub save_status: String,
     pub save_failed: bool,
     pub settings_path: Option<std::path::PathBuf>,
+    pub configuration_panel: ConfigurationPanel,
+    pub load_configuration: Option<SavedSettings>,
     dock: egui_dock::DockState<Panel>,
     dock_style: egui_dock::Style,
     pub viewport_size: [u32; 2],
@@ -345,15 +370,19 @@ impl Gui {
             renderer,
             draft: config,
             speed: 1.0,
-            swe_timing: "SWE GPU: waiting".into(),
+            swe_timing: "SWE GPU：等待采样".into(),
             error: None,
             foam_settings: FoamConfig::default(),
             clear_foam: false,
             optics: OpticsConfig::default(),
             save_now: false,
-            save_status: "Local saving disabled".into(),
+            save_status: "本地保存已禁用".into(),
             save_failed: false,
             settings_path: None,
+            configuration_panel: ConfigurationPanel::new(ConfigurationLibrary::new(
+                SavedSettings::default(),
+            )),
+            load_configuration: None,
             sigma_editor: CoefficientEditor::new(OpticsConfig::default().sigma_t, 0.1),
             source_editor: CoefficientEditor::new(OpticsConfig::default().source, 0.01),
         }
@@ -376,8 +405,8 @@ impl Gui {
         let output = context.run(input, |ctx| {
             egui::TopBottomPanel::top("workspace toolbar").show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Ocean workspace").on_hover_text("Drag tabs to dock; drag dividers to resize. Drag inside Ocean view to orbit; scroll to zoom.");
-                    if ui.button("Reset layout").clicked() { dock = default_dock(); }
+                    ui.label("海洋模拟").on_hover_text("拖动标签停靠，拖动分隔线调整大小。在渲染视图内拖动旋转相机，滚轮缩放。");
+                    if ui.button("重置布局").clicked() { dock = default_dock(); }
 
                 });
             });
@@ -392,18 +421,18 @@ impl Gui {
                             Panel::View => {
                                 requested_size = ocean_view(ui, self.viewport_id, camera, current.length);
                             },
-Panel::Ocean => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
+Panel::Configurations => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 let color = if self.save_failed {
                                     egui::Color32::LIGHT_RED
                                 } else {
                                     ui.visuals().text_color()
                                 };
-                                ui.colored_label(color, &self.save_status).on_hover_text("Auto-save after 0.5 seconds idle and on exit.");
+                                ui.colored_label(color, &self.save_status).on_hover_text("停止调整 0.5 秒后自动保存，退出时也会保存。");
                                 if ui
                                     .add_enabled(
                                         self.settings_path.is_some(),
-                                        egui::Button::new("Save now"),
+                                        egui::Button::new("立即保存"),
                                     )
                                     .clicked()
                                 {
@@ -412,29 +441,45 @@ Panel::Ocean => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                             });
                             if let Some(path) = &self.settings_path {
 
-                                ui.collapsing("Local settings file", |ui| {
+                                ui.collapsing("本地配置文件", |ui| {
                                     ui.label(path.display().to_string());
                                 });
                             }
                             ui.separator();
-                            ui.label(egui::RichText::new("Phillips spectrum").strong());
+                            let settings = SavedSettings {
+                                ocean: current,
+                                draft: self.draft,
+                                foam: self.foam_settings,
+                                optics: self.optics,
+                                camera: *camera,
+                                speed: self.speed,
+                                paused: *paused,
+                                ..Default::default()
+                            };
+                            if let Some(settings) = self.configuration_panel.ui(ui, settings, self.settings_path.is_some()) {
+                                self.load_configuration = Some(settings);
+                            }
+                            self.save_now |= std::mem::take(&mut self.configuration_panel.save_now);
+                        }); },
+Panel::Ocean => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
+                            ui.label(egui::RichText::new("Phillips 波谱").strong());
 
                             parameter_table(ui, "spectrum table", |ui| {
-parameter(ui, "A (power)", help("A (power)"), |ui| ui.add(
+parameter(ui, "波谱强度 A", help("波谱强度 A"), |ui| ui.add(
                                 egui::Slider::new(&mut self.draft.amplitude, 0.0..=0.1)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)
                                     .smallest_positive(0.000001)
                                     ,
                             ));
-                            parameter(ui, "L (m)", help("L (m)"), |ui| ui.add(
+                            parameter(ui, "波谱尺度 L（米）", help("波谱尺度 L（米）"), |ui| ui.add(
                                 egui::Slider::new(&mut self.draft.phillips_length, 0.1..=500.0)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)
                                     ,
                             ));
                             let mut angle = self.draft.wind_angle.to_degrees();
-                            if parameter(ui, "Wind angle (deg)", help("Wind angle (deg)"), |ui|
+                            if parameter(ui, "风向（度）", help("风向（度）"), |ui|
                                 ui.add(egui::Slider::new(&mut angle, -180.0..=180.0))).changed()
                             {
                                 self.draft.wind_angle = angle.to_radians();
@@ -445,15 +490,15 @@ parameter(ui, "A (power)", help("A (power)"), |ui| ui.add(
 
 });
                             ui.separator();
-                            ui.label(egui::RichText::new("Domain and sampling").strong());
+                            ui.label(egui::RichText::new("范围与采样").strong());
                             parameter_table(ui, "domain table", |ui| {
-parameter(ui, "Patch side (m)", help("Patch side (m)"), |ui| ui.add(
+parameter(ui, "区块边长（米）", help("区块边长（米）"), |ui| ui.add(
                                 egui::Slider::new(&mut self.draft.length, 8.0..=1024.0)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)
                                     ,
                             ));
-                            parameter(ui, "FFT spectrum", help("FFT spectrum"), |ui| egui::ComboBox::from_id_salt("FFT spectrum")
+                            parameter(ui, "FFT 分辨率", help("FFT 分辨率"), |ui| egui::ComboBox::from_id_salt("FFT 分辨率")
                                 .width(ui.available_width()).selected_text(format!(
                                     "{} × {}",
                                     self.draft.resolution, self.draft.resolution
@@ -467,13 +512,13 @@ parameter(ui, "Patch side (m)", help("Patch side (m)"), |ui| ui.add(
                                         );
                                     }
                                 }));
-                            parameter(ui, "Mesh cells / axis", help("Mesh cells / axis"), |ui| ui.add(
+                            parameter(ui, "每轴网格数", help("每轴网格数"), |ui| ui.add(
                                 egui::Slider::new(&mut self.draft.mesh_resolution, 8..=512)
                                     ,
                             ));
-                            parameter(ui, "Seed", "Random spectrum seed. Apply to rebuild the ocean.", |ui| ui.horizontal(|ui| {
+                            parameter(ui, "随机种子", "波谱随机种子，点击应用后重建海面。", |ui| ui.horizontal(|ui| {
                                 ui.add(egui::DragValue::new(&mut self.draft.seed));
-                                if ui.button("New").clicked() {
+                                if ui.button("更换").clicked() {
                                     self.draft.seed = self.draft.seed.wrapping_add(1);
                                 }
                             }));
@@ -483,7 +528,7 @@ parameter(ui, "Patch side (m)", help("Patch side (m)"), |ui| ui.add(
                                 if ui
                                     .add_enabled(
                                         self.draft != current,
-                                        egui::Button::new("Apply changes"),
+                                        egui::Button::new("应用更改"),
                                     )
                                     .clicked()
                                 {
@@ -495,15 +540,15 @@ parameter(ui, "Patch side (m)", help("Patch side (m)"), |ui| ui.add(
                                         Err(error) => self.error = Some(error),
                                     }
                                 }
-                                if ui.button("Defaults").clicked() {
+                                if ui.button("恢复默认").clicked() {
                                     self.draft = OceanConfig::default();
                                 }
                             });
                             parameter_table(ui, "status table", |ui| {
-parameter(ui, "Changes", "Spectrum edits take effect after Apply.", |ui| ui.label(if self.draft == current {
-                                "Parameters applied"
+parameter(ui, "参数状态", "波谱参数需要点击应用后生效。", |ui| ui.label(if self.draft == current {
+                                "已应用"
                             } else {
-                                "Pending changes — click Apply"
+                                "有更改，需点击应用"
                             }));
 
 });
@@ -511,30 +556,30 @@ parameter(ui, "Changes", "Spectrum edits take effect after Apply.", |ui| ui.labe
                                 ui.colored_label(egui::Color32::LIGHT_RED, error);
                             }
                             ui.separator();
-                            ui.label(egui::RichText::new("Playback and appearance").strong());
+                            ui.label(egui::RichText::new("播放与外观").strong());
 parameter_table(ui, "playback table", |ui| {
                             {
-                                parameter(ui, "Paused", help("Paused"), |ui| ui.checkbox(paused, ""));
-                                parameter(ui, "Time", "Elapsed simulation time.", |ui| ui.label(format!("{time:.2} s")));
+                                parameter(ui, "暂停", help("暂停"), |ui| ui.checkbox(paused, ""));
+                                parameter(ui, "模拟时间", "已经经过的模拟时间。", |ui| ui.label(format!("{time:.2} s")));
                             }
-                            parameter(ui, "Time speed", help("Time speed"), |ui| ui.add(
+                            parameter(ui, "时间倍率", help("时间倍率"), |ui| ui.add(
                                 egui::Slider::new(&mut self.speed, 0.0..=3.0),
                             ));
-                            parameter(ui, "Height gain", help("Height gain"), |ui| ui.add(
+                            parameter(ui, "波高增益", help("波高增益"), |ui| ui.add(
                                 egui::Slider::new(&mut camera.gain, 0.0..=3.0),
                             ));
-                            parameter(ui, "Horizontal choppiness", help("Horizontal choppiness"), |ui| ui.checkbox(&mut camera.choppy, ""));
-                            parameter(ui, "Chop strength", help("Chop strength"), |ui| ui.add(
+                            parameter(ui, "水平挤浪", help("水平挤浪"), |ui| ui.checkbox(&mut camera.choppy, ""));
+                            parameter(ui, "挤浪强度", help("挤浪强度"), |ui| ui.add(
                                 egui::Slider::new(&mut camera.chop_amount, 0.0..=3.0)
                                     ,
                             ));
 
 });
-                                if ui.button("Restart time").clicked() {
+                                if ui.button("重新计时").clicked() {
                                     *time = 0.0;
                                     self.clear_foam = true;
                                 }
-                            if ui.button("Reset camera").clicked() {
+                            if ui.button("重置相机").clicked() {
                                 *camera = Camera::new(current.length);
                             }
 
@@ -543,144 +588,166 @@ parameter_table(ui, "playback table", |ui| {
 Panel::Foam => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
 
                             parameter_table(ui, "offshore foam table", |ui| {
-parameter(ui, "Show foam", help("Show foam"), |ui| ui.checkbox(&mut camera.foam, ""));
-                            parameter(ui, "J threshold", help("J threshold"), |ui| ui.add(
+parameter(ui, "显示泡沫", help("显示泡沫"), |ui| ui.checkbox(&mut camera.foam, ""));
+                            parameter(ui, "雅可比阈值", help("雅可比阈值"), |ui| ui.add(
                                 egui::Slider::new(&mut self.foam_settings.threshold, -0.5..=1.0)
                                     ,
                             ));
-                            parameter(ui, "Generation / s", help("Generation / s"), |ui| ui.add(
+                            parameter(ui, "生成速率（每秒）", help("生成速率（每秒）"), |ui| ui.add(
                                 egui::Slider::new(&mut self.foam_settings.generation, 0.0..=20.0)
                                     ,
                             ));
-                            parameter(ui, "Decay / s", help("Decay / s"), |ui| ui.add(
+                            parameter(ui, "衰减系数（每秒）", help("衰减系数（每秒）"), |ui| ui.add(
                                 egui::Slider::new(&mut self.foam_settings.decay, 0.0..=5.0)
                                     ,
                             ));
-                            parameter(ui, "Foam view", help("Foam view"), |ui| egui::ComboBox::from_id_salt("Foam view")
+                            parameter(ui, "泡沫视图", help("泡沫视图"), |ui| egui::ComboBox::from_id_salt("泡沫视图")
                                 .width(ui.available_width()).selected_text(match camera.foam_debug {
-                                    1 => "Jacobian",
-                                    2 => "Coverage",
-                                    _ => "Shaded water",
+                                    1 => "雅可比值",
+                                    2 => "覆盖率",
+                                    _ => "正常着色",
                                 })
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut camera.foam_debug, 0, "Shaded water");
-                                    ui.selectable_value(&mut camera.foam_debug, 1, "Jacobian");
-                                    ui.selectable_value(&mut camera.foam_debug, 2, "Coverage");
+                                    ui.selectable_value(&mut camera.foam_debug, 0, "正常着色");
+                                    ui.selectable_value(&mut camera.foam_debug, 1, "雅可比值");
+                                    ui.selectable_value(&mut camera.foam_debug, 2, "覆盖率");
                                 }));
 
 
 
 });
-                            if ui.button("Clear foam history").clicked() {
+                            if ui.button("清空泡沫历史").clicked() {
                                 self.clear_foam = true;
                             }
 }); },
 Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
 
-                                if ui.button("Beach scene").clicked() {
+                                if ui.button("沙滩场景").clicked() {
                                     self.optics = OpticsConfig::beach_scene();
                                     *camera = Camera::beach(current.length);
                                 }
                             let shore = &mut self.optics.shore;
                             parameter_table(ui, "solver table", |ui| {
-parameter(ui, "Sloped sand", help("Sloped sand"), |ui| ui.checkbox(&mut self.optics.beach, ""));
-                            parameter(ui, "Enable shore waves", help("Enable shore waves"), |ui| ui.checkbox(&mut shore.enabled, ""));
-                            parameter(ui, "SWE solver", help("SWE solver"), |ui| egui::ComboBox::from_id_salt("SWE solver")
-                                .width(ui.available_width()).selected_text(if shore.order == 2 {"Second order (MUSCL + RK2)"} else {"First order (Euler)"})
+parameter(ui, "倾斜沙滩", help("倾斜沙滩"), |ui| ui.checkbox(&mut self.optics.beach, ""));
+                            parameter(ui, "启用浅水模拟", help("启用浅水模拟"), |ui| ui.checkbox(&mut shore.enabled, ""));
+                            parameter(ui, "SWE 求解器", help("SWE 求解器"), |ui| egui::ComboBox::from_id_salt("SWE 求解器")
+                                .width(ui.available_width()).selected_text(if shore.order == 2 {"二阶（MUSCL + RK2）"} else {"一阶（欧拉）"})
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut shore.order, 1, "First order (Euler)");
-                                    ui.selectable_value(&mut shore.order, 2, "Second order (MUSCL + RK2)");
+                                    ui.selectable_value(&mut shore.order, 1, "一阶（欧拉）");
+                                    ui.selectable_value(&mut shore.order, 2, "二阶（MUSCL + RK2）");
                                 }));
-                            parameter(ui, "GPU timing", "Includes SWE, foam and substep copies; excludes FFT and rendering.", |ui| ui.label(&self.swe_timing));
+                            parameter(ui, "GPU 耗时", "包含 SWE、泡沫和子步数据复制，不包含 FFT 与渲染。", |ui| ui.label(&self.swe_timing));
 
 
 
 
 });
                             ui.separator();
-                            ui.label(egui::RichText::new("Foam colors").strong());
+                            ui.label(egui::RichText::new("泡沫颜色").strong());
                             parameter_table(ui, "foam colors table", |ui| {
-parameter(ui, "Water foam", help("Water foam"), |ui| ui.color_edit_button_rgb(&mut shore.water_foam_color));
-                            parameter(ui, "Stranded foam (sand)", help("Stranded foam (sand)"), |ui| ui.color_edit_button_rgb(&mut shore.stranded_foam_color));
+parameter(ui, "水上泡沫", help("水上泡沫"), |ui| ui.color_edit_button_rgb(&mut shore.water_foam_color));
+                            parameter(ui, "沙地残留泡沫", help("沙地残留泡沫"), |ui| ui.color_edit_button_rgb(&mut shore.stranded_foam_color));
 
 });
                             ui.horizontal(|ui| {
-                                if ui.button("Distinct defaults").clicked() {
+                                if ui.button("默认区分色").clicked() {
                                     shore.water_foam_color=[0.87,0.92,0.90];
                                     shore.stranded_foam_color=[0.36,0.50,0.58];
                                 }
-                                if ui.button("Match previous colors").clicked() {
+                                if ui.button("恢复原配色").clicked() {
                                     shore.water_foam_color=[0.87,0.92,0.90];
                                     shore.stranded_foam_color=[0.82;3];
                                 }
                             });
-                            if ui.button("Identify foam: water green / sand red").clicked() {
+                            if ui.button("区分位置：水绿／沙红").clicked() {
                                 shore.water_foam_color=[0.0,1.0,0.0];
                                 shore.stranded_foam_color=[1.0,0.0,0.0];
                             }
 
 
                             ui.separator();
-                            ui.label(egui::RichText::new("Small-wave normals").strong());
+                            ui.label(egui::RichText::new("小波法线").strong());
                             parameter_table(ui, "normal table", |ui| {
-parameter(ui, "Normal detail strength", help("Normal detail strength"), |ui| ui.add(egui::Slider::new(&mut shore.normal_strength, 0.0..=3.0)));
+parameter(ui, "法线细节强度", help("法线细节强度"), |ui| ui.add(egui::Slider::new(&mut shore.normal_strength, 0.0..=3.0)));
 
 
 
 });
                             ui.separator();
-                            ui.label(egui::RichText::new("FFT input").strong());
+                            ui.label(egui::RichText::new("FFT 输入").strong());
                             parameter_table(ui, "FFT input table", |ui| {
-parameter(ui, "FFT to SWE gain", help("FFT to SWE gain"), |ui| ui.add(egui::Slider::new(&mut shore.input_gain, 0.0..=3.0)));
+parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui::Slider::new(&mut shore.input_gain, 0.0..=3.0)));
 
 
 
-                            parameter(ui, "Filter short waves", help("Filter short waves"), |ui| ui.checkbox(&mut shore.filter_enabled, ""));
+                            parameter(ui, "过滤短波", help("过滤短波"), |ui| ui.checkbox(&mut shore.filter_enabled, ""));
 
-                                parameter(ui, "Reject wavelength <= (m)", help("Reject wavelength <= (m)"), |ui| ui.add_enabled(shore.filter_enabled,egui::Slider::new(&mut shore.filter_cutoff, 0.0..=128.0)
+                                parameter(ui, "截止波长（米）", help("截止波长（米）"), |ui| ui.add_enabled(shore.filter_enabled,egui::Slider::new(&mut shore.filter_cutoff, 0.0..=128.0)
                                     .clamping(egui::SliderClamping::Edits)));
-                                parameter(ui, "Transition width (m)", help("Transition width (m)"), |ui| ui.add_enabled(shore.filter_enabled,egui::Slider::new(&mut shore.filter_transition, 0.0..=128.0)
+                                parameter(ui, "过滤过渡宽度（米）", help("过滤过渡宽度（米）"), |ui| ui.add_enabled(shore.filter_enabled,egui::Slider::new(&mut shore.filter_transition, 0.0..=128.0)
                                     .clamping(egui::SliderClamping::Edits)));
 
 
 });
                             ui.horizontal(|ui| {
-                                if ui.button("12–24 m default").clicked() { shore.filter_enabled=true; shore.filter_cutoff=12.0; shore.filter_transition=12.0; }
-                                if ui.button("3–6 m").clicked() { shore.filter_enabled=true; shore.filter_cutoff=3.0; shore.filter_transition=3.0; }
+                                if ui.button("默认 12～24 米").clicked() { shore.filter_enabled=true; shore.filter_cutoff=12.0; shore.filter_transition=12.0; }
+                                if ui.button("3～6 米").clicked() { shore.filter_enabled=true; shore.filter_cutoff=3.0; shore.filter_transition=3.0; }
                             });
 
 
                             ui.separator();
 
+                            ui.label(egui::RichText::new("前沿泡沫").strong());
+                            parameter_table(ui, "front foam table", |ui| {
+                            parameter(ui, "前沿生成速率（每秒）", "沿流向发现前方水面更低时的独立泡沫生成速率。0 关闭前沿生成；不要求前方接近干地，也不使用背景上涨阈值。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_generation, 0.0..=30.0)));
+                            parameter(ui, "前沿采样距离（米）", "沿当前水流方向，在此距离内均匀采样 4 个位置。越远通常覆盖越宽，默认 1 米。按世界距离采样，兼容非正方形网格。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_distance, 0.05..=10.0).max_decimals(2)));
+                            parameter(ui, "前沿满强度水面落差（米）", "比较实际水面高度（地形高度＋水深）。当前水面减去前方最低水面，从 0 到此值平滑增强；达到此值时原始权重为 1，再由四点增益曲线限制。干燥采样点跳过，不把沙坡高度当成水面。越小越敏感，默认 0.03 米。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_depth_drop, 0.001..=1.0).logarithmic(true).max_decimals(3)));
+                            for (index, name) in ["增益起升位置", "增益满强位置", "增益回落位置", "增益归零位置"].into_iter().enumerate() {
+                                let low=if index==0 {0.0} else {shore.foam_front_gain_points[index-1]};
+                                let high=if index==3 {20.0} else {shore.foam_front_gain_points[index+1]};
+                                parameter(ui, name, "四个横坐标的范围是 0～20，纵轴是增益（0～1）。当前计算仍输入原始前沿权重（0～1），不做缩放。四点依次控制起升、满强、回落、归零；增益乘到原前沿生成权重上。相邻点重合表示硬切换。只影响新增前沿泡沫，参数实时生效并自动保存。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_gain_points[index], low..=high).max_decimals(3)));
+                            }
+                            parameter(ui, "背景生成倍率", "缩放原有泡沫生成量，默认 0.15，使后方泡沫较弱。0 关闭背景生成。前沿速率设为 0、此倍率设为 1，可恢复原生成算法。", |ui| ui.add(egui::Slider::new(&mut shore.foam_background_multiplier, 0.0..=1.0).max_decimals(2)));
+                            });
+                            front_foam_gain_preview(ui, shore.foam_front_gain_points);
+                            ui.separator();
+
                             parameter_table(ui, "shore foam table", |ui| {
-parameter(ui, "FFT blend depth (m)", help("FFT blend depth (m)"), |ui| ui.add(
+parameter(ui, "FFT 混合水深（米）", help("FFT 混合水深（米）"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.breaking_depth, 0.5..=5.0)
                                     ,
                             ));
-                            parameter(ui, "Foam generation / s", help("Foam generation / s"), |ui| ui.add(
+                            parameter(ui, "背景生成速率（每秒）", help("背景生成速率（每秒）"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.generation, 0.0..=15.0)
                                     ,
                             ));
-                            parameter(ui, "Shore foam decay / s", help("Shore foam decay / s"), |ui| ui.add(
+                            parameter(ui, "背景生成起始阈值", help("背景生成起始阈值"), |ui| ui.add(
+                                egui::Slider::new(&mut shore.foam_generation_threshold, 0.0..=2.0).max_decimals(3),
+                            ));
+                            parameter(ui, "背景生成过渡范围", help("背景生成过渡范围"), |ui| ui.add(
+                                egui::Slider::new(&mut shore.foam_generation_transition, 0.0..=2.0).max_decimals(3),
+                            ));
+                            parameter(ui, "水上泡沫衰减（每秒）", help("水上泡沫衰减（每秒）"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.decay, 0.0..=4.0)
                                     ,
                             ));
-                            parameter(ui, "Foam compression threshold / s", help("Foam compression threshold / s"), |ui| ui.add(
+                            parameter(ui, "汇聚增强阈值（每秒）", help("汇聚增强阈值（每秒）"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.foam_compression_threshold, 0.0..=4.0)
                                     ,
                             ));
-                            parameter(ui, "Density color reference", help("Density color reference"), |ui| ui.add(
+                            parameter(ui, "密度颜色参考值", help("密度颜色参考值"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.foam_density_reference, 0.01..=20.0)
                                     .logarithmic(true),
                             ));
 
 
 
-                            parameter(ui, "Sand drying time (s)", help("Sand drying time (s)"), |ui| ui.add(
+                            parameter(ui, "泡沫沉积水深（毫米）", help("泡沫沉积水深（毫米）"), |ui| ui.add(egui::Slider::new(&mut shore.foam_deposit_depth_mm, 0.0..=100.0).max_decimals(2)));
+                            parameter(ui, "沙地干燥时间（秒）", help("沙地干燥时间（秒）"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.drying_time, 1.0..=120.0)
                                     ,
                             ));
-                            parameter(ui, "Shore view", help("Shore view"), |ui| egui::ComboBox::from_id_salt("Shore view")
+                            parameter(ui, "浅水调试视图", help("浅水调试视图"), |ui| egui::ComboBox::from_id_salt("浅水调试视图")
                                 .width(ui.available_width()).selected_text(
                                     super::shore::VIEW_NAMES[shore.view as usize],
                                 )
@@ -700,21 +767,21 @@ parameter(ui, "FFT blend depth (m)", help("FFT blend depth (m)"), |ui| ui.add(
 
 
 });
-                            if ui.button("Debug foam density: green / red").clicked() {
+                            if ui.button("密度调试：低绿／高红").clicked() {
                                 shore.view = 6;
                             }
-                            if ui.button("Reset shallow water, foam and sand").clicked() {
+                            if ui.button("重置浅水、泡沫和沙地").clicked() {
                                 self.clear_foam = true;
                             }
 
                             if self.optics.beach {
                                 parameter_table(ui, "beach table", |ui| {
-parameter(ui, "Beach slope (rise/run)", help("Beach slope (rise/run)"), |ui| ui.add(
+parameter(ui, "沙滩坡度（高／宽）", help("沙滩坡度（高／宽）"), |ui| ui.add(
                                     egui::Slider::new(&mut self.optics.beach_slope, 0.01..=0.5)
                                         .clamping(egui::SliderClamping::Edits)
                                         ,
                                 ));
-                                parameter(ui, "Shore X (m)", help("Shore X (m)"), |ui| ui.add(
+                                parameter(ui, "岸线 X（米）", help("岸线 X（米）"), |ui| ui.add(
                                     egui::Slider::new(
                                         &mut self.optics.shore_x,
                                         -current.length..=current.length,
@@ -725,7 +792,7 @@ parameter(ui, "Beach slope (rise/run)", help("Beach slope (rise/run)"), |ui| ui.
 
 
 });
-                                if ui.button("Beach camera").clicked() {
+                                if ui.button("沙滩相机").clicked() {
                                     *camera = Camera::beach(current.length);
                                 }
                             }
@@ -733,7 +800,7 @@ parameter(ui, "Beach slope (rise/run)", help("Beach slope (rise/run)"), |ui| ui.
 Panel::Optics => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
 
                             parameter_table(ui, "seabed table", |ui| {
-parameter(ui, "Seabed depth (m)", help("Seabed depth (m)"), |ui| ui.add_enabled(
+parameter(ui, "海底深度（米）", help("海底深度（米）"), |ui| ui.add_enabled(
                                 !self.optics.beach,
                                 egui::Slider::new(&mut self.optics.depth, 0.25..=100.0)
                                     .logarithmic(true)
@@ -744,36 +811,36 @@ parameter(ui, "Seabed depth (m)", help("Seabed depth (m)"), |ui| ui.add_enabled(
 });
                             self.sigma_editor.ui(
                                 ui,
-                                "Extinction sigma_t (1/m)",
+                                "消光系数（每米）",
                                 &mut self.optics.sigma_t,
                             );
                             self.source_editor.ui(
                                 ui,
-                                "Manual source S (radiance/m)",
+                                "手动散射源（辐亮度／米）",
                                 &mut self.optics.source,
                             );
                             ui.separator();
-                            ui.label(egui::RichText::new("Sky scattering").strong());
+                            ui.label(egui::RichText::new("天空散射").strong());
                             parameter_table(ui, "sky table", |ui| {
-parameter(ui, "Enable sky scattering", help("Enable sky scattering"), |ui| ui.checkbox(&mut self.optics.sky.enabled, ""));
-                            parameter(ui, "Sky tint (linear RGB)", help("Sky tint (linear RGB)"), |ui| {
+parameter(ui, "启用天空散射", help("启用天空散射"), |ui| ui.checkbox(&mut self.optics.sky.enabled, ""));
+                            parameter(ui, "天空颜色（线性 RGB）", help("天空颜色（线性 RGB）"), |ui| {
                                 let mut color = self.optics.sky.color;
                                 if ui.color_edit_button_rgb(&mut color).changed() {
                                     self.optics.sky.color = color;
                                 }
                             });
-                            parameter(ui, "Sky intensity", help("Sky intensity"), |ui| ui.add(
+                            parameter(ui, "天空强度", help("天空强度"), |ui| ui.add(
                                 egui::Slider::new(&mut self.optics.sky.intensity, 0.0..=20.0)
                                     .logarithmic(true)
                                     ,
                             ));
-                            parameter(ui, "Scattering albedo RGB", help("Scattering albedo RGB"), |ui| {
+                            parameter(ui, "散射反照率 RGB", help("散射反照率 RGB"), |ui| {
                                 let mut albedo = self.optics.sky.albedo;
                                 if ui.color_edit_button_rgb(&mut albedo).changed() {
                                     self.optics.sky.albedo = albedo;
                                 }
                             });
-                            parameter(ui, "Sky integration steps", help("Sky integration steps"), |ui| egui::ComboBox::from_id_salt("Sky integration steps")
+                            parameter(ui, "天空积分步数", help("天空积分步数"), |ui| egui::ComboBox::from_id_salt("天空积分步数")
                                 .width(ui.available_width()).selected_text(self.optics.sky.steps.to_string())
                                 .show_ui(ui, |ui| {
                                     for n in [8, 16, 32] {
@@ -786,43 +853,43 @@ parameter(ui, "Enable sky scattering", help("Enable sky scattering"), |ui| ui.ch
                                 }));
 
 });
-                            ui.collapsing("Precise sky RGB", |ui| {
+                            ui.collapsing("天空 RGB 精确值", |ui| {
 parameter_table(ui, "sky channels table", |ui| {
                                 for c in 0..3 {
-                                    parameter(ui, &format!("Tint {}", ["R", "G", "B"][c]), "Linear RGB sky tint.", |ui|
+                                    parameter(ui, &format!("颜色 {}", ["R", "G", "B"][c]), "天空颜色的线性 RGB 分量。", |ui|
                                         ui.add(egui::DragValue::new(&mut self.optics.sky.color[c]).range(0.0..=1.0).speed(0.001)));
-                                    parameter(ui, &format!("Albedo {}", ["R", "G", "B"][c]), "Scattering fraction: sigma_s = albedo * sigma_t.", |ui|
+                                    parameter(ui, &format!("反照率 {}", ["R", "G", "B"][c]), "散射系数等于反照率乘以消光系数。", |ui|
                                         ui.add(egui::DragValue::new(&mut self.optics.sky.albedo[c]).range(0.0..=1.0).speed(0.001)));
                                 }
 
 });
                             });
-                            ui.collapsing("Sky source vs depth", |ui| {
+                            ui.collapsing("天空散射源随深度变化", |ui| {
                                 super::skylight::depth_graph(ui, &self.optics);
                             });
 
 
                             ui.separator();
                             parameter_table(ui, "water optics table", |ui| {
-parameter(ui, "Water view", help("Water view"), |ui| egui::ComboBox::from_id_salt("Water view")
+parameter(ui, "水体调试视图", help("水体调试视图"), |ui| egui::ComboBox::from_id_salt("水体调试视图")
                                 .width(ui.available_width()).selected_text(VIEW_NAMES[self.optics.view as usize])
                                 .show_ui(ui, |ui| {
                                     for (i, name) in VIEW_NAMES.iter().enumerate() {
                                         ui.selectable_value(&mut self.optics.view, i as u32, *name);
                                     }
                                 }));
-                            parameter(ui, "Path view white at (m)", help("Path view white at (m)"), |ui| ui.add(
+                            parameter(ui, "光程白色参考值（米）", help("光程白色参考值（米）"), |ui| ui.add(
                                 egui::Slider::new(&mut self.optics.path_range, 1.0..=300.0)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)
                                     ,
                             ));
-                            parameter(ui, "Sky reflection and highlights", help("Sky reflection and highlights"), |ui| ui.checkbox(
+                            parameter(ui, "天空反射与高光", help("天空反射与高光"), |ui| ui.checkbox(
                                 &mut self.optics.reflections,
                                 "",
                             ));
-                            parameter(ui, "Seabed RGB test bands", help("Seabed RGB test bands"), |ui| ui.checkbox(&mut self.optics.color_bands, ""));
-                            parameter(ui, "Checker size (m)", help("Checker size (m)"), |ui| ui.add(
+                            parameter(ui, "海底 RGB 测试色带", help("海底 RGB 测试色带"), |ui| ui.checkbox(&mut self.optics.color_bands, ""));
+                            parameter(ui, "棋盘格尺寸（米）", help("棋盘格尺寸（米）"), |ui| ui.add(
                                 egui::Slider::new(&mut self.optics.checker_size, 0.5..=20.0)
                                     ,
                             ));
@@ -832,7 +899,7 @@ parameter(ui, "Water view", help("Water view"), |ui| egui::ComboBox::from_id_sal
 
 
 });
-                            if ui.button("Reset optics").clicked() {
+                            if ui.button("重置光学参数").clicked() {
                                 self.optics = OpticsConfig::default();
                             }
 }); },

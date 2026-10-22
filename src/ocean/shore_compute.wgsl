@@ -31,7 +31,7 @@ fn foam_velocity(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> f32 {
     let a_state=state(c); let b_state=state(b);
     let speed=0.5*(velocity(a_state)[axis]+velocity(b_state)[axis])*f32(delta[axis]);
     let donor=select(b_state,a_state,speed>=0.0);
-    return select(0.0,speed,donor.x>0.003);
+    return select(0.0,speed,donor.x>shore.density.z);
 }
 fn foam_flux(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> f32 {
     let speed=foam_velocity(c,delta,axis);
@@ -127,6 +127,58 @@ fn incident(p: vec2<f32>, depth: f32) -> vec3<f32> {
         8.0*depth/max(length(result.yz),0.000001)));
     return result*safety;
 }
+fn foam_breaking_weight(rise_ratio: f32) -> f32 {
+    let threshold=shore.foam_generation.x;
+    let width=shore.foam_generation.y;
+    // Strict comparison keeps still water quiet even with both controls at zero.
+    if width<=0.0 { return select(0.0,1.0,rise_ratio>threshold); }
+    return smoothstep(threshold,threshold+width,rise_ratio);
+}
+// Sample one immutable solver stage; never compare a newly updated center with
+// old neighbors. World-space direction accounts for unequal X/Z cell spacing.
+fn foam_surface_cell(c: vec2<i32>) -> vec2<f32> {
+    let depth=state(c).x;
+    // Dry terrain has no free surface and must not contribute a fake height.
+    let wet=select(0.0,1.0,depth>0.00001);
+    return vec2((bed(c)+depth)*wet,wet);
+}
+fn foam_surface_at(grid: vec2<f32>) -> vec2<f32> {
+    let c=vec2<i32>(floor(grid)); let f=fract(grid);
+    // Interpolate height only over wet contributors, preserving a level surface
+    // beside dry cells. Return weighted height and coverage for normalization.
+    return mix(mix(foam_surface_cell(c),foam_surface_cell(c+vec2(1,0)),f.x),
+        mix(foam_surface_cell(c+vec2(0,1)),foam_surface_cell(c+vec2(1,1)),f.x),f.y);
+}
+fn foam_front_gain(value: f32) -> f32 {
+    let p=shore.foam_front_gain;
+    var rise=select(0.0,1.0,value>=p.y);
+    var fall=select(0.0,1.0,value<=p.z);
+    // Coincident control points mean a hard edge, never smoothstep(a,a,x).
+    if p.y>p.x { rise=smoothstep(p.x,p.y,value); }
+    if p.w>p.z { fall=1.0-smoothstep(p.z,p.w,value); }
+    return rise*fall;
+}
+fn foam_front_weight(c: vec2<i32>) -> f32 {
+    if shore.foam_front.x<=0.0 { return 0.0; }
+    let center=state(c); let flow=velocity(center); let speed=length(flow);
+    // A stationary surface has no forward direction; suppress tiny velocity noise.
+    if speed<=0.02 || center.x<=0.00001 { return 0.0; }
+    let surface=bed(c)+center.x;
+    let spacing=shore.domain.zw/shore.options.z;
+    let offset=flow/speed*shore.foam_front.y/spacing;
+    var drop=0.0;
+    for(var sample=1u;sample<=4u;sample++) {
+        let ahead=vec2<f32>(c)+offset*(f32(sample)/4.0);
+        // Leaving the patch is not evidence of a falling free surface.
+        if any(ahead<vec2(0.0)) || any(ahead>vec2(shore.options.z-1.0)) { continue; }
+        let sampled=foam_surface_at(ahead);
+        if sampled.y<=0.000001 { continue; }
+        drop=max(drop,surface-sampled.x/sampled.y);
+    }
+    // Deliberately no dry-front, rising-water or shore-direction requirement.
+    let fall_weight=smoothstep(0.0,shore.foam_front.z,drop);
+    return fall_weight*foam_front_gain(fall_weight)*smoothstep(0.02,0.1,speed);
+}
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let n = u32(shore.options.z); let cells=n*n;
@@ -190,25 +242,27 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let wave_speed=sqrt(9.81*max(q.x,0.001));
     let rising=max(0.0,(q.x-original.x)/dt);
-    let breaking=smoothstep(0.25,0.65,rising/wave_speed);
+    let breaking=foam_breaking_weight(rising/wave_speed);
     let bore=smoothstep(1.0,1.4,length(velocity(q))/wave_speed);
     let divergence=(foam_velocity(c,vec2(1,0),0u)+foam_velocity(c,vec2(-1,0),0u))/spacing.x
         +(foam_velocity(c,vec2(0,1),1u)+foam_velocity(c,vec2(0,-1),1u))/spacing.y;
     // SWE cannot resolve overturning/air entrainment. Rising water plus a
     // compressive bore is a tunable proxy; shallow fast retreat alone emits none.
     let compression=smoothstep(shore.density.x,shore.density.x+0.5,max(0.0,-divergence));
-    let source=shore.options.x*breaking*mix(0.25,1.0,max(bore,compression))
+    let background_source=shore.options.x*shore.foam_front.w*breaking*mix(0.25,1.0,max(bore,compression));
+    let front_source=shore.foam_front.x*foam_front_weight(c);
+    let source=(background_source+front_source)
         *smoothstep(0.003,0.03,q.x)*(1.0-edge);
     let attenuation=exp(-dt*shore.timing.z);
     let source_time=select(dt,(1.0-attenuation)/max(shore.timing.z,0.000001),shore.timing.z>0.00001);
     q.w=max(0.0,q.w*attenuation+source*source_time);
     let old=initial_shore[index]; let ground=initial_shore[2u*cells+index];
-    let wet=q.x>0.003;
+    let wet=q.x>shore.density.z;
     let surface_density=q.w;
     var stranded=ground.x*exp(-dt/10.0);
     if !wet { stranded+=q.w; q.w=0.0; }
     if wet { stranded*=exp(-dt/0.12); }
-    let wetness=select(old.y*exp(-dt/shore.timing.w),1.0,wet);
+    let wetness=select(old.y*exp(-dt/shore.timing.w),1.0,q.x>0.003);
     new_shore[index]=vec4(q.w,wetness,q.x,velocity(q).x);
     new_shore[cells+index]=q;
     new_shore[2u*cells+index]=vec4(stranded,select(0.0,surface_density,wet),q.x+z,velocity(q).y);

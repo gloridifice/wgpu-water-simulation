@@ -4,18 +4,18 @@ use super::skylight::SkyConfig;
 use wgpu::util::DeviceExt;
 
 pub const VIEW_NAMES: [&str; 12] = [
-    "Shaded water",
-    "Water path (m)",
-    "Transmittance T",
-    "Attenuated seabed (absorption)",
-    "In-scattering",
-    "Extinction loss",
-    "Raw seabed",
-    "Medium sum",
-    "Sky source at ray midpoint",
-    "Integrated sky scattering",
-    "Integrated manual source",
-    "Total source at ray midpoint",
+    "正常着色",
+    "水中光程（米）",
+    "透射率",
+    "衰减后的海底（吸收）",
+    "入射散射",
+    "消光损失",
+    "原始海底",
+    "介质合成",
+    "光线中点天空散射源",
+    "天空散射积分",
+    "手动散射源积分",
+    "光线中点总散射源",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

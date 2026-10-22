@@ -9,6 +9,7 @@ mod gui;
 mod theme;
 
 mod color_editor;
+mod configuration_panel;
 pub mod foam;
 pub mod optics;
 mod seabed;

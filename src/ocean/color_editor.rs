@@ -33,29 +33,49 @@ impl CoefficientEditor {
             *self = Self::new(*rgb, self.zero_strength);
         }
         ui.push_id(label, |ui| {
-            ui.label(egui::RichText::new(label).strong()).on_hover_text("Linear RGB coefficient = tint multiplied by strength. Zero extinction uses the analytic source * distance limit.");
+            ui.label(egui::RichText::new(label).strong()).on_hover_text(
+                "线性 RGB 系数等于颜色乘以强度；消光为零时使用散射源乘以距离的解析极限。",
+            );
             let mut changed = false;
             super::gui::parameter_table(ui, "coefficient table", |ui| {
-            changed |= super::gui::parameter(ui, "Color", "Linear RGB tint; actual RGB = color × strength.", |ui| ui.color_edit_button_rgb(&mut self.tint)).changed();
-            changed |= super::gui::parameter(ui, "Strength", "Independent coefficient magnitude; supports HDR values.", |ui|
-                ui.add(egui::DragValue::new(&mut self.strength).range(0.0..=10.0).speed(self.zero_strength*0.02).max_decimals(6))).changed();
+                changed |= super::gui::parameter(
+                    ui,
+                    "颜色",
+                    "线性 RGB 颜色；实际系数等于颜色乘以强度。",
+                    |ui| ui.color_edit_button_rgb(&mut self.tint),
+                )
+                .changed();
+                changed |= super::gui::parameter(
+                    ui,
+                    "强度",
+                    "独立调整系数大小，支持高动态范围数值。",
+                    |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut self.strength)
+                                .range(0.0..=10.0)
+                                .speed(self.zero_strength * 0.02)
+                                .max_decimals(6),
+                        )
+                    },
+                )
+                .changed();
             });
             if changed {
                 *rgb = self.tint.map(|v| v * self.strength);
                 self.last_rgb = *rgb;
             }
-            ui.collapsing("Precise RGB values", |ui| {
+            ui.collapsing("RGB 精确值", |ui| {
                 super::gui::parameter_table(ui, "RGB table", |ui| {
-                for (channel, name) in ["R", "G", "B"].into_iter().enumerate() {
-                    super::gui::parameter(ui, name, "Exact linear RGB coefficient value.", |ui| {
-                        ui.add(
-                            egui::DragValue::new(&mut rgb[channel])
-                                .range(0.0..=10.0)
-                                .speed(self.zero_strength * 0.02)
-                                .max_decimals(7),
-                        );
-                    });
-                }
+                    for (channel, name) in ["R", "G", "B"].into_iter().enumerate() {
+                        super::gui::parameter(ui, name, "线性 RGB 系数的精确值。", |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut rgb[channel])
+                                    .range(0.0..=10.0)
+                                    .speed(self.zero_strength * 0.02)
+                                    .max_decimals(7),
+                            );
+                        });
+                    }
                 });
             });
         });
