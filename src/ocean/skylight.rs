@@ -195,7 +195,20 @@ pub fn depth_graph(ui: &mut egui::Ui, optics: &super::optics::OpticsConfig) {
             * incident_reference(&optics.sky, f64::from(z * optics.sigma_t[c]), c, 32) as f32
     };
     let peak = (0..3).map(|c| source(0.0, c)).fold(0.0_f32, f32::max);
-    ui.small(format!("Depth: 0 .. {depth:.2} m; source: 0 .. {peak:.5}"));
+    super::gui::parameter_table(ui, "graph axes", |ui| {
+        super::gui::parameter(
+            ui,
+            "Depth range",
+            "Graph horizontal axis in meters.",
+            |ui| ui.label(format!("0 .. {depth:.2} m")),
+        );
+        super::gui::parameter(
+            ui,
+            "Source range",
+            "Local sky source, radiance per meter, before integration to the eye.",
+            |ui| ui.label(format!("0 .. {peak:.5}")),
+        );
+    });
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 90.0), egui::Sense::hover());
     ui.painter()
@@ -213,7 +226,6 @@ pub fn depth_graph(ui: &mut egui::Ui, optics: &super::optics::OpticsConfig) {
         ui.painter()
             .add(egui::Shape::line(points, egui::Stroke::new(1.5_f32, color)));
     }
-    ui.small("Local sky source (radiance/m), before integration to the eye.");
 }
 
 #[cfg(test)]

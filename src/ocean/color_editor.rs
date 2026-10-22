@@ -33,36 +33,21 @@ impl CoefficientEditor {
             *self = Self::new(*rgb, self.zero_strength);
         }
         ui.push_id(label, |ui| {
-            ui.label(label);
+            ui.label(egui::RichText::new(label).strong()).on_hover_text("Linear RGB coefficient = tint multiplied by strength. Zero extinction uses the analytic source * distance limit.");
             let mut changed = false;
-            ui.horizontal(|ui| {
-                ui.label("Color");
-                changed |= ui
-                    .color_edit_button_rgb(&mut self.tint)
-                    .on_hover_text("Linear RGB tint; actual RGB = color × strength")
-                    .changed();
-                ui.label("Strength");
-                changed |= ui
-                    .add(
-                        egui::DragValue::new(&mut self.strength)
-                            .range(0.0..=10.0)
-                            .speed(self.zero_strength * 0.02)
-                            .max_decimals(6),
-                    )
-                    .changed();
+            super::gui::parameter_table(ui, "coefficient table", |ui| {
+            changed |= super::gui::parameter(ui, "Color", "Linear RGB tint; actual RGB = color × strength.", |ui| ui.color_edit_button_rgb(&mut self.tint)).changed();
+            changed |= super::gui::parameter(ui, "Strength", "Independent coefficient magnitude; supports HDR values.", |ui|
+                ui.add(egui::DragValue::new(&mut self.strength).range(0.0..=10.0).speed(self.zero_strength*0.02).max_decimals(6))).changed();
             });
             if changed {
                 *rgb = self.tint.map(|v| v * self.strength);
                 self.last_rgb = *rgb;
             }
-            ui.small(format!(
-                "RGB = ({:.6}, {:.6}, {:.6})",
-                rgb[0], rgb[1], rgb[2]
-            ));
             ui.collapsing("Precise RGB values", |ui| {
+                super::gui::parameter_table(ui, "RGB table", |ui| {
                 for (channel, name) in ["R", "G", "B"].into_iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.label(name);
+                    super::gui::parameter(ui, name, "Exact linear RGB coefficient value.", |ui| {
                         ui.add(
                             egui::DragValue::new(&mut rgb[channel])
                                 .range(0.0..=10.0)
@@ -71,6 +56,7 @@ impl CoefficientEditor {
                         );
                     });
                 }
+                });
             });
         });
     }

@@ -83,6 +83,204 @@ fn ocean_view(
     requested_size
 }
 
+const PARAMETER_NAME_RATIO: f32 = 0.42;
+const PARAMETER_COLUMN_GAP: f32 = 8.0;
+
+/// All groups use the same ratio; widget minimum sizes cannot widen a column.
+pub(crate) fn parameter_table<R>(
+    ui: &mut egui::Ui,
+    id: &str,
+    rows: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let usable = (ui.available_width() - PARAMETER_COLUMN_GAP).max(0.0);
+    let widths = [
+        usable * PARAMETER_NAME_RATIO,
+        usable * (1.0 - PARAMETER_NAME_RATIO),
+    ];
+    let key = egui::Id::new("parameter table column widths");
+    let previous = ui.data_mut(|data| {
+        let old = data.get_temp::<[f32; 2]>(key);
+        data.insert_temp(key, widths);
+        old
+    });
+    let result = ui
+        .scope(|ui| {
+            ui.spacing_mut().slider_width = (widths[1] - 55.0).max(0.0);
+            egui::Grid::new((id, widths[0].to_bits()))
+                .num_columns(2)
+                .min_col_width(widths[0])
+                .spacing(egui::vec2(PARAMETER_COLUMN_GAP, 6.0))
+                .striped(true)
+                .show(ui, rows)
+                .inner
+        })
+        .inner;
+    ui.data_mut(|data| {
+        if let Some(old) = previous {
+            data.insert_temp(key, old);
+        } else {
+            data.remove::<[f32; 2]>(key);
+        }
+    });
+    result
+}
+
+/// Reserve exactly the column width even if a control has a larger minimum size.
+fn parameter_cell<R>(
+    ui: &mut egui::Ui,
+    id: (&str, &str),
+    width: f32,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let origin = ui.available_rect_before_wrap().min;
+    let bounds = egui::Rect::from_min_size(origin, egui::vec2(width, 100000.0));
+    let mut cell = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(id)
+            .max_rect(bounds)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    cell.set_clip_rect(ui.clip_rect().intersect(bounds));
+    cell.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+    let value = contents(&mut cell);
+    ui.allocate_space(egui::vec2(width, cell.min_size().y));
+    value
+}
+
+/// Append a name/control row to the enclosing parameter table.
+pub(crate) fn parameter<R>(
+    ui: &mut egui::Ui,
+    name: &str,
+    description: &str,
+    control: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let widths = ui
+        .data(|data| data.get_temp::<[f32; 2]>(egui::Id::new("parameter table column widths")))
+        .expect("parameter rows must be inside a shared table");
+    parameter_cell(ui, (name, "name"), widths[0], |ui| {
+        ui.add(egui::Label::new(name).wrap())
+            .on_hover_text(description);
+    });
+    let value = parameter_cell(ui, (name, "control"), widths[1], control);
+    ui.end_row();
+    value
+}
+
+fn help(name: &str) -> &'static str {
+    match name {
+        "A (power)" => {
+            "Phillips spectrum power A. Wave height scales with sqrt(A). P(k) = A exp(-1/(kL)^2) / k^4 * alignment^2. Apply to rebuild."
+        }
+        "L (m)" => "Phillips length scale L = wind speed squared / gravity. Apply to rebuild.",
+        "Wind angle (deg)" => {
+            "Direction of the wind unit vector, not wave speed. Apply to rebuild the spectrum."
+        }
+        "Patch side (m)" => {
+            "FFT tile side length. The rendered ocean spans 3 by 3 tiles. Apply to rebuild."
+        }
+        "FFT spectrum" => {
+            "FFT samples per axis. Grid spacing = patch side / resolution. Apply to rebuild."
+        }
+        "Mesh cells / axis" => {
+            "Coarse meshes may miss short waves. Geometry cells per tile axis; vertices = cells + 1. Mesh spacing = patch side / cells. Apply to rebuild."
+        }
+        "Paused" => "Freeze simulation, foam and texture flow. Render controls remain editable.",
+        "Time speed" => "Simulation time multiplier. Zero freezes evolution.",
+        "Height gain" => {
+            "Scales FFT displacement and SWE input. Changing it reinitializes SWE history."
+        }
+        "Horizontal choppiness" | "Chop strength" => {
+            "Horizontal FFT displacement sharpens crests and changes the Jacobian used to generate offshore foam."
+        }
+        "Show foam" => "Toggle foam shading without stopping simulation.",
+        "J threshold" => {
+            "Offshore foam is generated when the surface Jacobian falls below this threshold. Live; no Apply needed."
+        }
+        "Generation / s" => {
+            "Offshore foam production rate per simulation second. Live; no Apply needed."
+        }
+        "Decay / s" => {
+            "Offshore foam exponential decay rate. Smaller values keep foam longer; zero disables decay."
+        }
+        "Foam view" => "Show shaded water, the deformation Jacobian, or offshore foam coverage.",
+        "Sloped sand" => {
+            "Use sloped beach geometry. Land is toward -X; deeper water toward +X. Changing terrain resets SWE."
+        }
+        "Enable shore waves" => {
+            "Enable local shallow-water simulation and foam/ground history. Changes reset SWE."
+        }
+        "SWE solver" => {
+            "First order: Euler. Second order: MUSCL + RK2. Switching resets SWE. Set normal detail to zero to compare geometry."
+        }
+        "Water foam" => "Linear RGB for water foam, including offshore foam. Live shading only.",
+        "Stranded foam (sand)" => {
+            "Linear RGB for residue on exposed sand, not the wider water foam band. Live shading only."
+        }
+        "Normal detail strength" => {
+            "FFT short-wave normal detail. 0 = off, 1 = default. Fades in thin water. No simulation reset; enable reflections to see it clearly."
+        }
+        "FFT to SWE gain" => {
+            "Scales input elevation and momentum together: 0 = none, 1 = matched, 3 = triple. Reinitializes the whole SWE patch from current FFT and clears history."
+        }
+        "Filter short waves" => {
+            "Apply the same short-wave filter to FFT elevation and momentum before SWE input. Far-ocean detail is unchanged. Changes reinitialize SWE."
+        }
+        "Reject wavelength <= (m)" => {
+            "Wavelengths at or below this limit are rejected. Full transmission starts at cutoff + transition width."
+        }
+        "Transition width (m)" => {
+            "Smooth transition above the rejection cutoff. Zero gives a hard cutoff. Changes reinitialize SWE."
+        }
+        "FFT blend depth (m)" => {
+            "Blend from SWE to FFT between this depth and 2.5 times this depth. Changing it resets SWE."
+        }
+        "Foam generation / s" => {
+            "Surface foam production rate. Zero lets existing foam transport, concentrate and decay without new production."
+        }
+        "Shore foam decay / s" => {
+            "Water foam exponential decay rate per second. Smaller = longer life; 0 = no natural decay. Does not control sand residue."
+        }
+        "Foam compression threshold / s" => {
+            "Threshold for compression-enhanced generation. Conservative transport still concentrates foam regardless of this setting."
+        }
+        "Density color reference" => {
+            "Density reaching this value is red; dilute foam is green, intermediate yellow. Display only; does not clip simulated amount. Water and sand share the scale."
+        }
+        "Sand drying time (s)" => {
+            "Wet sand drying time constant. Does not control foam lifetime. Retreat leaves foam on exposed sand."
+        }
+        "Shore view" => {
+            "Diagnostic views bypass normal shading. Flow: blue = run-up, orange = backwash. Density: green = dilute, red = reference or higher, with no pore texture."
+        }
+        "Beach slope (rise/run)" | "Shore X (m)" => {
+            "Beach geometry: land toward -X, deeper water toward +X. Changes reinitialize the shallow-water simulation."
+        }
+        "Seabed depth (m)" => {
+            "Flat seabed depth. Disabled for sloped beach, where depth follows geometry."
+        }
+        "Enable sky scattering" => {
+            "Isotropic sky scattering using the mean sea plane and straight light paths. Manual source is analytic; sky source is piecewise analytic."
+        }
+        "Sky tint (linear RGB)" => {
+            "Linear RGB sky illumination; also controls the sky background and reflection."
+        }
+        "Sky intensity" => "Sky illumination radiance multiplier.",
+        "Scattering albedo RGB" => "sigma_s = albedo * sigma_t; sigma_a = (1 - albedo) * sigma_t.",
+        "Sky integration steps" => {
+            "Number of integration segments for sky scattering. More steps improve accuracy at additional GPU cost."
+        }
+        "Water view" => {
+            "Optical diagnostics bypass reflection and foam. T = exp(-sigma_t * distance). Absorption view displays background * T; loss includes out-scattering."
+        }
+        "Path view white at (m)" => "Distance mapped to white in the optical path diagnostic.",
+        "Sky reflection and highlights" => "Enable surface reflection and sun highlights.",
+        "Seabed RGB test bands" | "Checker size (m)" => {
+            "Seabed calibration pattern for comparing wavelength-dependent absorption and optical path length."
+        }
+        _ => "Live parameter; changes take effect immediately.",
+    }
+}
+
 pub struct Gui {
     pub context: egui::Context,
     pub input: egui_winit::State,
@@ -178,9 +376,9 @@ impl Gui {
         let output = context.run(input, |ctx| {
             egui::TopBottomPanel::top("workspace toolbar").show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Ocean workspace");
+                    ui.label("Ocean workspace").on_hover_text("Drag tabs to dock; drag dividers to resize. Drag inside Ocean view to orbit; scroll to zoom.");
                     if ui.button("Reset layout").clicked() { dock = default_dock(); }
-                    ui.small("Drag tabs to dock; drag dividers to resize. Orbit / zoom inside Ocean view.");
+
                 });
             });
             egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
@@ -201,7 +399,7 @@ Panel::Ocean => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                                 } else {
                                     ui.visuals().text_color()
                                 };
-                                ui.colored_label(color, &self.save_status);
+                                ui.colored_label(color, &self.save_status).on_hover_text("Auto-save after 0.5 seconds idle and on exit.");
                                 if ui
                                     .add_enabled(
                                         self.settings_path.is_some(),
@@ -213,58 +411,50 @@ Panel::Ocean => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                                 }
                             });
                             if let Some(path) = &self.settings_path {
-                                ui.small("Auto-save after 0.5 s idle; also saved on exit")
-                                    .on_hover_text(path.display().to_string());
+
                                 ui.collapsing("Local settings file", |ui| {
                                     ui.label(path.display().to_string());
                                 });
                             }
                             ui.separator();
-                            ui.heading("Phillips spectrum");
-                            ui.label("P(k) = A exp(-1/(kL)²) / k⁴ · alignment²");
-                            ui.add(
+                            ui.label(egui::RichText::new("Phillips spectrum").strong());
+
+                            parameter_table(ui, "spectrum table", |ui| {
+parameter(ui, "A (power)", help("A (power)"), |ui| ui.add(
                                 egui::Slider::new(&mut self.draft.amplitude, 0.0..=0.1)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)
                                     .smallest_positive(0.000001)
-                                    .text("A (power)"),
-                            );
-                            ui.add(
+                                    ,
+                            ));
+                            parameter(ui, "L (m)", help("L (m)"), |ui| ui.add(
                                 egui::Slider::new(&mut self.draft.phillips_length, 0.1..=500.0)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)
-                                    .text("L (m)"),
-                            );
+                                    ,
+                            ));
                             let mut angle = self.draft.wind_angle.to_degrees();
-                            if ui
-                                .add(
-                                    egui::Slider::new(&mut angle, -180.0..=180.0)
-                                        .text("Wind angle (deg)"),
-                                )
-                                .changed()
+                            if parameter(ui, "Wind angle (deg)", help("Wind angle (deg)"), |ui|
+                                ui.add(egui::Slider::new(&mut angle, -180.0..=180.0))).changed()
                             {
                                 self.draft.wind_angle = angle.to_radians();
                             }
-                            ui.small(format!(
-                                "Wind unit vector = ({:.2}, {:.2})",
-                                self.draft.wind_angle.cos(),
-                                self.draft.wind_angle.sin()
-                            ));
-                            ui.small("omega-hat = wind direction; not wave speed.");
-                            ui.small(format!(
-                                "L = U²/g corresponds to U = {:.2} m/s",
-                                (self.draft.phillips_length * 9.81).sqrt()
-                            ));
+
+
+
+
+});
                             ui.separator();
-                            ui.heading("Domain and sampling");
-                            ui.add(
+                            ui.label(egui::RichText::new("Domain and sampling").strong());
+                            parameter_table(ui, "domain table", |ui| {
+parameter(ui, "Patch side (m)", help("Patch side (m)"), |ui| ui.add(
                                 egui::Slider::new(&mut self.draft.length, 8.0..=1024.0)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)
-                                    .text("Patch side (m)"),
-                            );
-                            egui::ComboBox::from_label("FFT spectrum")
-                                .selected_text(format!(
+                                    ,
+                            ));
+                            parameter(ui, "FFT spectrum", help("FFT spectrum"), |ui| egui::ComboBox::from_id_salt("FFT spectrum")
+                                .width(ui.available_width()).selected_text(format!(
                                     "{} × {}",
                                     self.draft.resolution, self.draft.resolution
                                 ))
@@ -276,35 +466,19 @@ Panel::Ocean => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                                             format!("{n} × {n}"),
                                         );
                                     }
-                                });
-                            ui.add(
+                                }));
+                            parameter(ui, "Mesh cells / axis", help("Mesh cells / axis"), |ui| ui.add(
                                 egui::Slider::new(&mut self.draft.mesh_resolution, 8..=512)
-                                    .text("Mesh cells / axis"),
-                            );
-                            let m = self.draft.mesh_resolution;
-                            ui.small(format!(
-                                "{} × {} vertices / tile; 3 × 3 tiles",
-                                m + 1,
-                                m + 1
+                                    ,
                             ));
-                            ui.small(format!(
-                                "FFT spacing {:.3} m; mesh spacing {:.3} m",
-                                self.draft.length / self.draft.resolution as f32,
-                                self.draft.length / m as f32
-                            ));
-                            if m < self.draft.resolution {
-                                ui.colored_label(
-                                    egui::Color32::YELLOW,
-                                    "Coarse mesh may miss short-wave geometry.",
-                                );
-                            }
-                            ui.horizontal(|ui| {
-                                ui.label("Seed");
+                            parameter(ui, "Seed", "Random spectrum seed. Apply to rebuild the ocean.", |ui| ui.horizontal(|ui| {
                                 ui.add(egui::DragValue::new(&mut self.draft.seed));
                                 if ui.button("New").clicked() {
                                     self.draft.seed = self.draft.seed.wrapping_add(1);
                                 }
-                            });
+                            }));
+
+});
                             ui.horizontal(|ui| {
                                 if ui
                                     .add_enabled(
@@ -325,58 +499,65 @@ Panel::Ocean => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                                     self.draft = OceanConfig::default();
                                 }
                             });
-                            ui.small(if self.draft == current {
+                            parameter_table(ui, "status table", |ui| {
+parameter(ui, "Changes", "Spectrum edits take effect after Apply.", |ui| ui.label(if self.draft == current {
                                 "Parameters applied"
                             } else {
                                 "Pending changes — click Apply"
-                            });
+                            }));
+
+});
                             if let Some(error) = &self.error {
                                 ui.colored_label(egui::Color32::LIGHT_RED, error);
                             }
                             ui.separator();
-                            ui.heading("Playback and appearance");
-                            ui.horizontal(|ui| {
-                                ui.checkbox(paused, "Paused");
+                            ui.label(egui::RichText::new("Playback and appearance").strong());
+parameter_table(ui, "playback table", |ui| {
+                            {
+                                parameter(ui, "Paused", help("Paused"), |ui| ui.checkbox(paused, ""));
+                                parameter(ui, "Time", "Elapsed simulation time.", |ui| ui.label(format!("{time:.2} s")));
+                            }
+                            parameter(ui, "Time speed", help("Time speed"), |ui| ui.add(
+                                egui::Slider::new(&mut self.speed, 0.0..=3.0),
+                            ));
+                            parameter(ui, "Height gain", help("Height gain"), |ui| ui.add(
+                                egui::Slider::new(&mut camera.gain, 0.0..=3.0),
+                            ));
+                            parameter(ui, "Horizontal choppiness", help("Horizontal choppiness"), |ui| ui.checkbox(&mut camera.choppy, ""));
+                            parameter(ui, "Chop strength", help("Chop strength"), |ui| ui.add(
+                                egui::Slider::new(&mut camera.chop_amount, 0.0..=3.0)
+                                    ,
+                            ));
+
+});
                                 if ui.button("Restart time").clicked() {
                                     *time = 0.0;
                                     self.clear_foam = true;
                                 }
-                                ui.label(format!("{time:.2} s"));
-                            });
-                            ui.add(
-                                egui::Slider::new(&mut self.speed, 0.0..=3.0).text("Time speed"),
-                            );
-                            ui.add(
-                                egui::Slider::new(&mut camera.gain, 0.0..=3.0).text("Height gain"),
-                            );
-                            ui.checkbox(&mut camera.choppy, "Horizontal choppiness");
-                            ui.add(
-                                egui::Slider::new(&mut camera.chop_amount, 0.0..=3.0)
-                                    .text("Chop strength"),
-                            );
                             if ui.button("Reset camera").clicked() {
                                 *camera = Camera::new(current.length);
                             }
-                            ui.small("Ocean view: drag to orbit, wheel to zoom.");
-                            ui.small("A scales power. Wave height scales with sqrt(A).");
+
+
 }); },
 Panel::Foam => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-                            ui.label("Live controls — no Apply needed");
-                            ui.checkbox(&mut camera.foam, "Show foam");
-                            ui.add(
+
+                            parameter_table(ui, "offshore foam table", |ui| {
+parameter(ui, "Show foam", help("Show foam"), |ui| ui.checkbox(&mut camera.foam, ""));
+                            parameter(ui, "J threshold", help("J threshold"), |ui| ui.add(
                                 egui::Slider::new(&mut self.foam_settings.threshold, -0.5..=1.0)
-                                    .text("J threshold"),
-                            );
-                            ui.add(
+                                    ,
+                            ));
+                            parameter(ui, "Generation / s", help("Generation / s"), |ui| ui.add(
                                 egui::Slider::new(&mut self.foam_settings.generation, 0.0..=20.0)
-                                    .text("Generation / s"),
-                            );
-                            ui.add(
+                                    ,
+                            ));
+                            parameter(ui, "Decay / s", help("Decay / s"), |ui| ui.add(
                                 egui::Slider::new(&mut self.foam_settings.decay, 0.0..=5.0)
-                                    .text("Decay / s"),
-                            );
-                            egui::ComboBox::from_label("Foam view")
-                                .selected_text(match camera.foam_debug {
+                                    ,
+                            ));
+                            parameter(ui, "Foam view", help("Foam view"), |ui| egui::ComboBox::from_id_salt("Foam view")
+                                .width(ui.available_width()).selected_text(match camera.foam_debug {
                                     1 => "Jacobian",
                                     2 => "Coverage",
                                     _ => "Shaded water",
@@ -385,44 +566,44 @@ Panel::Foam => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fals
                                     ui.selectable_value(&mut camera.foam_debug, 0, "Shaded water");
                                     ui.selectable_value(&mut camera.foam_debug, 1, "Jacobian");
                                     ui.selectable_value(&mut camera.foam_debug, 2, "Coverage");
-                                });
-                            ui.small("J: red < 0, orange < 1, white = 1, blue > 1");
-                            ui.small("Pause freezes foam. Rates use simulation seconds.");
+                                }));
+
+
+
+});
                             if ui.button("Clear foam history").clicked() {
                                 self.clear_foam = true;
                             }
 }); },
 Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-                            ui.label("Live controls — no Apply needed");
-                            ui.horizontal(|ui| {
+
                                 if ui.button("Beach scene").clicked() {
                                     self.optics = OpticsConfig::beach_scene();
                                     *camera = Camera::beach(current.length);
                                 }
-                                ui.checkbox(&mut self.optics.beach, "Sloped sand");
-                            });
                             let shore = &mut self.optics.shore;
-                            ui.checkbox(&mut shore.enabled, "Enable shore waves");
-                            egui::ComboBox::from_label("SWE solver")
-                                .selected_text(if shore.order == 2 {"Second order (MUSCL + RK2)"} else {"First order (Euler)"})
+                            parameter_table(ui, "solver table", |ui| {
+parameter(ui, "Sloped sand", help("Sloped sand"), |ui| ui.checkbox(&mut self.optics.beach, ""));
+                            parameter(ui, "Enable shore waves", help("Enable shore waves"), |ui| ui.checkbox(&mut shore.enabled, ""));
+                            parameter(ui, "SWE solver", help("SWE solver"), |ui| egui::ComboBox::from_id_salt("SWE solver")
+                                .width(ui.available_width()).selected_text(if shore.order == 2 {"Second order (MUSCL + RK2)"} else {"First order (Euler)"})
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(&mut shore.order, 1, "First order (Euler)");
                                     ui.selectable_value(&mut shore.order, 2, "Second order (MUSCL + RK2)");
-                                });
-                            ui.label(&self.swe_timing);
-                            ui.small("GPU span includes SWE, foam and substep copies; excludes FFT/render.");
-                            ui.small("Changing solver resets SWE. Set normals to 0 for wave comparison.");
-                            ui.small("Incoming waves follow FFT sea state and Height gain.");
+                                }));
+                            parameter(ui, "GPU timing", "Includes SWE, foam and substep copies; excludes FFT and rendering.", |ui| ui.label(&self.swe_timing));
+
+
+
+
+});
                             ui.separator();
-                            ui.heading("Foam colors");
-                            ui.horizontal(|ui| {
-                                ui.color_edit_button_rgb(&mut shore.water_foam_color);
-                                ui.label("Water foam");
-                            });
-                            ui.horizontal(|ui| {
-                                ui.color_edit_button_rgb(&mut shore.stranded_foam_color);
-                                ui.label("Stranded foam (sand)");
-                            });
+                            ui.label(egui::RichText::new("Foam colors").strong());
+                            parameter_table(ui, "foam colors table", |ui| {
+parameter(ui, "Water foam", help("Water foam"), |ui| ui.color_edit_button_rgb(&mut shore.water_foam_color));
+                            parameter(ui, "Stranded foam (sand)", help("Stranded foam (sand)"), |ui| ui.color_edit_button_rgb(&mut shore.stranded_foam_color));
+
+});
                             ui.horizontal(|ui| {
                                 if ui.button("Distinct defaults").clicked() {
                                     shore.water_foam_color=[0.87,0.92,0.90];
@@ -437,72 +618,70 @@ Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                                 shore.water_foam_color=[0.0,1.0,0.0];
                                 shore.stranded_foam_color=[1.0,0.0,0.0];
                             }
-                            ui.small("Residue is the thin trail on exposed sand, not the wider water foam band.");
-                            ui.small("Live colors; no simulation reset. Water includes offshore foam.");
+
+
                             ui.separator();
-                            ui.heading("Small-wave normals");
-                            ui.add(egui::Slider::new(&mut shore.normal_strength, 0.0..=3.0).text("Normal detail strength"));
-                            ui.small("0 = off, 1 = default. Live shading only; no SWE reset.");
-                            ui.small("Fades out in thin water. Enable reflections in Water optics.");
+                            ui.label(egui::RichText::new("Small-wave normals").strong());
+                            parameter_table(ui, "normal table", |ui| {
+parameter(ui, "Normal detail strength", help("Normal detail strength"), |ui| ui.add(egui::Slider::new(&mut shore.normal_strength, 0.0..=3.0)));
+
+
+
+});
                             ui.separator();
-                            ui.heading("FFT input");
-                            ui.add(egui::Slider::new(&mut shore.input_gain, 0.0..=3.0).text("FFT to SWE gain"));
-                            ui.small("Scales height and momentum together. 0 = no input; 1 = matched; 3 = triple.");
-                            ui.small("Changes reinitialize the whole SWE patch from the current FFT.");
-                            ui.heading("FFT input filter");
-                            ui.checkbox(&mut shore.filter_enabled, "Filter short waves");
-                            ui.add_enabled_ui(shore.filter_enabled, |ui| {
-                                ui.add(egui::Slider::new(&mut shore.filter_cutoff, 0.0..=128.0)
-                                    .clamping(egui::SliderClamping::Edits).text("Reject wavelength <= (m)"));
-                                ui.add(egui::Slider::new(&mut shore.filter_transition, 0.0..=128.0)
-                                    .clamping(egui::SliderClamping::Edits).text("Transition width (m)"));
-                            });
-                            if shore.filter_enabled {
-                                ui.small(format!("<= {:.1} m rejected; >= {:.1} m fully passed.", shore.filter_cutoff, shore.filter_cutoff + shore.filter_transition));
-                                if shore.filter_transition == 0.0 { ui.small("Zero width: hard cutoff; wavelengths above cutoff pass."); }
-                            } else {
-                                ui.small("Filter off: all FFT wavelengths enter SWE.");
-                            }
+                            ui.label(egui::RichText::new("FFT input").strong());
+                            parameter_table(ui, "FFT input table", |ui| {
+parameter(ui, "FFT to SWE gain", help("FFT to SWE gain"), |ui| ui.add(egui::Slider::new(&mut shore.input_gain, 0.0..=3.0)));
+
+
+
+                            parameter(ui, "Filter short waves", help("Filter short waves"), |ui| ui.checkbox(&mut shore.filter_enabled, ""));
+
+                                parameter(ui, "Reject wavelength <= (m)", help("Reject wavelength <= (m)"), |ui| ui.add_enabled(shore.filter_enabled,egui::Slider::new(&mut shore.filter_cutoff, 0.0..=128.0)
+                                    .clamping(egui::SliderClamping::Edits)));
+                                parameter(ui, "Transition width (m)", help("Transition width (m)"), |ui| ui.add_enabled(shore.filter_enabled,egui::Slider::new(&mut shore.filter_transition, 0.0..=128.0)
+                                    .clamping(egui::SliderClamping::Edits)));
+
+
+});
                             ui.horizontal(|ui| {
                                 if ui.button("12–24 m default").clicked() { shore.filter_enabled=true; shore.filter_cutoff=12.0; shore.filter_transition=12.0; }
                                 if ui.button("3–6 m").clicked() { shore.filter_enabled=true; shore.filter_cutoff=3.0; shore.filter_transition=3.0; }
                             });
-                            ui.small("Filter changes reinitialize SWE from FFT; shoreline flow still needs time to settle.");
-                            ui.small("Height and momentum use the same filter. Far-ocean detail is unchanged.");
+
+
                             ui.separator();
 
-                            ui.add(
+                            parameter_table(ui, "shore foam table", |ui| {
+parameter(ui, "FFT blend depth (m)", help("FFT blend depth (m)"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.breaking_depth, 0.5..=5.0)
-                                    .text("FFT blend depth (m)"),
-                            );
-                            ui.add(
+                                    ,
+                            ));
+                            parameter(ui, "Foam generation / s", help("Foam generation / s"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.generation, 0.0..=15.0)
-                                    .text("Foam generation / s"),
-                            );
-                            ui.add(
+                                    ,
+                            ));
+                            parameter(ui, "Shore foam decay / s", help("Shore foam decay / s"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.decay, 0.0..=4.0)
-                                    .text("Shore foam decay / s"),
-                            );
-                            ui.add(
+                                    ,
+                            ));
+                            parameter(ui, "Foam compression threshold / s", help("Foam compression threshold / s"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.foam_compression_threshold, 0.0..=4.0)
-                                    .text("Foam compression threshold / s"),
-                            );
-                            ui.add(
+                                    ,
+                            ));
+                            parameter(ui, "Density color reference", help("Density color reference"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.foam_density_reference, 0.01..=20.0)
-                                    .logarithmic(true).text("Density color reference"),
-                            );
-                            if ui.button("Debug foam density: green / red").clicked() {
-                                shore.view = 6;
-                            }
-                            ui.small("Green = dilute; red = reference or higher. No texture in this view.");
-                            ui.small("Density is amount per surface area; convergence concentrates it.");
-                            ui.small("Color reference changes display only. Water and sand use the same scale.");
-                            ui.add(
+                                    .logarithmic(true),
+                            ));
+
+
+
+                            parameter(ui, "Sand drying time (s)", help("Sand drying time (s)"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.drying_time, 1.0..=120.0)
-                                    .text("Sand drying time (s)"),
-                            );
-                            egui::ComboBox::from_label("Shore view")
-                                .selected_text(
+                                    ,
+                            ));
+                            parameter(ui, "Shore view", help("Shore view"), |ui| egui::ComboBox::from_id_salt("Shore view")
+                                .width(ui.available_width()).selected_text(
                                     super::shore::VIEW_NAMES[shore.view as usize],
                                 )
                                 .show_ui(ui, |ui| {
@@ -515,47 +694,54 @@ Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                                             *name,
                                         );
                                     }
-                                });
-                            ui.small("Flow: blue = run-up; orange = backwash.");
-                            ui.small("Retreat leaves foam on wet sand. Waves need time to reach shore.");
-                            ui.small(
-                                "FFT or terrain changes restart shore waves. Pause freezes them.",
-                            );
+                                }));
+
+
+
+
+});
+                            if ui.button("Debug foam density: green / red").clicked() {
+                                shore.view = 6;
+                            }
                             if ui.button("Reset shallow water, foam and sand").clicked() {
                                 self.clear_foam = true;
                             }
 
                             if self.optics.beach {
-                                ui.add(
+                                parameter_table(ui, "beach table", |ui| {
+parameter(ui, "Beach slope (rise/run)", help("Beach slope (rise/run)"), |ui| ui.add(
                                     egui::Slider::new(&mut self.optics.beach_slope, 0.01..=0.5)
                                         .clamping(egui::SliderClamping::Edits)
-                                        .text("Beach slope (rise/run)"),
-                                );
-                                ui.add(
+                                        ,
+                                ));
+                                parameter(ui, "Shore X (m)", help("Shore X (m)"), |ui| ui.add(
                                     egui::Slider::new(
                                         &mut self.optics.shore_x,
                                         -current.length..=current.length,
                                     )
                                     .clamping(egui::SliderClamping::Edits)
-                                    .text("Shore X (m)"),
-                                );
-                                ui.small(
-                                    "Land to -X; deeper water to +X. Depth comes from geometry.",
-                                );
+                                    ,
+                                ));
+
+
+});
                                 if ui.button("Beach camera").clicked() {
                                     *camera = Camera::beach(current.length);
                                 }
                             }
 }); },
 Panel::Optics => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-                            ui.label("Live controls / linear RGB");
-                            ui.add_enabled(
+
+                            parameter_table(ui, "seabed table", |ui| {
+parameter(ui, "Seabed depth (m)", help("Seabed depth (m)"), |ui| ui.add_enabled(
                                 !self.optics.beach,
                                 egui::Slider::new(&mut self.optics.depth, 0.25..=100.0)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)
-                                    .text("Seabed depth (m)"),
-                            );
+                                    ,
+                            ));
+
+});
                             self.sigma_editor.ui(
                                 ui,
                                 "Extinction sigma_t (1/m)",
@@ -567,49 +753,28 @@ Panel::Optics => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fa
                                 &mut self.optics.source,
                             );
                             ui.separator();
-                            ui.heading("Sky scattering");
-                            ui.checkbox(&mut self.optics.sky.enabled, "Enable sky scattering");
-                            ui.horizontal(|ui| {
-                                ui.label("Sky tint (linear RGB)");
+                            ui.label(egui::RichText::new("Sky scattering").strong());
+                            parameter_table(ui, "sky table", |ui| {
+parameter(ui, "Enable sky scattering", help("Enable sky scattering"), |ui| ui.checkbox(&mut self.optics.sky.enabled, ""));
+                            parameter(ui, "Sky tint (linear RGB)", help("Sky tint (linear RGB)"), |ui| {
                                 let mut color = self.optics.sky.color;
                                 if ui.color_edit_button_rgb(&mut color).changed() {
                                     self.optics.sky.color = color;
                                 }
                             });
-                            ui.add(
+                            parameter(ui, "Sky intensity", help("Sky intensity"), |ui| ui.add(
                                 egui::Slider::new(&mut self.optics.sky.intensity, 0.0..=20.0)
                                     .logarithmic(true)
-                                    .text("Sky intensity"),
-                            );
-                            ui.horizontal(|ui| {
-                                ui.label("Scattering albedo RGB");
+                                    ,
+                            ));
+                            parameter(ui, "Scattering albedo RGB", help("Scattering albedo RGB"), |ui| {
                                 let mut albedo = self.optics.sky.albedo;
                                 if ui.color_edit_button_rgb(&mut albedo).changed() {
                                     self.optics.sky.albedo = albedo;
                                 }
                             });
-                            ui.collapsing("Precise sky RGB", |ui| {
-                                for c in 0..3 {
-                                    ui.horizontal(|ui| {
-                                        ui.label(["R", "G", "B"][c]);
-                                        ui.label("tint");
-                                        ui.add(
-                                            egui::DragValue::new(&mut self.optics.sky.color[c])
-                                                .range(0.0..=1.0)
-                                                .speed(0.001),
-                                        );
-                                        ui.label("albedo");
-                                        ui.add(
-                                            egui::DragValue::new(&mut self.optics.sky.albedo[c])
-                                                .range(0.0..=1.0)
-                                                .speed(0.001),
-                                        );
-                                    });
-                                }
-                            });
-                            ui.small("sigma_s = albedo * sigma_t; sigma_a = (1-albedo) * sigma_t");
-                            egui::ComboBox::from_label("Sky integration steps")
-                                .selected_text(self.optics.sky.steps.to_string())
+                            parameter(ui, "Sky integration steps", help("Sky integration steps"), |ui| egui::ComboBox::from_id_salt("Sky integration steps")
+                                .width(ui.available_width()).selected_text(self.optics.sky.steps.to_string())
                                 .show_ui(ui, |ui| {
                                     for n in [8, 16, 32] {
                                         ui.selectable_value(
@@ -618,39 +783,55 @@ Panel::Optics => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fa
                                             n.to_string(),
                                         );
                                     }
-                                });
+                                }));
+
+});
+                            ui.collapsing("Precise sky RGB", |ui| {
+parameter_table(ui, "sky channels table", |ui| {
+                                for c in 0..3 {
+                                    parameter(ui, &format!("Tint {}", ["R", "G", "B"][c]), "Linear RGB sky tint.", |ui|
+                                        ui.add(egui::DragValue::new(&mut self.optics.sky.color[c]).range(0.0..=1.0).speed(0.001)));
+                                    parameter(ui, &format!("Albedo {}", ["R", "G", "B"][c]), "Scattering fraction: sigma_s = albedo * sigma_t.", |ui|
+                                        ui.add(egui::DragValue::new(&mut self.optics.sky.albedo[c]).range(0.0..=1.0).speed(0.001)));
+                                }
+
+});
+                            });
                             ui.collapsing("Sky source vs depth", |ui| {
                                 super::skylight::depth_graph(ui, &self.optics);
                             });
-                            ui.small("Isotropic / mean sea plane / straight light paths.");
-                            ui.small("Sky tint also controls the sky background and reflection.");
+
+
                             ui.separator();
-                            egui::ComboBox::from_label("Water view")
-                                .selected_text(VIEW_NAMES[self.optics.view as usize])
+                            parameter_table(ui, "water optics table", |ui| {
+parameter(ui, "Water view", help("Water view"), |ui| egui::ComboBox::from_id_salt("Water view")
+                                .width(ui.available_width()).selected_text(VIEW_NAMES[self.optics.view as usize])
                                 .show_ui(ui, |ui| {
                                     for (i, name) in VIEW_NAMES.iter().enumerate() {
                                         ui.selectable_value(&mut self.optics.view, i as u32, *name);
                                     }
-                                });
-                            ui.add(
+                                }));
+                            parameter(ui, "Path view white at (m)", help("Path view white at (m)"), |ui| ui.add(
                                 egui::Slider::new(&mut self.optics.path_range, 1.0..=300.0)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)
-                                    .text("Path view white at (m)"),
-                            );
-                            ui.checkbox(
+                                    ,
+                            ));
+                            parameter(ui, "Sky reflection and highlights", help("Sky reflection and highlights"), |ui| ui.checkbox(
                                 &mut self.optics.reflections,
-                                "Sky reflection and highlights",
-                            );
-                            ui.checkbox(&mut self.optics.color_bands, "Seabed RGB test bands");
-                            ui.add(
+                                "",
+                            ));
+                            parameter(ui, "Seabed RGB test bands", help("Seabed RGB test bands"), |ui| ui.checkbox(&mut self.optics.color_bands, ""));
+                            parameter(ui, "Checker size (m)", help("Checker size (m)"), |ui| ui.add(
                                 egui::Slider::new(&mut self.optics.checker_size, 0.5..=20.0)
-                                    .text("Checker size (m)"),
-                            );
-                            ui.small("Manual S: analytic; sky source: piecewise analytic.");
-                            ui.small("T = exp(-sigma_t*d). Zero sigma uses limit S*d.");
-                            ui.small("Water debug views bypass reflection and foam.");
-                            ui.small("Absorption view shows Lbg*T; loss includes out-scattering.");
+                                    ,
+                            ));
+
+
+
+
+
+});
                             if ui.button("Reset optics").clicked() {
                                 self.optics = OpticsConfig::default();
                             }
@@ -751,6 +932,47 @@ Panel::Optics => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parameter_groups_share_ratio_even_with_oversized_controls() {
+        let ctx = egui::Context::default();
+        for width in [240.0, 400.0] {
+            for _ in 0..2 {
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width + 16.0, 800.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            ui.set_width(width);
+                            let start = ui.cursor().left();
+                            let expected = start
+                                + (width - PARAMETER_COLUMN_GAP) * PARAMETER_NAME_RATIO
+                                + PARAMETER_COLUMN_GAP;
+                            let mut positions = Vec::new();
+                            for group in ["short group", "long group"] {
+                                parameter_table(ui, group, |ui| {
+                                    for name in ["A", "A much longer name which wraps"] {
+                                        parameter(ui, name, "Tooltip", |ui| {
+                                            positions.push(ui.cursor().left());
+                                            ui.allocate_space(egui::vec2(500.0, 20.0));
+                                        });
+                                    }
+                                });
+                            }
+                            for x in positions {
+                                assert!((x - expected).abs() < 1.0, "{x} != {expected}");
+                            }
+                        });
+                    },
+                );
+            }
+        }
+    }
 
     #[test]
     fn dock_layout_keeps_view_between_controls_and_resizes() {
