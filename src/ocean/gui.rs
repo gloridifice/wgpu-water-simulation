@@ -264,6 +264,12 @@ fn help(name: &str) -> &'static str {
         "浅水调试视图" => {
             "调试视图跳过普通着色。流向：蓝色冲岸、橙色退水。密度：低绿高红，不混合孔隙纹理。"
         }
+        "沙地纹理旋转（度）" => {
+            "绕世界原点在沙坡平面内旋转纹理。范围 -180～180 度，默认 0 度；正角将纹理横轴从坡向 +X 转向沿岸 +Z。所有沙地贴图和法线方向同步旋转，实时生效并随配置保存，不重置模拟。"
+        }
+        "沙地纹理尺寸（米）" => {
+            "每块沙地纹理沿沙坡和沿岸覆盖的长度。范围 0.25～128 米；数值越大，沙纹越大、重复越少。颜色、法线、粗糙度和 AO 同步缩放，实时生效并随配置保存，不重置模拟。"
+        }
         "沙滩坡度（高／宽）" | "岸线 X（米）" => {
             "负 X 为陆地，正 X 为深水。修改后重新初始化浅水模拟。"
         }
@@ -775,6 +781,13 @@ parameter(ui, "FFT 混合水深（米）", help("FFT 混合水深（米）"), |u
 
                             if self.optics.beach {
                                 parameter_table(ui, "beach table", |ui| {
+parameter(ui, "沙地纹理尺寸（米）", help("沙地纹理尺寸（米）"), |ui| ui.add(
+                                    egui::Slider::new(&mut self.optics.sand_tile_size, 0.25..=128.0)
+                                        .logarithmic(true),
+                                ));
+parameter(ui, "沙地纹理旋转（度）", help("沙地纹理旋转（度）"), |ui| ui.add(
+                                    egui::Slider::new(&mut self.optics.sand_rotation_deg, -180.0..=180.0),
+                                ));
 parameter(ui, "沙滩坡度（高／宽）", help("沙滩坡度（高／宽）"), |ui| ui.add(
                                     egui::Slider::new(&mut self.optics.beach_slope, 0.01..=0.5)
                                         .clamping(egui::SliderClamping::Edits)

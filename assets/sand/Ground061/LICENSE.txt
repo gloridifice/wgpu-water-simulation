@@ -1,0 +1,10 @@
+Ground061 by ambientCG
+Source: https://ambientcg.com/view?id=Ground061
+License: Creative Commons CC0 1.0 Universal
+License information: https://docs.ambientcg.com/license/
+Legal text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+Bundled files are the original Color, NormalGL, Roughness and AmbientOcclusion
+JPEG maps from Ground061_2K-JPG. No displacement map is used.
+The source API reports no physical dimensions; the renderer's default 4 m tile scale
+is an artistic choice, not a measured source dimension.

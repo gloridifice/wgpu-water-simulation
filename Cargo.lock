@@ -1204,6 +1204,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -3046,6 +3048,7 @@ dependencies = [
  "egui-winit",
  "egui_dock",
  "glam",
+ "image",
  "png",
  "pollster",
  "ratatui",

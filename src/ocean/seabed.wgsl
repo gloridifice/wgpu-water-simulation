@@ -15,11 +15,17 @@ struct Optics {
     sky_albedo_enabled: vec4<f32>,
     sky_quality: vec4<f32>,
     beach: vec4<f32>,
+    sand_mapping: vec4<f32>, // cos(rotation), sin(rotation), reserved
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<uniform> optics: Optics;
 @group(0) @binding(2) var<storage, read> shore_field: array<vec4<f32>>;
 @group(0) @binding(3) var<uniform> shore: ShoreParams;
+@group(0) @binding(5) var sand_color: texture_2d<f32>;
+@group(0) @binding(6) var sand_normal: texture_2d<f32>;
+@group(0) @binding(7) var sand_roughness: texture_2d<f32>;
+@group(0) @binding(8) var sand_ao: texture_2d<f32>;
+@group(0) @binding(9) var sand_sampler: sampler;
 struct GroundOut {
     @builtin(position) position: vec4<f32>,
     @location(0) world: vec3<f32>,
@@ -54,16 +60,29 @@ fn ground_fragment(input: GroundOut) -> @location(0) vec4<f32> {
         albedo = mix(vec3(0.18), vec3(0.85), checker) * tint;
     }
     var normal = vec3(0.0, 1.0, 0.0);
+    var ambient_occlusion = 1.0;
+    var roughness = 0.8;
+    var sand_wetness = 0.0;
     if optics.beach.x > 0.5 {
         normal = normalize(vec3(optics.beach.y, 1.0, 0.0));
-        // Sand material is independent of water color; the gradient is produced
-        // by the real sloped depth buffer and the existing medium integration.
-        let variation = 0.5 + 0.25 * sin(input.world.x * 0.31 + sin(input.world.z * 0.16))
-            + 0.25 * sin(input.world.z * 0.47 + input.world.x * 0.13);
-        let ripple_phase = input.world.x * 7.0 + 0.8 * sin(input.world.z * 0.7);
-        let ripple = sin(ripple_phase) * (1.0 - smoothstep(0.5, 2.0, fwidth(ripple_phase)));
-        albedo = mix(vec3(0.56, 0.39, 0.19), vec3(0.86, 0.72, 0.46), variation);
-        albedo *= 1.0 + 0.035 * ripple;
+        // Tile size is in meters along the slope and along shore.
+        // This is an artistic scale, not a measured source dimension.
+        let slope_length = sqrt(1.0 + optics.beach.y * optics.beach.y);
+        let plane = vec2(input.world.x * slope_length, input.world.z) / optics.beach.w;
+        let c = optics.sand_mapping.x;
+        let s = optics.sand_mapping.y;
+        // Inverse rotation for sampling; rotate the normal basis forward below.
+        let uv = vec2(c * plane.x + s * plane.y, -s * plane.x + c * plane.y);
+        albedo = textureSample(sand_color, sand_sampler, uv).rgb;
+        let tangent_normal = normalize(textureSample(sand_normal, sand_sampler, uv).xyz * 2.0 - 1.0);
+        let tangent = normalize(vec3(1.0, -optics.beach.y, 0.0));
+        // JPEG rows run downward; OpenGL normal +Y points toward image top.
+        let bitangent = vec3(0.0, 0.0, -1.0);
+        let rotated_tangent = c * tangent - s * bitangent;
+        let rotated_bitangent = s * tangent + c * bitangent;
+        normal = normalize(rotated_tangent * tangent_normal.x + rotated_bitangent * tangent_normal.y + normal * tangent_normal.z);
+        roughness = clamp(textureSample(sand_roughness, sand_sampler, uv).r, 0.08, 1.0);
+        ambient_occlusion = textureSample(sand_ao, sand_sampler, uv).r;
         var wetness = 1.0 - smoothstep(-0.15, 0.9, input.world.y);
         if shore_active(shore) {
             wetness = sample_shore_history(input.world.xz).y;
@@ -73,6 +92,8 @@ fn ground_fragment(input: GroundOut) -> @location(0) vec4<f32> {
             if shore.options.y > 3.5 && shore.options.y < 4.5 { return vec4(vec3(wetness), 1.0); }
         }
         albedo *= mix(1.0, select(0.70, 0.53, shore_active(shore)), wetness);
+        sand_wetness = wetness;
+        roughness = mix(roughness, max(0.12, roughness * 0.45), wetness);
     }
     if shore_active(shore) && shore.options.y < 5.5 {
         let stranded=sample_shore_extra(input.world.xz).x;
@@ -84,13 +105,17 @@ fn ground_fragment(input: GroundOut) -> @location(0) vec4<f32> {
         let mask=pow(foam_density_level(stranded,shore),0.65)*pattern*smoothstep(0.0,0.02,stranded);
         albedo=mix(albedo,shore.stranded_foam_color.rgb,mask*camera.misc.x);
     }
-    let lighting = 0.35 + 0.65 * max(dot(normal, camera.sun.xyz), 0.0);
+    let ndotl = max(dot(normal, camera.sun.xyz), 0.0);
+    let lighting = 0.35 * ambient_occlusion + 0.65 * ndotl;
     var color = albedo * lighting;
-    if shore_active(shore) {
-        let wetness = sample_shore_history(input.world.xz).y;
+    if optics.beach.x > 0.5 {
         let view = normalize(camera.eye.xyz - input.world);
         let half_vector = normalize(view + camera.sun.xyz);
-        color += vec3(0.20, 0.22, 0.23) * wetness * pow(max(dot(normal, half_vector), 0.0), 100.0);
+        // Roughness-driven Blinn highlight, retaining the existing lightweight
+        // lighting model rather than introducing a separate PBR renderer.
+        let exponent = max(2.0, 2.0 / pow(roughness, 4.0) - 2.0);
+        let strength = mix(0.035, 0.22, sand_wetness);
+        color += vec3(strength) * ndotl * pow(max(dot(normal, half_vector), 0.0), exponent);
     }
     if shore_active(shore) && shore.options.y > 5.5 {
         let stranded=sample_shore_extra(input.world.xz).x;

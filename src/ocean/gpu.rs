@@ -328,7 +328,7 @@ impl Renderer {
         );
         let sky_lut = SkyLut::new(gpu);
         let shore = Shore::new(gpu, ocean);
-        let seabed = Seabed::new(device, &uniform, &optics, &shore, format, width, height);
+        let seabed = Seabed::new(gpu, &uniform, &optics, &shore, format, width, height);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ocean render layout"),
             entries: &[

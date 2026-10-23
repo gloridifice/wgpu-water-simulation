@@ -11,7 +11,7 @@ pub struct Seabed {
 
 impl Seabed {
     pub fn new(
-        device: &wgpu::Device,
+        gpu: &super::gpu::Gpu,
         camera: &wgpu::Buffer,
         optics: &wgpu::Buffer,
         shore: &super::shore::Shore,
@@ -19,7 +19,19 @@ impl Seabed {
         width: u32,
         height: u32,
     ) -> Self {
-        let entries: Vec<_> = (0..5)
+        let device = &gpu.device;
+        let maps = super::sand::textures(gpu);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("sand repeat trilinear"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
+        });
+        let mut entries: Vec<_> = (0..5)
             .map(|binding| wgpu::BindGroupLayoutEntry {
                 binding,
                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -35,6 +47,24 @@ impl Seabed {
                 count: None,
             })
             .collect();
+        for binding in 5..9 {
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            });
+        }
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 9,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("seabed uniforms"),
             entries: &entries,
@@ -43,6 +73,26 @@ impl Seabed {
             label: Some("seabed bindings"),
             layout: &layout,
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&maps[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&maps[1]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&maps[2]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(&maps[3]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: shore.lace.as_entire_binding(),

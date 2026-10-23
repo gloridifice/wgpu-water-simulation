@@ -18,6 +18,7 @@ struct Optics {
     sky_albedo_enabled: vec4<f32>,
     sky_quality: vec4<f32>,
     beach: vec4<f32>,
+    sand_mapping: vec4<f32>, // cos(rotation), sin(rotation), reserved
 }
 @group(0) @binding(3) var<uniform> optics: Optics;
 @group(0) @binding(4) var scene_color: texture_2d<f32>;

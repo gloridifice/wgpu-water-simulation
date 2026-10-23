@@ -25,6 +25,10 @@ pub struct OpticsConfig {
     pub depth: f32,
     pub beach: bool,
     pub beach_slope: f32,
+    /// World-space length of one sand tile along the slope, in meters.
+    pub sand_tile_size: f32,
+    /// Rotation in the slope/shore plane, in degrees.
+    pub sand_rotation_deg: f32,
     pub shore_x: f32,
     pub sigma_t: [f32; 3],
     pub source: [f32; 3],
@@ -44,6 +48,8 @@ impl Default for OpticsConfig {
             depth: 6.0,
             beach: false,
             beach_slope: 0.18,
+            sand_tile_size: 4.0,
+            sand_rotation_deg: 0.0,
             shore_x: -20.0,
             sigma_t: [0.18, 0.06, 0.025],
             source: [0.0025, 0.009, 0.006],
@@ -83,6 +89,14 @@ impl OpticsConfig {
         {
             return Err("beach slope must be 0.01..1; shoreline must be within +/-1000 m".into());
         }
+        if !self.sand_tile_size.is_finite() || !(0.25..=128.0).contains(&self.sand_tile_size) {
+            return Err("sand tile size must be finite and in 0.25..=128 m".into());
+        }
+        if !self.sand_rotation_deg.is_finite()
+            || !(-180.0..=180.0).contains(&self.sand_rotation_deg)
+        {
+            return Err("sand rotation must be finite and in -180..=180 degrees".into());
+        }
         for (name, value) in [
             ("seabed depth", self.depth),
             ("path view range", self.path_range),
@@ -104,7 +118,9 @@ impl OpticsConfig {
     }
 
     pub fn uniform(&self) -> OpticsUniform {
+        let (sin, cos) = self.sand_rotation_deg.to_radians().sin_cos();
         OpticsUniform {
+            sand_mapping: [cos, sin, 0.0, 0.0],
             sigma_depth: [
                 self.sigma_t[0],
                 self.sigma_t[1],
@@ -117,7 +133,12 @@ impl OpticsConfig {
                 self.source[2],
                 self.view as f32,
             ],
-            beach: [f32::from(self.beach), self.beach_slope, self.shore_x, 0.0],
+            beach: [
+                f32::from(self.beach),
+                self.beach_slope,
+                self.shore_x,
+                self.sand_tile_size,
+            ],
             sky_color: self.sky.tint(),
             sky_albedo_enabled: [
                 self.sky.albedo[0],
@@ -146,6 +167,7 @@ pub struct OpticsUniform {
     pub sky_albedo_enabled: [f32; 4],
     pub sky_quality: [f32; 4],
     pub beach: [f32; 4],
+    pub sand_mapping: [f32; 4],
 }
 
 /// f64 reference with exp_m1 for accuracy, independent of the WGSL series.
@@ -305,6 +327,55 @@ mod tests {
             assert!((sum - integrate(0.6, sigma, 0.03, d)[2]).abs() < 1e-8);
         }
     }
+    #[test]
+    fn sand_mapping_preserves_legacy_config_and_validates_saved_values() {
+        let legacy: OpticsConfig =
+            serde_json::from_str(r#"{"beach":true,"beach_slope":0.25}"#).unwrap();
+        assert_eq!(legacy.sand_tile_size, 4.0);
+        assert_eq!(legacy.sand_rotation_deg, 0.0);
+        for angle in [-180.0, -45.0, 90.0, 180.0] {
+            let config = OpticsConfig {
+                sand_rotation_deg: angle,
+                ..legacy
+            };
+            assert!(config.validate().is_ok());
+            let loaded: OpticsConfig =
+                serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+            assert_eq!(loaded.sand_rotation_deg, angle);
+        }
+        for angle in [f32::NAN, f32::INFINITY, -181.0, 181.0] {
+            assert!(
+                OpticsConfig {
+                    sand_rotation_deg: angle,
+                    ..legacy
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert_eq!(legacy.beach_slope, 0.25);
+        for size in [0.25, 16.0, 128.0] {
+            let config = OpticsConfig {
+                sand_tile_size: size,
+                ..legacy
+            };
+            assert!(config.validate().is_ok());
+            let loaded: OpticsConfig =
+                serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+            assert_eq!(loaded.sand_tile_size, size);
+        }
+        for size in [f32::NAN, f32::INFINITY, -1.0, 0.0, 0.24, 129.0] {
+            assert!(
+                OpticsConfig {
+                    sand_tile_size: size,
+                    ..legacy
+                }
+                .validate()
+                .is_err()
+            );
+        }
+    }
+
     #[test]
     fn invalid_optical_parameters_are_rejected() {
         for invalid in [

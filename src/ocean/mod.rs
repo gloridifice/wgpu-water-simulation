@@ -15,6 +15,7 @@ mod color_editor;
 mod configuration_panel;
 pub mod foam;
 pub mod optics;
+mod sand;
 mod seabed;
 pub mod settings;
 pub mod shore;
