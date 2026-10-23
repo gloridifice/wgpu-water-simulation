@@ -1,4 +1,4 @@
-> 新增三维 GPU 海洋：见 [wgpu FFT 海洋说明](README-ocean.md)，运行 `cargo run --release --features ocean --bin ocean`。
+> 默认启动三维 GPU 海洋：运行 `cargo run`，性能对比使用 `cargo run --release`。详见 [wgpu FFT 海洋说明](README-ocean.md)。以下为保留的 CPU 终端程序说明，使用 `--no-default-features --bin water-simulation` 启动。
 
 # 二维侧视 CPU PIC 水体模拟器
 
@@ -10,29 +10,29 @@ Rust 实现的自由表面液体模拟器。粒子可以向水平和竖直方向
 
 ```powershell
 Set-Location G:\MyProjects\Rust\water-simulation
-cargo run --release
+cargo run --release --no-default-features --bin water-simulation
 ```
 
 建议使用 Windows Terminal，窗口 120×40 或更大；最低支持 70×22。默认 112×64 网格，格宽 0.1 米，6736 个水粒子。默认播放倍率为 0.25×，让最初约 0.2～0.4 秒的翻折过程更容易观察；具体形态随物理步长和分辨率略有变化。
 
 ```powershell
 # 从暂停状态开始，按 N 逐个物理步观察。
-cargo run --release -- --paused
+cargo run --release --no-default-features --bin water-simulation -- --paused
 
 # 从静水开始，之后按 B 主动产生一次卷浪，按 W 控制挡板。
-cargo run --release -- --no-pulse --no-waves
+cargo run --release --no-default-features --bin water-simulation -- --no-pulse --no-waves
 
 # 较低网格分辨率；改变网格也会改变水槽物理尺寸。
-cargo run --release -- --nx 80 --ny 48
+cargo run --release --no-default-features --bin water-simulation -- --nx 80 --ny 48
 
 # 无终端运行，保存每个输出时刻的粒子轨迹；目标文件必须不存在。
-cargo run --release -- --headless --time 2 --frames 40 --csv pic-frames.csv
+cargo run --release --no-default-features --bin water-simulation -- --headless --time 2 --frames 40 --csv pic-frames.csv
 
 # 保留原有的一维浅水模拟器和鼠标水面扰动。
-cargo run --release -- --shallow --paused
-cargo run --release -- --shallow --headless --quiet
+cargo run --release --no-default-features --bin water-simulation -- --shallow --paused
+cargo run --release --no-default-features --bin water-simulation -- --shallow --headless --quiet
 
-cargo run -- --help
+cargo run --no-default-features --bin water-simulation -- --help
 ```
 
 在终端中运行默认进入二维 TUI；重定向输入/输出或传入 `--headless` 后使用批处理模式。`--time / --frames / --csv / --quiet / --animate` 也会选择批处理模式。原来的 `--cells 41` 仍会选择一维浅水模式。

@@ -5,8 +5,8 @@
 ## 项目与入口
 
 - 项目使用 Rust 2024 edition。
-- 默认程序为 CPU 二维 PIC 水体模拟与终端界面；另保留一维浅水模式。
-- `ocean` feature 启用 wgpu 三维海洋：远海 FFT、近岸局部二维 SWE、泡沫、沙滩与水体光学，以及 egui_dock 参数面板。
+- `cargo run` 默认启动 GPU Ocean；另保留 CPU 二维 PIC 终端程序与一维浅水模式。
+- 默认启用的 `ocean` feature 提供 wgpu 三维海洋：远海 FFT、近岸局部二维 SWE、泡沫、沙滩与水体光学，以及 egui_dock 参数面板。
 - 修改 GPU 海洋时，保留不启用 `ocean` feature 的原有程序。
 - 使用说明见 `README.md`、`README-shallow.md`、`README-ocean.md`。修改用户可见行为、参数或启动方式时，同步相关说明。
 
@@ -32,10 +32,12 @@
 
 ```powershell
 # 启动 GPU 海洋；恢复个人参数时不要额外指定场景预设。
-cargo run --release --features ocean --bin ocean
+cargo run
+# 优化构建用于观察性能。
+cargo run --release
 
 # 启动原有 CPU 程序。
-cargo run --release
+cargo run --release --no-default-features --bin water-simulation
 
 # 格式、静态检查与包含海洋模块的单元测试。
 cargo fmt --check
@@ -53,7 +55,7 @@ target\release\ocean.exe --beach --no-settings --frames 600
 - 根据修改范围选择验证。纯文档修改不需要构建；纯布局修改不必重复完整物理验证。
 - `cargo test --features ocean --bin ocean` 不能替代库测试；海洋模块的测试应使用 `--lib`。
 - Rust 编译通过不代表 WGSL 正确。修改着色器、绑定或缓冲区布局时，应运行相关 GPU 验证；无法运行时明确说明。
-- 修改 CPU 共用代码或 feature 边界时，同时验证不启用 `ocean` 的构建和测试。
+- 修改 CPU 共用代码或 feature 边界时，同时用 `--no-default-features` 验证 CPU 构建和测试；运行时需指定 `--bin water-simulation`。
 - 比较视觉结果时固定相机、时间、随机种子、波谱与求解阶数。`--snapshot` 输出渲染画面，不能用于验证参数面板布局。
 - 不为可逆的小型界面修改添加仅复述实现的测试。数值边界、配置兼容、质量输送等行为需要有意义的验证。
 

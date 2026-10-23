@@ -13,7 +13,7 @@ use water_simulation::solver::Config;
 
 const HELP: &str = "Two-dimensional CPU PIC water simulator (side view)
 
-Usage: cargo run -- [options]
+Usage: cargo run --no-default-features --bin water-simulation -- [options]
   --tui           Force interactive TUI (requires a terminal)
   --paused        Start TUI paused, ready for single stepping
   --headless      ASCII / CSV batch output for the selected solver
@@ -46,10 +46,10 @@ TUI keys:
   Shallow mode: G switches 41/201 cells; mouse adds a surface ripple
 
 Examples:
-  cargo run
-  cargo run --release -- --paused
-  cargo run -- --shallow --paused --cells 41
-  cargo run -- --headless --quiet --csv snapshots.csv
+  cargo run --no-default-features --bin water-simulation
+  cargo run --release --no-default-features --bin water-simulation -- --paused
+  cargo run --no-default-features --bin water-simulation -- --shallow --paused --cells 41
+  cargo run --no-default-features --bin water-simulation -- --headless --quiet --csv snapshots.csv
 ";
 
 struct Options {

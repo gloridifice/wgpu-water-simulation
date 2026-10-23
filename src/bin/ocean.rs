@@ -9,7 +9,7 @@ use water_simulation::ocean::{
 
 const HELP: &str = "Minimal 3D GPU FFT ocean (wgpu)
 
-Usage: cargo run --release --features ocean --bin ocean -- [options]
+Usage: cargo run -- [options]  (use --release before -- for performance)
   --resolution N   Power of two, 8..512 (default: 128)
   --length M       Periodic patch size in meters (default: 128)
   --wind M/S       Wind speed (default: 14)

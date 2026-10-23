@@ -663,10 +663,26 @@ parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui
 
                             ui.label(egui::RichText::new("前沿泡沫").strong());
                             parameter_table(ui, "front foam table", |ui| {
-                            parameter(ui, "前沿生成速率（每秒）", "沿流向发现前方水面更低时的独立泡沫生成速率。0 关闭前沿生成；不要求前方接近干地，也不使用背景上涨阈值。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_generation, 0.0..=30.0)));
-                            parameter(ui, "前沿采样距离（米）", "沿当前水流方向，在此距离内均匀采样 4 个位置。越远通常覆盖越宽，默认 1 米。按世界距离采样，兼容非正方形网格。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_distance, 0.05..=10.0).max_decimals(2)));
+                            parameter(ui, "生成模式", "水面落差：检测前方较低的水面。速度差绝对值：速度向量差的长度除以采样距离，包含挤压、拉开和横向变化。有方向的压缩：只保留沿采样方向相互靠近的速度差，再除以距离，同向追赶也能触发。模式实时生效并保存，不清空历史；对比时建议背景生成倍率设为 0，并从相同时间重启模拟。", |ui| {
+                                let names=super::shore::FOAM_FRONT_MODE_NAMES;
+                                egui::ComboBox::from_id_salt("front foam mode")
+                                    .width(ui.available_width())
+                                    .selected_text(names[shore.foam_front_mode as usize])
+                                    .show_ui(ui, |ui| {
+                                        for (mode,name) in names.iter().enumerate() {
+                                            ui.selectable_value(&mut shore.foam_front_mode,mode as u32,*name);
+                                        }
+                                    });
+                            });
+                            parameter(ui, "前沿生成速率（每秒）", "三种模式共用的满权重泡沫生成速率，范围 0～30。0 关闭前沿生成；独立于背景上涨阈值。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_generation, 0.0..=30.0)));
+                            parameter(ui, "前沿采样距离（米）", "沿当前水流方向，在此距离内均匀采样 4 个位置，范围 0.05～10 米，默认 1 米。水面模式取最大落差；速度模式分别除以每个点的实际距离再取最大强度。按世界距离采样，兼容非正方形网格；干燥和越界点跳过。实时生效，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_distance, 0.05..=10.0).max_decimals(2)));
+                            if shore.foam_front_mode==0 {
                             parameter(ui, "前沿满强度水面落差（米）", "比较实际水面高度（地形高度＋水深）。当前水面减去前方最低水面，从 0 到此值平滑增强；达到或超过此值时权重保持为 1。干燥采样点跳过，不把沙坡高度当成水面。越小越敏感，默认 0.03 米。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_depth_drop, 0.001..=1.0).logarithmic(true).max_decimals(3)));
-                            parameter(ui, "背景生成倍率", "缩放原有泡沫生成量，默认 0.15，使后方泡沫较弱。0 关闭背景生成。前沿速率设为 0、此倍率设为 1，可恢复原生成算法。", |ui| ui.add(egui::Slider::new(&mut shore.foam_background_multiplier, 0.0..=1.0).max_decimals(2)));
+                            } else {
+                            parameter(ui, "速度变化起始阈值（每秒）", "速度模式共用。速度差除以实际采样距离后超过此值才开始产泡，范围 0～20，默认 0.1。比如 0.5 米内速度相差 1 米/秒，对应强度 2/秒。有方向模式仅计入相互靠近的部分。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_threshold, 0.0..=20.0).max_decimals(3)));
+                            parameter(ui, "速度变化过渡范围（每秒）", "范围 0～20，默认 0.5；强度从起始阈值到阈值加此范围，生成权重平滑升至 1。0 为严格大于阈值才生成，零速度差不产泡。两个速度模式共用，切换时保留数值。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_transition, 0.0..=20.0).max_decimals(3)));
+                            }
+                            parameter(ui, "背景生成倍率", "缩放原有上涨、流速与汇聚触发的泡沫，默认 0.15。对比三种前沿模式时建议设为 0，只观察前沿源。前沿速率设为 0、此倍率设为 1，可恢复原背景生成算法。实时生效，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_background_multiplier, 0.0..=1.0).max_decimals(2)));
                             });
                             ui.separator();
 

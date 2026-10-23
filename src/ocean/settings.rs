@@ -506,6 +506,9 @@ mod tests {
         s.optics.shore.water_foam_color = [0.7, 0.8, 0.9];
         s.optics.shore.stranded_foam_color = [0.6, 0.4, 0.2];
         s.optics.shore.order = 2;
+        s.optics.shore.foam_front_mode = 2;
+        s.optics.shore.foam_velocity_threshold = 0.37;
+        s.optics.shore.foam_velocity_transition = 1.25;
         s.optics.shore.filter_enabled = false;
         s.optics.shore.filter_cutoff = 3.0;
         s.optics.shore.filter_transition = 5.0;

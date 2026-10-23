@@ -1,6 +1,6 @@
 # 一维 CPU 浅水模拟器
 
-> 以下保留一维版本的说明。当前主程序默认二维 PIC；运行这里的命令时请加上 `--shallow`。这里提到的 `src/tui/` 现位于 `src/shallow_tui/`，求解核心仍是 `src/solver.rs`。
+> 以下保留一维版本的说明。`cargo run` 默认启动 GPU Ocean；本页命令指定 CPU 程序 `--no-default-features --bin water-simulation`，并通过 `--shallow` 选择一维模式。这里提到的 `src/tui/` 现位于 `src/shallow_tui/`，求解核心仍是 `src/solver.rs`。
 
 可交互的一维 CPU 浅水模拟器。中央水位凸起分成左右两列波，遇到两端的墙后反射回来。核心算法只使用 Rust 标准库，界面使用 Ratatui 与 Crossterm。
 
@@ -10,25 +10,25 @@
 
 ```powershell
 Set-Location G:\MyProjects\Rust\water-simulation
-cargo test
-cargo run
+cargo test --no-default-features
+cargo run --no-default-features --bin water-simulation -- --shallow
 ```
 
 在交互终端中，默认启动 TUI 并以 1 倍速持续模拟，按 Q 退出。建议使用 Windows Terminal，终端至少 70 列 × 22 行，120 × 36 时曲线更清楚。重定向输入或输出时自动使用批处理模式，也可以显式传入 `--headless`。
 
 ```powershell
 # 从暂停状态开始，用 N 逐个 CFL 时间步观察。
-cargo run -- --paused --cells 41
+cargo run --no-default-features --bin water-simulation -- --shallow --paused --cells 41
 
 # 优化构建启动交互界面。
-cargo run --release
+cargo run --release --no-default-features --bin water-simulation -- --shallow
 
 # 只输出最终统计；CSV 保存初态及每个输出时刻的所有网格。
-cargo run -- --headless --quiet --csv snapshots.csv
+cargo run --no-default-features --bin water-simulation -- --shallow --headless --quiet --csv snapshots.csv
 
 # 更长时间 / 更多输出帧 / 调整 CFL。
-cargo run -- --headless --time 12 --frames 24 --cfl 0.4
-cargo run -- --help
+cargo run --no-default-features --bin water-simulation -- --shallow --headless --time 12 --frames 24 --cfl 0.4
+cargo run --no-default-features --bin water-simulation -- --help
 ```
 
 `--time / --frames / --csv / --quiet / --animate` 也会选择批处理模式，兼容之前的命令。这些批处理选项不能与 `--tui / --paused` 混用。`--cells` 和 `--cfl` 同时适用于两种模式。
@@ -198,7 +198,7 @@ dt = min(dt_cfl, 距下次输出的剩余时间)
 
 ```powershell
 cargo fmt --check
-cargo test
+cargo test --no-default-features
 cargo clippy --all-targets -- -D warnings
 ```
 

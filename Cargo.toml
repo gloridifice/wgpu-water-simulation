@@ -2,14 +2,14 @@
 name = "water-simulation"
 version = "0.1.0"
 edition = "2024"
-default-run = "water-simulation"
+default-run = "ocean"
 
 [dependencies]
 crossterm = "0.29.0"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 
 [features]
-default = []
+default = ["ocean"]
 ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:egui", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:ron"]
 
 [dependencies.wgpu]

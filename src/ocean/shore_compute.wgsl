@@ -221,6 +221,23 @@ fn foam_surface_at(grid: vec2<f32>) -> vec2<f32> {
     return mix(mix(foam_surface_cell(c),foam_surface_cell(c+vec2(1,0)),f.x),
         mix(foam_surface_cell(c+vec2(0,1)),foam_surface_cell(c+vec2(1,1)),f.x),f.y);
 }
+fn foam_flow_cell(c: vec2<i32>) -> vec3<f32> {
+    let q=state(c);
+    let wet=select(0.0,1.0,q.x>0.00001);
+    return vec3(velocity(q)*wet,wet);
+}
+fn foam_flow_at(grid: vec2<f32>) -> vec3<f32> {
+    let c=vec2<i32>(floor(grid)); let f=fract(grid);
+    // Normalize wet contributors: dry zero velocities must not fake a collision.
+    return mix(mix(foam_flow_cell(c),foam_flow_cell(c+vec2(1,0)),f.x),
+        mix(foam_flow_cell(c+vec2(0,1)),foam_flow_cell(c+vec2(1,1)),f.x),f.y);
+}
+fn foam_velocity_weight(strength: f32) -> f32 {
+    let threshold=shore.foam_velocity.y;
+    let width=shore.foam_velocity.z;
+    if width<=0.0 { return select(0.0,1.0,strength>threshold); }
+    return smoothstep(threshold,threshold+width,strength);
+}
 fn foam_front_weight(c: vec2<i32>) -> f32 {
     if shore.foam_front.x<=0.0 { return 0.0; }
     let center=state(c); let flow=velocity(center); let speed=length(flow);
@@ -228,19 +245,34 @@ fn foam_front_weight(c: vec2<i32>) -> f32 {
     if speed<=0.02 || center.x<=0.00001 { return 0.0; }
     let surface=bed(c)+center.x;
     let spacing=shore.domain.zw/shore.options.z;
-    let offset=flow/speed*shore.foam_front.y/spacing;
+    let direction=flow/speed;
+    let offset=direction*shore.foam_front.y/spacing;
     var drop=0.0;
+    var velocity_strength=0.0;
     for(var sample=1u;sample<=4u;sample++) {
-        let ahead=vec2<f32>(c)+offset*(f32(sample)/4.0);
-        // Leaving the patch is not evidence of a falling free surface.
+        let fraction=f32(sample)/4.0;
+        let ahead=vec2<f32>(c)+offset*fraction;
+        // Leaving the patch is not evidence of a falling surface or collision.
         if any(ahead<vec2(0.0)) || any(ahead>vec2(shore.options.z-1.0)) { continue; }
-        let sampled=foam_surface_at(ahead);
-        if sampled.y<=0.000001 { continue; }
-        drop=max(drop,surface-sampled.x/sampled.y);
+        if shore.foam_velocity.x<0.5 {
+            let sampled=foam_surface_at(ahead);
+            if sampled.y<=0.000001 { continue; }
+            drop=max(drop,surface-sampled.x/sampled.y);
+        } else {
+            let sampled=foam_flow_at(ahead);
+            if sampled.z<=0.000001 { continue; }
+            let difference=flow-sampled.xy/sampled.z;
+            // Absolute mode includes separation and transverse changes. Signed
+            // mode only accepts closing motion, including same-direction catch-up.
+            let relative_speed=select(length(difference),max(0.0,dot(difference,direction)),
+                shore.foam_velocity.x>1.5);
+            velocity_strength=max(velocity_strength,relative_speed/(shore.foam_front.y*fraction));
+        }
     }
     // Deliberately no dry-front, rising-water or shore-direction requirement.
-    let fall_weight=smoothstep(0.0,shore.foam_front.z,drop);
-    return fall_weight*smoothstep(0.02,0.1,speed);
+    var weight=smoothstep(0.0,shore.foam_front.z,drop);
+    if shore.foam_velocity.x>0.5 { weight=foam_velocity_weight(velocity_strength); }
+    return weight*smoothstep(0.02,0.1,speed);
 }
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
