@@ -74,6 +74,7 @@ fn image(
 }
 
 pub fn run(gpu: &Gpu) -> Result<(), Error> {
+    swe_resolution(gpu)?;
     collider_raster(gpu)?;
     let config = OceanConfig {
         length: 64.0,
@@ -509,6 +510,68 @@ fn collider_raster(gpu: &Gpu) -> Result<(), Error> {
     }
     println!(
         "GPU collider raster: cylinder/rotated box above and below water, opaque top/depth and underwater scene-color sampling OK"
+    );
+    Ok(())
+}
+
+/// Exercise production allocation, dispatch, CFL stepping and all raster readers
+/// while switching in both directions, including reselecting an unchanged size.
+fn swe_resolution(gpu: &Gpu) -> Result<(), Error> {
+    let config = OceanConfig {
+        resolution: 8,
+        mesh_resolution: 8,
+        amplitude: 0.0,
+        ..Default::default()
+    };
+    let ocean = Ocean::new(gpu, config)?;
+    let foam = Foam::new(gpu, &ocean.fields, config.resolution);
+    let size = [33, 25];
+    let format = wgpu::TextureFormat::Rgba32Float;
+    let mut renderer = Renderer::new(gpu, &ocean, &foam, format, size[0], size[1]);
+    let mut optics = OpticsConfig::beach_scene();
+    let camera = Camera::beach(config.length).uniform(config, size[0] as f32 / size[1] as f32);
+    for n in [64, 128, 256, 512, 1024, 128, 128] {
+        optics.shore.resolution = n;
+        renderer.set_shore_resolution(gpu, &ocean, n, format, size);
+        if renderer.shore.field.size() != u64::from(n * n) * 80 {
+            return Err("SWE resized storage has incorrect size".into());
+        }
+        for order in [1, 2] {
+            optics.shore.order = order;
+            for (time, reset) in [(0.0, true), (0.001, false)] {
+                let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                ocean.encode_filtered(gpu, &mut encoder, time, &optics.shore);
+                renderer
+                    .shore
+                    .encode(gpu, &mut encoder, &optics, time, reset, 1.0);
+                gpu.queue.submit([encoder.finish()]);
+            }
+            let p = renderer.shore.parameters(&optics, 0.001, false, 1.0);
+            let bytes = gpu.read_buffer(&renderer.shore.field, renderer.shore.field.size())?;
+            let fields: &[[f32; 4]] = bytemuck::cast_slice(&bytes);
+            if fields.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(format!("SWE {n} order {order}: invalid state").into());
+            }
+            for (i, cell) in fields[..(n * n) as usize].iter().enumerate() {
+                let x = p.domain[0] + ((i % n as usize) as f32 + 0.5) * p.domain[2] / n as f32;
+                let expected = (optics.beach_slope * (x - optics.shore_x)).max(0.0);
+                if cell[2] < 0.0 || (cell[2] - expected).abs() > 2e-4 {
+                    return Err(
+                        format!("SWE {n} order {order}: lake-at-rest mismatch at {i}").into(),
+                    );
+                }
+            }
+            if image(gpu, &renderer, &ocean, &camera, optics, size)?
+                .iter()
+                .flatten()
+                .any(|v| !v.is_finite())
+            {
+                return Err(format!("SWE {n}: invalid resized raster").into());
+            }
+        }
+    }
+    eprintln!(
+        "GPU SWE resolution: 64/128/256/512/1024, resize back, both orders, lake at rest and raster bindings OK"
     );
     Ok(())
 }

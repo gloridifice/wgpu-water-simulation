@@ -5,6 +5,7 @@ use super::{
 };
 
 pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
+    let resolution = optics.shore.resolution;
     ui.label(egui::RichText::new("静态碰撞体").strong());
     parameter_table(ui, "collider actions", |ui| {
         parameter(
@@ -44,8 +45,8 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
             |ui| {
                 ui.label(format!(
                     "{:.2} / {:.2}",
-                    domain[2] / 256.0,
-                    domain[3] / 256.0
+                    domain[2] / resolution as f32,
+                    domain[3] / resolution as f32
                 ))
             },
         );
@@ -109,12 +110,12 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
                 parameter(ui, "高度（米）", "范围 0.1～30 米，从中心处原海底向上量到水平顶面。水面超过顶面可以漫过；即时生效并保存，不重置 SWE。", |ui| ui.add(egui::DragValue::new(&mut c.height).speed(0.1).range(0.1..=30.0)));
                 parameter(ui, "顶面海拔（米）", "中心海底高度加碰撞体高度，海平面为 0。", |ui| ui.label(format!("{:.2}", -optics.beach_slope * (c.position[0] - optics.shore_x) + c.height)));
                 parameter(ui, "模拟状态", "超出有效区域的碰撞体保留配置，但暂不显示、不参与碰撞。FFT 远海没有碰撞反馈。", |ui| {
-                    ui.label(if !c.enabled { "已关闭" } else if !c.in_domain(domain) { "超出有效区域" } else { "范围内" });
+                    ui.label(if !c.enabled { "已关闭" } else if !c.in_domain(domain, resolution) { "超出有效区域" } else { "范围内" });
                 });
                 parameter(ui, "操作", "删除即时生效并保存，不重置 SWE；空出的区域在继续运行后由周围水流回填。", |ui| { if ui.button("删除").clicked() { remove = Some(index); } });
             });
             let size = if c.shape == Shape::Cylinder { c.radius * 2.0 } else { c.size[0].min(c.size[1]) };
-            if size < 3.0 * domain[2].max(domain[3]) / super::shore::RESOLUTION as f32 {
+            if size < 3.0 * domain[2].max(domain[3]) / resolution as f32 {
                 ui.label("尺寸较小，建议增大以改善网格对形状的分辨。");
             }
         });

@@ -608,6 +608,14 @@ Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                             parameter_table(ui, "solver table", |ui| {
 parameter(ui, "倾斜沙滩", help("倾斜沙滩"), |ui| ui.checkbox(&mut self.optics.beach, ""));
                             parameter(ui, "启用浅水模拟", help("启用浅水模拟"), |ui| ui.checkbox(&mut shore.enabled, ""));
+                            parameter(ui, "每轴网格数", "SWE 模拟分辨率，64～1024，默认 256。覆盖范围不变；增大后网格更细，显存和计算耗时增加，稳定步长缩短。切换立即重建并重新初始化近岸水体、泡沫和湿沙历史；自动保存。", |ui| egui::ComboBox::from_id_salt("SWE resolution")
+                                .width(ui.available_width()).selected_text(format!("{} × {}", shore.resolution, shore.resolution))
+                                .show_ui(ui, |ui| {
+                                    for n in super::shore::RESOLUTIONS {
+                                        ui.selectable_value(&mut shore.resolution, n, format!("{n} × {n}"));
+                                    }
+                                }));
+                            parameter(ui, "网格间距 X/Z（米）", "当前模拟范围除以每轴网格数；X 朝岸，Z 沿岸。", |ui| ui.label(format!("{:.3} / {:.3}", self.swe_domain[2] / shore.resolution as f32, self.swe_domain[3] / shore.resolution as f32)));
                             parameter(ui, "SWE 求解器", help("SWE 求解器"), |ui| egui::ComboBox::from_id_salt("SWE 求解器")
                                 .width(ui.available_width()).selected_text(if shore.order == 2 {"二阶（MUSCL + RK2）"} else {"一阶（欧拉）"})
                                 .show_ui(ui, |ui| {

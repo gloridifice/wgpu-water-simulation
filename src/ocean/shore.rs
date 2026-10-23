@@ -13,6 +13,7 @@ mod foam_height_verify;
 mod foam_momentum_verify;
 
 pub const RESOLUTION: u32 = 256;
+pub const RESOLUTIONS: [u32; 5] = [64, 128, 256, 512, 1024];
 pub const FOAM_FRONT_MODE_NAMES: [&str; 3] = ["水面落差", "速度差绝对值", "有方向的压缩"];
 pub const VIEW_NAMES: [&str; 7] = [
     "正常着色",
@@ -29,6 +30,7 @@ pub const VIEW_NAMES: [&str; 7] = [
 pub struct ShoreConfig {
     pub colliders: [Option<super::collider::Collider>; super::collider::MAX_COLLIDERS],
     pub enabled: bool,
+    pub resolution: u32,
     pub order: u32,
     pub input_gain: f32,
     pub filter_enabled: bool,
@@ -70,6 +72,7 @@ impl Default for ShoreConfig {
         Self {
             colliders: [None; super::collider::MAX_COLLIDERS],
             enabled: true,
+            resolution: RESOLUTION,
             order: 1,
             input_gain: 1.0,
             filter_enabled: true,
@@ -116,6 +119,9 @@ impl ShoreConfig {
     }
 
     pub fn validate(self) -> Result<(), String> {
+        if !RESOLUTIONS.contains(&self.resolution) {
+            return Err("SWE resolution must be 64, 128, 256, 512 or 1024".into());
+        }
         for collider in self.colliders.iter().flatten() {
             collider.validate()?;
         }
@@ -255,6 +261,7 @@ pub struct ShoreUniform {
     pub colliders: [super::collider::ColliderUniform; super::collider::MAX_COLLIDERS],
 }
 pub struct Shore {
+    pub resolution: u32,
     pub uniform: wgpu::Buffer,
     pub field: wgpu::Buffer,
     pub lace: wgpu::Buffer,
@@ -277,6 +284,11 @@ pub struct Shore {
 }
 impl Shore {
     pub fn new(gpu: &Gpu, ocean: &Ocean) -> Self {
+        Self::with_resolution(gpu, ocean, RESOLUTION)
+    }
+
+    pub fn with_resolution(gpu: &Gpu, ocean: &Ocean, resolution: u32) -> Self {
+        assert!(RESOLUTIONS.contains(&resolution));
         let length = ocean.config.length;
         let device = &gpu.device;
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -288,7 +300,7 @@ impl Shore {
         let make_field = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: u64::from(RESOLUTION * RESOLUTION) * 80,
+                size: u64::from(resolution * resolution) * 80,
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
@@ -407,6 +419,7 @@ impl Shore {
             usage: wgpu::BufferUsages::STORAGE,
         });
         Self {
+            resolution,
             lace,
             uniform,
             field,
@@ -449,8 +462,13 @@ impl Shore {
             inland + offshore,
             self.length * 3.0,
         ];
-        let (colliders, collider_count) =
-            super::collider::packed(&c.colliders, domain, optics.beach_slope, optics.shore_x);
+        let (colliders, collider_count) = super::collider::packed(
+            &c.colliders,
+            domain,
+            optics.beach_slope,
+            optics.shore_x,
+            self.resolution,
+        );
         let mut s = ShoreUniform {
             terrain: [
                 f32::from(optics.beach),
@@ -518,7 +536,7 @@ impl Shore {
                 c.stranded_foam_color[2],
                 1.0,
             ],
-            options: [c.generation, c.view as f32, RESOLUTION as f32, 0.0],
+            options: [c.generation, c.view as f32, self.resolution as f32, 0.0],
             collider_meta: [collider_count as f32, 0.0, 0.0, 0.0],
             colliders,
         };
@@ -596,7 +614,7 @@ impl Shore {
             });
             pass.set_pipeline(&self.collider_edit_pipeline);
             pass.set_bind_group(0, &bind, &[]);
-            pass.dispatch_workgroups(RESOLUTION.div_ceil(8), RESOLUTION.div_ceil(8), 1);
+            pass.dispatch_workgroups(self.resolution.div_ceil(8), self.resolution.div_ceil(8), 1);
         }
         encoder.copy_buffer_to_buffer(&self.field, 0, &self.previous, 0, self.field.size());
     }
@@ -636,8 +654,8 @@ impl Shore {
         // Long UI stalls advance at most 0.1 s rather than risking an unstable step.
         let depth_bound = (step.domain[2] * step.terrain[1] + 4.0 * step.waves[0]).max(1.0);
         let speed = 12.0 + (9.81 * depth_bound).sqrt();
-        let cell_x = step.domain[2] / RESOLUTION as f32;
-        let cell_z = step.domain[3] / RESOLUTION as f32;
+        let cell_x = step.domain[2] / self.resolution as f32;
+        let cell_z = step.domain[3] / self.resolution as f32;
         let stable_dt = 0.2 / (speed / cell_x + speed / cell_z);
         let elapsed = step.timing[1].min(0.1).min(stable_dt * 128.0);
         let count = (elapsed / stable_dt).ceil().max(1.0) as u32;
@@ -713,7 +731,11 @@ impl Shore {
                     &self.corrector_bind
                 };
                 pass.set_bind_group(0, bind, &[]);
-                pass.dispatch_workgroups(RESOLUTION.div_ceil(8), RESOLUTION.div_ceil(8), 1);
+                pass.dispatch_workgroups(
+                    self.resolution.div_ceil(8),
+                    self.resolution.div_ceil(8),
+                    1,
+                );
             }
             if (i + 1) % stages == 0 {
                 encoder.copy_buffer_to_buffer(&self.field, 0, &self.previous, 0, self.field.size());
@@ -2132,6 +2154,21 @@ fn motion_probe(@builtin(global_invocation_id) id: vec3<u32>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resolution_config_compatibility_and_validation() {
+        let old: super::ShoreConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.resolution, 256);
+        for resolution in super::RESOLUTIONS {
+            let config = super::ShoreConfig { resolution, ..old };
+            config.validate().unwrap();
+            let restored: super::ShoreConfig =
+                serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+            assert_eq!(restored, config);
+        }
+        for resolution in [0, 63, 192, 2048, u32::MAX] {
+            assert!(super::ShoreConfig { resolution, ..old }.validate().is_err());
+        }
+    }
     use super::*;
 
     #[test]

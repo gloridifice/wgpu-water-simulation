@@ -414,7 +414,7 @@ The independent **浅水模拟（SWE）** panel contains the SWE, foam, wet-sand
 
 ### Solver and rendering
 
-`shore_compute.wgsl` advances a rectangular, world-space 256² finite-volume grid. It offers the original first-order hydrostatic Rusanov + Euler solver and a second-order MUSCL + SSP-RK2 solver. The latter reconstructs free surface, velocity and bed using a generalized minmod limiter (theta=1.3), with hydrostatic face corrections and a matching centered bed source. Reconstruction falls back to first order near dry cells and patch boundaries. Both retain wet/dry handling and the 12 m/s velocity safeguard; RK2 stages include boundary relaxation and bottom friction. Foam generation/decay and ground memory update once per completed substep and remain split first-order source updates. This is not a port of the reference project's KP07 solver.
+`shore_compute.wgsl` advances a rectangular, world-space finite-volume grid (default 256²). It offers the original first-order hydrostatic Rusanov + Euler solver and a second-order MUSCL + SSP-RK2 solver. The latter reconstructs free surface, velocity and bed using a generalized minmod limiter (theta=1.3), with hydrostatic face corrections and a matching centered bed source. Reconstruction falls back to first order near dry cells and patch boundaries. Both retain wet/dry handling and the 12 m/s velocity safeguard; RK2 stages include boundary relaxation and bottom friction. Foam generation/decay and ground memory update once per completed substep and remain split first-order source updates. This is not a port of the reference project's KP07 solver.
 
 The stored variables are `(h, hu, hv, surface_foam_density)`. Foam is an effective amount per unit surface area in arbitrary units, not a depth-weighted concentration or physical mass density. A separate conservative upwind flux transports foam using shared face velocities: convergence concentrates it and divergence dilutes it, without creating foam. Both orders use first-order spatial foam transport; second-order SWE uses RK2 for its transport time integration. Foam is not divided by water depth or clipped at 1. The offshore sponge removes foam; dry cells deposit their remaining amount on the sand. Closed boundaries have zero foam flux.
 
@@ -426,7 +426,7 @@ Substeps use a conservative speed/depth estimate and the rectangular-grid bound 
 
 The water mesh reads the SWE free surface and fades to the existing FFT displacement between the configured blend depth and 2.5 times that depth. Normals come from the combined surface. The original three FFT render channels remain unchanged; three additional channels drive the SWE inlet. The coupling is **one-way FFT → SWE**: shore reflections and currents do not modify the ocean spectrum. Changing mesh density affects how much of the simulated front is visible. Water thinner than 8 mm is discarded by the water material.
 
-Each substep writes a separate output buffer and copies it to the previous-state buffer; water and ground use a fixed output binding. Parameter copies are ordered in the command encoder so substeps cannot accidentally all read the final uniform. The two state buffers use 6 MiB total at 256². There is no per-frame CPU readback. The copied lace image has a CPU-built mip chain in a read-only GPU buffer (about 5.3 MiB); shader sampling performs bilinear/trilinear filtering.
+Each substep writes a separate output buffer and copies it to the previous-state buffer; water and ground use a fixed output binding. Parameter copies are ordered in the command encoder so substeps cannot accidentally all read the final uniform. The three state buffers (current, previous and RK predictor) use 15 MiB total at 256², scaling with the square of the selected resolution. There is no per-frame CPU readback. The copied lace image has a CPU-built mip chain in a read-only GPU buffer (about 5.3 MiB); shader sampling performs bilinear/trilinear filtering.
 
 ### FFT → SWE boundary coupling
 
@@ -498,7 +498,7 @@ SWE 面板的 **小波法线 → 法线细节强度** 控制近岸视觉细节�
 
 ### SWE 一阶／二阶与 GPU 计时
 
-**浅水模拟（SWE） → SWE solver** 可切换 **First order (Euler)** 和 **Second order (MUSCL + RK2)**。默认保留一阶，选择会保存。切换会重置近岸水体、泡沫和湿沙，FFT 时间继续推进。两种模式使用相同 256² 网格和 CFL 子步条件，二阶每子步执行两阶段并额外使用 3 MiB 预测状态缓存。
+**浅水模拟（SWE） → SWE solver** 可切换 **First order (Euler)** 和 **Second order (MUSCL + RK2)**。默认保留一阶，选择会保存。切换会重置近岸水体、泡沫和湿沙，FFT 时间继续推进。两种模式使用相同的所选网格和 CFL 子步条件，二阶每子步执行两阶段。
 
 面板显示最近异步采样的 **SWE GPU 毫秒数、子步数、推进的模拟毫秒数及每子步耗时**。时间戳覆盖本帧首个 SWE pass 开始至最后一个 pass 结束，包括中间参数拷贝、子步状态拷贝和泡沫/湿沙更新；不包含 FFT、渲染、CPU 提交、末尾状态拷贝及计时读回。只有一个读回在途，未完成时跳过采样，不阻塞帧循环。暂停/关闭显示 idle；不支持 timestamp query 的显卡显示 unsupported，不以 CPU 时间冒充 GPU 时间。
 
@@ -700,3 +700,12 @@ SWE 历史第四块保存泡沫面动量和第一套纹理位移，第五块保�
 有效碰撞体的添加、移动、尺寸／高度／旋转编辑、启用和删除即时生效，暂停时也会应用，不重新初始化 SWE、不重启近岸输入，也不清空全域泡沫和沙地历史。只在有效底面实际变化的格子调整状态：抬高底面时裁除新占据的水体，按剩余水深缩放水流动量，避免把原有水面直接抬到物体顶上；降低底面时保留原有水量，由周围水流在继续运行后回填，不凭空补水。新变干格子的水上泡沫、泡沫动量和纹理位移清除，不在物体顶面产生假沉积；其他格子的历史保持不变。编辑会改变局部水量，不做守恒排水或移动刚体推水。参数进入自动保存和命名配置，旧配置缺少碰撞体字段时按空场景加载。这是静态场景编辑，不是移动刚体：未模拟浮力、刚体运动、流体对物体的反作用、悬空物体下穿流或三维飞溅。
 
 `--verify` 在两种求解阶数下检查圆柱／旋转长方体的静水平衡、露出水面的高墙反射、水与泡沫不穿墙及总量守恒、圆柱两侧绕流、低障碍漫顶，以及暂停编辑的局部状态调整、未变化区域的历史保留和继续运行；渲染验证覆盖圆柱／旋转长方体的水上遮挡和水下场景颜色读取。可用环境变量 `OCEAN_COLLIDER_PREVIEW` 指定验证预览 PNG 的输出路径；普通验证不会额外写图。
+
+
+### SWE 网格精度
+
+在 **浅水模拟（SWE） → 每轴网格数** 选择 64、128、256、512 或 1024，默认 256。该参数独立于 FFT 分辨率和渲染网格，自动保存，也包含在命名配置中；旧配置默认使用 256。
+
+模拟覆盖范围不变，X/Z 每格大小分别为区域宽度/格数、区域长度/格数，SWE 和碰撞体面板均显示实际网格间距。切换立即重建近岸缓存，并用当前 FFT 重新初始化水体，清空近岸泡沫与湿沙历史；FFT 时间和远海泡沫继续运行。碰撞体边缘预留的一格也随精度变化。
+
+每轴格数翻倍，单元数和主要状态显存约为原来的 4 倍，CFL 稳定步长通常减半，相同模拟时间的运算量可能约为 8 倍。三份状态缓存在 256/512/1024 时分别约为 15/60/240 MiB。可结合 SWE GPU 耗时与实际推进时间比较，默认每帧最多推进 128 个子步的限制仍生效。

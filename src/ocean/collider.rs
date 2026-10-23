@@ -67,12 +67,9 @@ impl Collider {
         ]
     }
     /// Keep whole footprints out of the FFT relaxation boundary and off-grid.
-    pub fn in_domain(self, domain: [f32; 4]) -> bool {
+    pub fn in_domain(self, domain: [f32; 4], resolution: u32) -> bool {
         let extent = self.extent();
-        let pad = [
-            domain[2] / super::shore::RESOLUTION as f32,
-            domain[3] / super::shore::RESOLUTION as f32,
-        ];
+        let pad = [domain[2] / resolution as f32, domain[3] / resolution as f32];
         (0..2).all(|a| {
             self.position[a] - extent[a] >= domain[a] + pad[a]
                 && self.position[a] + extent[a]
@@ -106,13 +103,14 @@ pub fn packed(
     domain: [f32; 4],
     slope: f32,
     shore_x: f32,
+    resolution: u32,
 ) -> ([ColliderUniform; MAX_COLLIDERS], u32) {
     let mut result = [bytemuck::Zeroable::zeroed(); MAX_COLLIDERS];
     let mut count = 0;
     for c in colliders
         .iter()
         .flatten()
-        .filter(|c| c.enabled && c.in_domain(domain))
+        .filter(|c| c.enabled && c.in_domain(domain, resolution))
     {
         result[count] = c.uniform(slope, shore_x);
         count += 1;
@@ -160,7 +158,7 @@ mod tests {
             ..c
         });
         list[6] = Some(c);
-        let (packed, count) = packed(&list, domain, 0.18, 0.0);
+        let (packed, count) = packed(&list, domain, 0.18, 0.0, 256);
         assert_eq!(count, 1);
         assert_eq!(packed[0], c.uniform(0.18, 0.0));
         assert_eq!(packed[1].solid, [0.0; 4]);

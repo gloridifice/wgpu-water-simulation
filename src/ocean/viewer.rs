@@ -312,6 +312,13 @@ impl State {
         }
         let force_save = std::mem::take(&mut self.gui.save_now);
         self.persist(force_save);
+        self.renderer.set_shore_resolution(
+            &self.gpu,
+            &self.ocean,
+            self.gui.optics.shore.resolution,
+            self.config.format,
+            self.render_size,
+        );
         self.renderer.update_optics(&self.gpu, &self.gui.optics);
         let simulation_start = Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());

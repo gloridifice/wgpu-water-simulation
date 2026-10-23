@@ -573,6 +573,32 @@ impl Renderer {
         }
     }
 
+    /// Rebind every reader to the new nearshore storage; FFT resources stay live.
+    pub fn set_shore_resolution(
+        &mut self,
+        gpu: &Gpu,
+        ocean: &Ocean,
+        resolution: u32,
+        format: wgpu::TextureFormat,
+        size: [u32; 2],
+    ) {
+        if self.shore.resolution == resolution {
+            return;
+        }
+        self.shore = Shore::with_resolution(gpu, ocean, resolution);
+        self.shore.timer = super::gpu_timer::GpuTimer::new(gpu);
+        self.seabed = Seabed::new(
+            gpu,
+            &self.uniform,
+            &self.optics,
+            &self.shore,
+            format,
+            size[0],
+            size[1],
+        );
+        self.resize(&gpu.device, size[0], size[1]);
+    }
+
     fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
         device
             .create_texture(&wgpu::TextureDescriptor {
