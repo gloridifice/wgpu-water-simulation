@@ -1,5 +1,7 @@
 > 默认启动三维 GPU 海洋：运行 `cargo run`，性能对比使用 `cargo run --release`。详见 [wgpu FFT 海洋说明](README-ocean.md)。以下为保留的 CPU 终端程序说明，使用 `--no-default-features --bin water-simulation` 启动。
 
+独立的三维不可压缩液体库位于 [`crates/tall-cell-fluid`](crates/tall-cell-fluid/README.md)，包含 wgpu 计算后端、CPU 参考实现、自适应光学层、纵长单元压力空间、完整时间推进和表面生成。它提供独立的 `fluid-demo` 可视化程序（启用 `demo` feature，含 egui 控制与模拟 / Mesh / 着色耗时面板）及无窗口 `gpu_verify`，使用自己的 manifest 构建，未接入 Ocean。
+
 # 二维侧视 CPU PIC 水体模拟器
 
 Rust 实现的自由表面液体模拟器。粒子可以向水平和竖直方向运动，水面可以前倾、翻折、落下和飞溅。终端显示真实粒子位置，不把它们压成单一高度曲线。

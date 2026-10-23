@@ -1,4 +1,5 @@
 // Shared bathymetry and local SWE configuration.
+struct Collider { footprint: vec4<f32>, solid: vec4<f32> }
 struct ShoreParams {
     terrain: vec4<f32>, // enabled, slope, shoreline X, flat seabed depth
     waves: vec4<f32>,   // spectral height bound, startup age, blend depth, enabled
@@ -7,15 +8,18 @@ struct ShoreParams {
     coupling: vec4<f32>, // FFT resolution, tile length, height gain, time interpolation
     filter_settings: vec4<f32>, // enabled, rejected wavelength, transition width, padding
     solver: vec4<f32>, // order (1/2), RK stage (0/1/2), render height gain, SWE input gain
-    visual: vec4<f32>, // normal detail strength (render only), reserved
+    visual: vec4<f32>, // render only: normal strength, foam max lift (m), density threshold, transition
     density: vec4<f32>, // compression threshold /s, display reference (amount/area), foam deposit depth (m), reserved
     foam_generation: vec4<f32>, // normalized rise threshold, transition width, reserved
     foam_front: vec4<f32>, // front rate /s, sample distance m, full-weight surface drop m, background multiplier
     foam_velocity: vec4<f32>, // mode (0=surface,1=absolute,2=compression), threshold /s, transition /s, reserved
     foam_motion: vec4<f32>, // flow following multiplier, response time seconds, reserved
+    foam_inertia: vec4<f32>, // drag enabled, newborn water velocity multiplier, reserved
     water_foam_color: vec4<f32>, // linear RGB, render only
     stranded_foam_color: vec4<f32>, // linear RGB, render only
     options: vec4<f32>, // foam generation /s, debug view, resolution, reset
+    collider_meta: vec4<f32>, // packed active count, reserved
+    colliders: array<Collider, 8>,
 }
 
 // Density is not clipped in the solver; this reference only sets the color scale.
@@ -30,16 +34,49 @@ fn foam_density_color(amount: f32, s: ShoreParams) -> vec3<f32> {
 fn shore_distance(p: vec2<f32>, s: ShoreParams) -> f32 {
     return p.x - s.terrain.z;
 }
-fn bottom_height(p: vec2<f32>, s: ShoreParams) -> f32 {
+fn terrain_height(p: vec2<f32>, s: ShoreParams) -> f32 {
     if s.terrain.x < 0.5 { return -s.terrain.w; }
     return -s.terrain.y * shore_distance(p, s);
+}
+fn collider_local(p: vec2<f32>, c: Collider) -> vec2<f32> {
+    let d=p-c.footprint.xy;
+    return vec2(c.solid.z*d.x+c.solid.w*d.y,-c.solid.w*d.x+c.solid.z*d.y);
+}
+fn collider_distance(p: vec2<f32>, c: Collider) -> f32 {
+    let q=collider_local(p,c);
+    if c.solid.x<1.5 { return length(q)-c.footprint.z; }
+    let d=abs(q)-c.footprint.zw;
+    return length(max(d,vec2(0.0)))+min(max(d.x,d.y),0.0);
+}
+fn bottom_height(p: vec2<f32>, s: ShoreParams) -> f32 {
+    var height=terrain_height(p,s);
+    if !shore_active(s) { return height; }
+    for(var i=0u;i<u32(s.collider_meta.x);i++) {
+        let c=s.colliders[i];
+        // Avoid square roots in the frequently evaluated solver bed query.
+        let q=collider_local(p,c);
+        let inside=select(all(abs(q)<=c.footprint.zw),dot(q,q)<=c.footprint.z*c.footprint.z,c.solid.x<1.5);
+        if inside { height=max(height,c.solid.y); }
+    }
+    return height;
 }
 fn shore_active(s: ShoreParams) -> bool {
     return s.terrain.x > 0.5 && s.waves.w > 0.5;
 }
 fn ocean_weight(p: vec2<f32>, s: ShoreParams) -> f32 {
     if !shore_active(s) { return 1.0; }
-    return smoothstep(s.waves.z, s.waves.z * 2.5, -bottom_height(p, s));
+    let base_weight=smoothstep(s.waves.z, s.waves.z * 2.5, -terrain_height(p, s));
+    if s.collider_meta.x<0.5 { return base_weight; }
+    var weight=base_weight;
+    // Show the SWE response locally, even when a collider is in the FFT blend.
+    // The original FFT spectrum and the one-way input remain untouched.
+    for(var i=0u;i<u32(s.collider_meta.x);i++) {
+        weight*=smoothstep(2.0,8.0,collider_distance(p,s.colliders[i]));
+    }
+    let to_edge=min(p-s.domain.xy,s.domain.xy+s.domain.zw-p);
+    let inside=smoothstep(0.0,2.0*max(s.domain.z,s.domain.w)/s.options.z,min(to_edge.x,to_edge.y));
+    let inlet=1.0-smoothstep(0.78,0.80,(p.x-s.domain.x)/s.domain.z);
+    return mix(base_weight,weight,inside*inlet);
 }
 struct ShoreSample {
     height: f32,

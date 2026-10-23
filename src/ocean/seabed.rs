@@ -5,6 +5,8 @@ pub struct Seabed {
     bind: wgpu::BindGroup,
     prepass: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
+    collider_prepass: wgpu::RenderPipeline,
+    collider_composite: wgpu::RenderPipeline,
 }
 
 impl Seabed {
@@ -72,21 +74,22 @@ impl Seabed {
             label: Some("seabed"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}",
                     include_str!("seabed.wgsl"),
                     include_str!("shore.wgsl"),
-                    include_str!("shore_read.wgsl")
+                    include_str!("shore_read.wgsl"),
+                    include_str!("collider_render.wgsl")
                 )
                 .into(),
             ),
         });
-        let pipeline = |format: wgpu::TextureFormat| {
+        let pipeline = |format: wgpu::TextureFormat, vertex, fragment| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("seabed pipeline"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("ground_vertex"),
+                    entry_point: Some(vertex),
                     compilation_options: Default::default(),
                     buffers: &[],
                 },
@@ -101,7 +104,7 @@ impl Seabed {
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("ground_fragment"),
+                    entry_point: Some(fragment),
                     compilation_options: Default::default(),
                     targets: &[Some(format.into())],
                 }),
@@ -115,8 +118,18 @@ impl Seabed {
             color,
             depth,
             bind,
-            prepass: pipeline(wgpu::TextureFormat::Rgba16Float),
-            composite: pipeline(format),
+            prepass: pipeline(
+                wgpu::TextureFormat::Rgba16Float,
+                "ground_vertex",
+                "ground_fragment",
+            ),
+            composite: pipeline(format, "ground_vertex", "ground_fragment"),
+            collider_prepass: pipeline(
+                wgpu::TextureFormat::Rgba16Float,
+                "collider_vertex",
+                "collider_fragment",
+            ),
+            collider_composite: pipeline(format, "collider_vertex", "collider_fragment"),
         }
     }
 
@@ -175,13 +188,17 @@ impl Seabed {
         pass.set_pipeline(&self.prepass);
         pass.set_bind_group(0, &self.bind, &[]);
         pass.draw(0..6, 0..1);
+        pass.set_pipeline(&self.collider_prepass);
+        pass.draw(0..576, 0..super::collider::MAX_COLLIDERS as u32);
     }
 
-    /// Redraw just two triangles into the final depth buffer. This handles
+    /// Redraw ground and colliders into the final depth buffer. This handles
     /// occlusion without sampling a texture that is also a writable attachment.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(&self.composite);
         pass.set_bind_group(0, &self.bind, &[]);
         pass.draw(0..6, 0..1);
+        pass.set_pipeline(&self.collider_composite);
+        pass.draw(0..576, 0..super::collider::MAX_COLLIDERS as u32);
     }
 }

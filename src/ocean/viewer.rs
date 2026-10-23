@@ -1,12 +1,14 @@
 use super::{
+    configuration_panel::ConfigurationPanel,
     foam::{Foam, FoamConfig, FoamStep},
     gpu::{CameraUniform, Error, Gpu, Ocean, Renderer},
     gui::Gui,
     optics::OpticsConfig,
+    performance::{FrameTimings, SweStatus},
     settings::{ConfigurationLibrary, SavedSettings, SettingsStore},
     spectrum::OceanConfig,
 };
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use std::{sync::Arc, time::Instant};
 use winit::{
     application::ApplicationHandler,
@@ -22,6 +24,7 @@ pub struct Camera {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
+    pub target: [f32; 2],
     pub gain: f32,
     pub choppy: bool,
     pub chop_amount: f32,
@@ -41,6 +44,7 @@ impl Camera {
             yaw: 0.55,
             pitch: 0.30,
             distance: length * 0.58,
+            target: [0.0; 2],
             gain: 1.0,
             choppy: true,
             chop_amount: 1.15,
@@ -61,13 +65,24 @@ impl Camera {
         }
     }
 
+    pub fn pan(&mut self, direction: Vec2, elapsed: f32) {
+        let direction = direction.normalize_or_zero();
+        let right = Vec2::new(self.yaw.cos(), -self.yaw.sin());
+        let forward = Vec2::new(-self.yaw.sin(), -self.yaw.cos());
+        let offset = (right * direction.x + forward * direction.y) * self.distance * 0.5 * elapsed;
+        self.target[0] += offset.x;
+        self.target[1] += offset.y;
+    }
+
     pub fn uniform(&self, config: OceanConfig, aspect: f32) -> CameraUniform {
-        let eye = Vec3::new(
-            self.yaw.sin() * self.pitch.cos(),
-            self.pitch.sin(),
-            self.yaw.cos() * self.pitch.cos(),
-        ) * self.distance;
-        let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+        let target = Vec3::new(self.target[0], 0.0, self.target[1]);
+        let eye = target
+            + Vec3::new(
+                self.yaw.sin() * self.pitch.cos(),
+                self.pitch.sin(),
+                self.yaw.cos() * self.pitch.cos(),
+            ) * self.distance;
+        let view = Mat4::look_at_rh(eye, target, Vec3::Y);
         let projection =
             Mat4::perspective_rh(55.0_f32.to_radians(), aspect, 0.1, config.length * 8.0);
         let matrix = projection * view;
@@ -233,37 +248,41 @@ impl State {
 
     fn draw(&mut self) -> Result<bool, wgpu::SurfaceError> {
         let now = Instant::now();
+        let interval = now.duration_since(self.last).as_secs_f64() * 1000.0;
         let elapsed = now.duration_since(self.last).as_secs_f32().min(0.1);
         self.last = now;
         if !self.paused {
             self.time += elapsed * self.gui.speed;
         }
+        let acquire_start = Instant::now();
         let frame = self.surface.get_current_texture()?;
+        let acquire = acquire_start.elapsed().as_secs_f64() * 1000.0;
         let view = frame.texture.create_view(&Default::default());
-        self.gui.swe_timing = if let Some(timer) = &mut self.renderer.shore.timer {
+        let (status, sample) = if let Some(timer) = &mut self.renderer.shore.timer {
             timer.poll(&self.gpu);
-            if timer.failed {
-                "SWE GPU：时间戳读取失败".into()
-            } else if self.paused || !self.gui.optics.beach || !self.gui.optics.shore.enabled {
-                "SWE GPU：空闲（没有模拟子步）".into()
-            } else if let Some(s) = timer
-                .latest
-                .filter(|s| s.order == self.gui.optics.shore.order)
+            let sample = timer.latest.take();
+            let status = if timer.failed {
+                SweStatus::Failed
+            } else if self.paused
+                || self.gui.speed == 0.0
+                || !self.gui.optics.beach
+                || !self.gui.optics.shore.enabled
             {
-                format!(
-                    "SWE GPU：{:.3} 毫秒 | {} 子步 | 模拟 {:.1} 毫秒\n{:.3} 毫秒／子步 | {} 阶（最近采样）",
-                    s.ms,
-                    s.substeps,
-                    s.simulated_dt * 1000.0,
-                    s.ms / s.substeps.max(1) as f64,
-                    s.order
-                )
+                SweStatus::Idle
             } else {
-                "SWE GPU：等待当前求解器采样".into()
-            }
+                SweStatus::Active(self.gui.optics.shore.order)
+            };
+            (status, sample)
         } else {
-            "SWE GPU：设备不支持时间戳".into()
+            (SweStatus::Unsupported, None)
         };
+        self.gui.performance.record_gpu(status, sample);
+        self.gui.swe_domain = self
+            .renderer
+            .shore
+            .parameters(&self.gui.optics, self.time, false, self.camera.gain)
+            .domain;
+        let gui_start = Instant::now();
         let (gui_output, apply) = self.gui.frame(
             &self.window,
             self.ocean.config,
@@ -271,6 +290,7 @@ impl State {
             &mut self.paused,
             &mut self.time,
         );
+        let gui = gui_start.elapsed().as_secs_f64() * 1000.0;
         if let Some(config) = apply {
             let distance_scale = config.length / self.ocean.config.length;
             match self.rebuild_ocean(config) {
@@ -279,11 +299,10 @@ impl State {
             }
         }
         if let Some(settings) = self.gui.load_configuration.take() {
-            self.gui.configuration_panel.message = Some(
-                self.load_configuration(settings)
-                    .map(|()| "已载入配置并重置模拟".into())
-                    .map_err(|error| format!("载入失败：{error}")),
-            );
+            let result = self
+                .load_configuration(settings)
+                .map_err(|error| format!("载入失败：{error}"));
+            self.gui.configuration_panel.finish_load(result);
         }
         if self.render_size != self.gui.viewport_size {
             self.render_size = self.gui.viewport_size;
@@ -293,6 +312,8 @@ impl State {
         }
         let force_save = std::mem::take(&mut self.gui.save_now);
         self.persist(force_save);
+        self.renderer.update_optics(&self.gpu, &self.gui.optics);
+        let simulation_start = Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
         self.ocean
             .encode_filtered(&self.gpu, &mut encoder, self.time, &self.gui.optics.shore);
@@ -319,7 +340,6 @@ impl State {
             ),
         );
         self.foam_time = self.time;
-        self.renderer.update_optics(&self.gpu, &self.gui.optics);
         self.renderer.shore.encode(
             &self.gpu,
             &mut encoder,
@@ -328,15 +348,32 @@ impl State {
             reset,
             camera.ocean[3],
         );
+        let simulation = simulation_start.elapsed().as_secs_f64() * 1000.0;
+        let render_start = Instant::now();
         self.renderer
             .encode(&self.gpu, &mut encoder, &self.gui.viewport_view, &camera);
         let extra = self
             .gui
             .encode(&self.window, &self.gpu, &mut encoder, &view, gui_output);
+        let render = render_start.elapsed().as_secs_f64() * 1000.0;
+        let submit_start = Instant::now();
         self.gpu
             .queue
             .submit(extra.into_iter().chain([encoder.finish()]));
         frame.present();
+        let finished = Instant::now();
+        self.gui.performance.record_frame(
+            finished,
+            FrameTimings {
+                interval,
+                cpu: finished.duration_since(now).as_secs_f64() * 1000.0,
+                acquire,
+                gui,
+                simulation,
+                render,
+                submit_present: finished.duration_since(submit_start).as_secs_f64() * 1000.0,
+            },
+        );
         self.frames += 1;
         self.title_frames += 1;
         let duration = now.duration_since(self.title_time).as_secs_f32();
@@ -377,11 +414,12 @@ impl ApplicationHandler for App {
                 state.gui.speed = self.initial.speed;
                 state.paused = self.initial.paused;
                 state.camera = self.initial.camera;
-                state.gui.configuration_panel.library =
-                    ConfigurationLibrary::new(self.initial.clone());
+                state.gui.configuration_panel =
+                    ConfigurationPanel::new(ConfigurationLibrary::new(self.initial.clone()));
                 state.settings = self.settings.take();
                 if let Some(store) = &state.settings {
-                    state.gui.configuration_panel.library = store.configurations().clone();
+                    state.gui.configuration_panel =
+                        ConfigurationPanel::new(store.configurations().clone());
                     state.gui.settings_path = Some(store.path.clone());
                     state.gui.save_status = store.status.clone();
                     state.gui.save_failed = store.failed;
@@ -688,4 +726,45 @@ pub async fn snapshot(
     png.write_header()?.write_image_data(&pixels)?;
     eprintln!("Saved {} at t={time:.2}s", path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn horizontal_pan_preserves_height_and_heading_at_any_pitch() {
+        let config = OceanConfig::default();
+        for pitch in [0.07, 0.7, 1.35] {
+            for (yaw, direction, expected) in [
+                (0.0, Vec2::Y, Vec3::NEG_Z),
+                (0.0, Vec2::NEG_Y, Vec3::Z),
+                (0.0, Vec2::X, Vec3::X),
+                (0.0, Vec2::NEG_X, Vec3::NEG_X),
+                (std::f32::consts::FRAC_PI_2, Vec2::Y, Vec3::NEG_X),
+                (0.0, Vec2::ONE, Vec3::new(1.0, 0.0, -1.0).normalize()),
+            ] {
+                let mut camera = Camera {
+                    yaw,
+                    pitch,
+                    distance: 20.0,
+                    ..Camera::default()
+                };
+                let before = camera.uniform(config, 1.0);
+                camera.pan(direction, 0.1);
+                let after = camera.uniform(config, 1.0);
+                let displacement = Vec3::from_slice(&after.eye) - Vec3::from_slice(&before.eye);
+                assert!((displacement - expected).length() < 1e-5);
+                let before_view = Mat4::from_cols_array_2d(&before.view_projection);
+                let after_view = Mat4::from_cols_array_2d(&after.view_projection);
+                for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                    assert!(
+                        (before_view.transform_vector3(axis) - after_view.transform_vector3(axis))
+                            .length()
+                            < 1e-5
+                    );
+                }
+            }
+        }
+    }
 }

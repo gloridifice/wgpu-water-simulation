@@ -1,25 +1,47 @@
-//! Named configuration controls; the viewer applies loaded GPU settings.
+//! Compact single-selection configuration controls.
 use super::settings::{ConfigurationLibrary, DEFAULT_CONFIGURATION_NAME, SavedSettings};
+
+#[derive(Clone, Copy)]
+enum Editor {
+    New,
+    Rename(usize),
+    Delete(usize),
+}
 
 pub struct ConfigurationPanel {
     pub library: ConfigurationLibrary,
     pub save_now: bool,
     selected: Option<usize>,
-    new_name: String,
-    rename_name: String,
-    pub message: Option<Result<String, String>>,
+    editor: Option<Editor>,
+    name: String,
+    focus_name: bool,
+    previous_selection: Option<Option<usize>>,
+    error: Option<String>,
 }
 
 impl ConfigurationPanel {
     pub fn new(library: ConfigurationLibrary) -> Self {
         Self {
+            selected: library.active(),
             library,
             save_now: false,
-            selected: None,
-            new_name: String::new(),
-            rename_name: String::new(),
-            message: None,
+            editor: None,
+            name: String::new(),
+            focus_name: false,
+            previous_selection: None,
+            error: None,
         }
+    }
+
+    pub fn finish_load(&mut self, result: Result<(), String>) {
+        let result = result.and_then(|()| self.library.select(self.selected));
+        if result.is_err()
+            && let Some(previous) = self.previous_selection.take()
+        {
+            self.selected = previous;
+        }
+        self.previous_selection = None;
+        self.error = result.err();
     }
 
     pub fn ui(
@@ -29,114 +51,183 @@ impl ConfigurationPanel {
         persistence_enabled: bool,
     ) -> Option<SavedSettings> {
         let mut load = None;
-        ui.label("配置包含海洋、泡沫、浅水、光学、相机和播放参数，也保留未应用的波谱草稿。");
-        ui.label("自动保存仅记住当前工作状态；命名配置需手动另存或覆盖。");
-        ui.separator();
 
-        let previous = self.selected;
-        egui::ComboBox::from_id_salt("saved configurations")
-            .width(ui.available_width())
-            .selected_text(
-                self.selected
-                    .and_then(|i| self.library.profiles().get(i))
-                    .map_or(DEFAULT_CONFIGURATION_NAME, |p| p.name()),
-            )
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.selected, None, DEFAULT_CONFIGURATION_NAME);
-                for (index, profile) in self.library.profiles().iter().enumerate() {
-                    ui.selectable_value(&mut self.selected, Some(index), profile.name());
+        let mut clicked = None;
+        let mut rename = None;
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("configuration buttons")
+                .max_height(260.0)
+                .show(ui, |ui| {
+                    let row_size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+                    if ui
+                        .add_sized(
+                            row_size,
+                            egui::Button::selectable(
+                                self.selected.is_none(),
+                                DEFAULT_CONFIGURATION_NAME,
+                            )
+                            .wrap(),
+                        )
+                        .on_hover_text("只读默认配置。点击恢复全部参数并重置模拟历史。")
+                        .clicked()
+                    {
+                        clicked = Some(None);
+                    }
+                    for (index, profile) in self.library.profiles().iter().enumerate() {
+                        let response = ui
+                            .push_id(index, |ui| {
+                                ui.add_sized(
+                                    row_size,
+                                    egui::Button::selectable(
+                                        self.selected == Some(index),
+                                        profile.name(),
+                                    )
+                                    .wrap(),
+                                )
+                            })
+                            .inner
+                            .on_hover_text("点击载入全部参数并重置模拟历史；右键可重命名。");
+                        if response.clicked() {
+                            clicked = Some(Some(index));
+                        }
+                        if persistence_enabled {
+                            response.context_menu(|ui| {
+                                if ui.button("重命名").clicked() {
+                                    rename = Some(index);
+                                    ui.close();
+                                }
+                            });
+                        }
+                    }
+                });
+        });
+        if let Some(index) = clicked {
+            match self.library.get(index) {
+                Ok(settings) => {
+                    self.previous_selection = Some(self.selected);
+                    self.selected = index;
+                    self.editor = None;
+                    self.error = None;
+                    load = Some(settings.clone());
                 }
-            });
-        if self.selected != previous {
-            self.rename_name = self
-                .selected
-                .and_then(|i| self.library.profiles().get(i))
-                .map_or_else(String::new, |p| p.name().to_owned());
-            self.message = None;
+                Err(error) => self.error = Some(error),
+            }
+        }
+        if let Some(index) = rename {
+            self.editor = Some(Editor::Rename(index));
+            self.name = self.library.profiles()[index].name().to_owned();
+            self.focus_name = true;
+            self.error = None;
         }
 
-        if self.selected.is_none() {
-            ui.label("默认配置为首次载入时的配置，只读，可随时恢复。");
-        }
-        if let Ok(saved) = self.library.get(self.selected) {
-            ui.label(if saved == &current {
-                "当前参数与所选配置一致"
-            } else {
-                "当前参数与所选配置不同"
-            });
-        }
+        ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
-            let label = if self.selected.is_none() {
-                "恢复默认配置"
-            } else {
-                "载入配置"
-            };
             if ui
-                .button(label)
-                .on_hover_text("载入全部参数并重置模拟时间、泡沫和浅水历史。")
+                .add_enabled(persistence_enabled, egui::Button::new("新配置"))
+                .on_hover_text("将当前全部参数另存为新配置。")
+                .on_disabled_hover_text("本地保存已禁用")
                 .clicked()
             {
-                match self.library.get(self.selected) {
-                    Ok(settings) => load = Some(settings.clone()),
-                    Err(error) => self.message = Some(Err(error)),
-                }
+                self.editor = Some(Editor::New);
+                self.name.clear();
+                self.focus_name = true;
+                self.error = None;
             }
             if ui
                 .add_enabled(
                     persistence_enabled && self.selected.is_some(),
-                    egui::Button::new("覆盖所选配置"),
+                    egui::Button::new("删除配置"),
                 )
+                .on_disabled_hover_text(if persistence_enabled {
+                    "默认配置不可删除"
+                } else {
+                    "本地保存已禁用"
+                })
                 .clicked()
+                && let Some(index) = self.selected
             {
-                let result = self.library.overwrite(self.selected, current.clone());
-                self.save_now |= result.is_ok();
-                self.message = Some(result.map(|()| "已更新所选配置".into()));
+                self.editor = Some(Editor::Delete(index));
+                self.error = None;
             }
         });
 
-        ui.add_enabled_ui(persistence_enabled && self.selected.is_some(), |ui| {
-            ui.label("配置名称");
-            ui.add(egui::TextEdit::singleline(&mut self.rename_name).desired_width(f32::INFINITY));
-            if ui.button("重命名").clicked() {
-                let result = self.library.rename(self.selected, &self.rename_name);
-                self.save_now |= result.is_ok();
-                self.message = Some(result.map(|()| "已重命名".into()));
-            }
-        });
-
-        ui.separator();
-        ui.label(egui::RichText::new("另存为新配置").strong());
-        ui.add_enabled_ui(persistence_enabled, |ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.new_name)
-                    .hint_text("输入新配置名称")
-                    .desired_width(f32::INFINITY),
-            );
-            if ui.button("保存为新配置").clicked() {
-                match self.library.save_as(&self.new_name, current) {
-                    Ok(index) => {
-                        self.selected = Some(index);
-                        self.rename_name = self.library.profiles()[index].name().to_owned();
-                        self.new_name.clear();
-                        self.save_now = true;
-                        self.message = Some(Ok("已新增配置".into()));
+        if let Some(editor) = self.editor {
+            ui.push_id("configuration editor", |ui| {
+                match editor {
+                    Editor::New | Editor::Rename(_) => {
+                        let input = ui.add(
+                            egui::TextEdit::singleline(&mut self.name)
+                                .hint_text("配置名称")
+                                .desired_width(f32::INFINITY),
+                        );
+                        if std::mem::take(&mut self.focus_name) {
+                            input.request_focus();
+                        }
                     }
-                    Err(error) => self.message = Some(Err(error)),
+                    Editor::Delete(index) => {
+                        ui.label(format!(
+                            "是否删除当前配置“{}”？",
+                            self.library.profiles()[index].name()
+                        ));
+                    }
                 }
-            }
-        });
-        if !persistence_enabled {
-            ui.label("本地保存已禁用；重新启动时去掉 --no-settings 可启用。");
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(persistence_enabled, egui::Button::new("确定"))
+                        .clicked()
+                    {
+                        let result = match editor {
+                            Editor::New => self
+                                .library
+                                .save_as(&self.name, current.clone())
+                                .map(|index| self.selected = Some(index)),
+                            Editor::Rename(index) => self.library.rename(Some(index), &self.name),
+                            Editor::Delete(index) => self.library.delete(Some(index)).map(|()| {
+                                self.selected = None;
+                                // Vec::remove shifts later indices; restore the default after deletion.
+                                self.previous_selection = Some(None);
+                                load = self.library.get(None).ok().cloned();
+                            }),
+                        };
+                        if result.is_ok() {
+                            self.editor = None;
+                            self.name.clear();
+                            self.save_now = true;
+                        }
+                        self.error = result.err();
+                    }
+                    if ui.button("取消").clicked() {
+                        self.editor = None;
+                        self.name.clear();
+                        self.error = None;
+                    }
+                });
+            });
         }
-        if let Some(message) = &self.message {
-            match message {
-                Ok(message) => {
-                    ui.label(message);
-                }
-                Err(error) => {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
-                }
-            }
+
+        if ui
+            .add_enabled(
+                persistence_enabled
+                    && self.selected.is_some()
+                    && self.editor.is_none()
+                    && load.is_none(),
+                egui::Button::new("保存配置"),
+            )
+            .on_hover_text("用当前全部参数覆盖所选命名配置；自动保存仅记录工作状态。")
+            .on_disabled_hover_text(if persistence_enabled {
+                "默认配置只读；请先新建或选择一个命名配置"
+            } else {
+                "本地保存已禁用"
+            })
+            .clicked()
+        {
+            let result = self.library.overwrite(self.selected, current);
+            self.save_now |= result.is_ok();
+            self.error = result.err();
+        }
+        if let Some(error) = &self.error {
+            ui.colored_label(egui::Color32::LIGHT_RED, error);
         }
         load
     }
@@ -185,7 +276,9 @@ mod tests {
                         if let Some(settings) =
                             self.panel.ui(ui, self.current.clone(), self.enabled)
                         {
+                            self.current = settings.clone();
                             self.loaded = Some(settings);
+                            self.panel.finish_load(Ok(()));
                         }
                     });
                 },
@@ -194,6 +287,10 @@ mod tests {
         }
 
         fn click(&mut self, label: &str) {
+            self.click_with(label, egui::PointerButton::Primary);
+        }
+
+        fn click_with(&mut self, label: &str, button: egui::PointerButton) {
             fn find(shape: &egui::epaint::Shape, label: &str) -> Option<egui::Pos2> {
                 match shape {
                     egui::epaint::Shape::Text(text) if text.galley.text() == label => {
@@ -216,30 +313,45 @@ mod tests {
                     egui::Event::PointerMoved(pos),
                     egui::Event::PointerButton {
                         pos,
-                        button: egui::PointerButton::Primary,
+                        button,
                         pressed,
                         modifiers: egui::Modifiers::NONE,
                     },
                 ]);
             }
+            self.frame(vec![]);
+        }
+
+        fn create(&mut self, name: &str) {
+            self.click("新配置");
+            self.frame(vec![egui::Event::Text(name.into())]);
+            self.click("确定");
         }
     }
 
     #[test]
-    fn controls_save_rename_overwrite_load_and_restore_default() {
+    fn controls_create_save_select_rename_and_confirm_or_cancel_deletion() {
         let mut h = Harness::new(true);
         let default = h.current.clone();
         h.current.optics.depth = 17.0;
         h.current.draft.seed = 123;
         h.frame(vec![]);
-        h.click("输入新配置名称");
-        h.frame(vec![egui::Event::Text("沙滩方案".into())]);
-        h.click("保存为新配置");
+        h.click("新配置");
+        h.frame(vec![egui::Event::Text("放弃的配置".into())]);
+        h.click("取消");
+        assert!(h.panel.library.profiles().is_empty());
+
+        h.create("沙滩方案");
         assert_eq!(h.panel.library.get(Some(0)).unwrap(), &h.current);
         assert!(std::mem::take(&mut h.panel.save_now));
-
+        h.current.speed = 0.5;
         h.frame(vec![]);
-        h.click("沙滩方案");
+        h.click("保存配置");
+        let saved = h.current.clone();
+        assert_eq!(h.panel.library.get(Some(0)).unwrap(), &saved);
+
+        h.click_with("沙滩方案", egui::PointerButton::Secondary);
+        h.click("重命名");
         h.frame(vec![
             egui::Event::Key {
                 key: egui::Key::A,
@@ -254,62 +366,69 @@ mod tests {
             },
             egui::Event::Text("浅水方案".into()),
         ]);
-        h.click("重命名");
+        h.click("确定");
         assert_eq!(h.panel.library.profiles()[0].name(), "浅水方案");
-        assert!(std::mem::take(&mut h.panel.save_now));
 
-        h.current.speed = 0.5;
-        h.frame(vec![]);
-        h.click("覆盖所选配置");
-        let saved = h.current.clone();
-        assert_eq!(h.panel.library.get(Some(0)).unwrap(), &saved);
-        h.current.optics.depth = 5.0;
-        h.frame(vec![]);
-        h.click("载入配置");
-        assert_eq!(h.loaded.take().unwrap(), saved);
-
-        // Open the selector and use the read-only default entry.
-        h.frame(vec![]);
-        let combo = h
-            .shapes
-            .iter()
-            .find_map(|s| match &s.shape {
-                egui::epaint::Shape::Text(text) if text.galley.text() == "浅水方案" => {
-                    Some(text.visual_bounding_rect().center())
-                }
-                _ => None,
-            })
-            .unwrap();
-        for pressed in [true, false] {
-            h.frame(vec![
-                egui::Event::PointerMoved(combo),
-                egui::Event::PointerButton {
-                    pos: combo,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ]);
-        }
-        h.frame(vec![]);
         h.click(DEFAULT_CONFIGURATION_NAME);
-        h.click("恢复默认配置");
         assert_eq!(h.loaded.take().unwrap(), default);
-        assert_eq!(h.panel.library.get(None).unwrap(), &default);
+        assert_eq!(h.panel.library.active(), None);
+        h.click("浅水方案");
+        assert_eq!(h.loaded.take().unwrap(), saved);
+        assert_eq!(h.panel.library.active(), Some(0));
+        h.create("保留的配置");
+        h.click("浅水方案");
+        h.click("删除配置");
+        h.click("取消");
+        assert_eq!(h.panel.library.profiles().len(), 2);
+        assert_eq!(h.current, saved);
+        h.click("删除配置");
+        h.click("确定");
+        assert_eq!(h.panel.library.profiles().len(), 1);
+        assert_eq!(h.panel.library.profiles()[0].name(), "保留的配置");
+        assert_eq!(h.current, default);
+        h.click("保留的配置");
+        assert_eq!(h.loaded.take().unwrap(), saved);
+        assert_eq!(h.panel.selected, Some(0));
     }
 
     #[test]
-    fn disabled_persistence_prevents_save_but_allows_default_restore() {
+    fn restart_restores_selection_even_when_working_parameters_differ() {
+        let mut h = Harness::new(true);
+        let initial = h.current.clone();
+        let mut library = ConfigurationLibrary::new(initial.clone());
+        let index = library.save_as("上次使用", initial).unwrap();
+        h.panel = ConfigurationPanel::new(library);
+        h.current.optics.depth = 17.0;
+        h.frame(vec![]);
+        assert_eq!(h.panel.selected, Some(index));
+        assert!(h.loaded.is_none());
+        assert_eq!(h.current.optics.depth, 17.0);
+
+        // A failed load leaves the persisted selection on the previous configuration.
+        h.panel.previous_selection = Some(h.panel.selected);
+        h.panel.selected = None;
+        h.panel.finish_load(Err("测试载入失败".into()));
+        assert_eq!(h.panel.selected, Some(index));
+        assert_eq!(h.panel.library.active(), Some(index));
+    }
+
+    #[test]
+    fn default_is_read_only_and_disabled_persistence_still_allows_loading() {
         let mut h = Harness::new(false);
         h.current.optics.depth = 17.0;
-        h.panel.new_name = "不能保存".into();
         h.frame(vec![]);
-        h.click("保存为新配置");
+        h.click("新配置");
+        assert!(h.panel.editor.is_none());
+        h.click("删除配置");
+        h.click("保存配置");
         assert!(h.panel.library.profiles().is_empty());
         assert!(!h.panel.save_now);
-        h.click("覆盖所选配置");
-        h.click("重命名");
-        h.click("恢复默认配置");
-        assert_eq!(h.loaded.unwrap(), SavedSettings::default());
+        h.click(DEFAULT_CONFIGURATION_NAME);
+        assert_eq!(h.loaded.take().unwrap(), SavedSettings::default());
+        h.enabled = true;
+        h.click("删除配置");
+        h.click("保存配置");
+        assert!(h.panel.editor.is_none());
+        assert!(!h.panel.save_now);
     }
 }

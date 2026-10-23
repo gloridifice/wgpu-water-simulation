@@ -1,0 +1,35 @@
+[package]
+name = "tall-cell-fluid"
+version = "0.1.0"
+edition = "2024"
+description = "Independent wgpu liquid solver with adaptive tall cells and a CPU reference"
+publish = false
+
+# 独立测试，不改变主项目的依赖、feature 或默认启动程序。
+[workspace]
+
+[dependencies]
+wgpu = { version = "27.0.1", optional = true }
+bytemuck = { version = "1.23", features = ["derive"], optional = true }
+pollster = { version = "0.4", optional = true }
+winit = { version = "0.30.13", optional = true }
+glam = { version = "0.30", optional = true }
+png = { version = "0.18", optional = true }
+egui = { version = "0.33.3", optional = true }
+egui-winit = { version = "0.33.3", optional = true }
+egui-wgpu = { version = "0.33.3", optional = true }
+egui_dock = { version = "0.18", optional = true }
+
+[features]
+default = ["gpu"]
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
+demo = ["gpu", "dep:winit", "dep:glam", "dep:png", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:egui_dock"]
+
+[[bin]]
+name = "fluid-demo"
+path = "src/bin/fluid_demo.rs"
+required-features = ["demo"]
+
+[[example]]
+name = "gpu_verify"
+required-features = ["gpu"]

@@ -73,18 +73,37 @@ struct WaterOut {
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) grid: vec2<f32>,
+    @location(3) foam_normal: vec3<f32>,
 }
-@vertex
-fn water_vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: u32) -> WaterOut {
+// Visual foam thickness never enters surface(), SWE state, wet/dry tests or
+// water optics. Sample the same world-space density used by foam shading.
+fn foam_vertex_surface(water: vec3<f32>) -> vec3<f32> {
+    if !shore_active(shore) || shore.visual.y <= 0.0 || camera.misc.x <= 0.0 { return water; }
+    let history = sample_shore_history(water.xz);
+    let amount = max(history.x, 0.0);
+    let weight = smoothstep(shore.visual.z, shore.visual.z + shore.visual.w, amount);
+    let wet = smoothstep(0.008, 0.02, history.z);
+    return water + vec3(0.0, shore.visual.y * weight * wet, 0.0);
+}
+fn water_vertex_data(index: u32, instance: u32) -> WaterOut {
     let n = u32(camera.misc.y);
     let grid = vec2<f32>(f32(index % (n + 1u)), f32(index / (n + 1u))) * camera.ocean.x / f32(n);
     let tile = vec2<i32>(i32(instance % 3u) - 1, i32(instance / 3u) - 1);
     let offset = vec2<f32>(tile) * camera.ocean.y;
     let p = surface(grid, offset);
     let delta = select(1.0, min(1.0, camera.ocean.x / f32(n)), shore_active(shore));
-    let tx = surface(grid + vec2(delta, 0), offset) - surface(grid - vec2(delta, 0), offset);
-    let tz = surface(grid + vec2(0, delta), offset) - surface(grid - vec2(0, delta), offset);
-    return WaterOut(camera.view_projection * vec4(p, 1.0), p, normalize(cross(tz, tx)), grid);
+    let xp = surface(grid + vec2(delta, 0), offset);
+    let xm = surface(grid - vec2(delta, 0), offset);
+    let zp = surface(grid + vec2(0, delta), offset);
+    let zm = surface(grid - vec2(0, delta), offset);
+    let foam_tx = foam_vertex_surface(xp) - foam_vertex_surface(xm);
+    let foam_tz = foam_vertex_surface(zp) - foam_vertex_surface(zm);
+    return WaterOut(camera.view_projection * vec4(foam_vertex_surface(p), 1.0),
+        p, normalize(cross(zp - zm, xp - xm)), grid, normalize(cross(foam_tz, foam_tx)));
+}
+@vertex
+fn water_vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: u32) -> WaterOut {
+    return water_vertex_data(index, instance);
 }
 fn foam_at(grid: vec2<i32>) -> vec2<f32> {
     let n = i32(camera.ocean.x);
@@ -135,6 +154,9 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     let detail_footprint = max(length(dpdx(input.grid)), length(dpdy(input.grid)));
     let shore_history = sample_shore_history(input.world.xz);
     let geometric_depth = max(input.world.y - bottom_height(input.world.xz, shore), 0.0);
+    if shore_active(shore) && shore.collider_meta.x>0.5 {
+        if bottom_height(input.world.xz,shore)>terrain_height(input.world.xz,shore)+0.00001 && geometric_depth<0.008 { discard; }
+    }
     // The render mesh is coarser than SWE: interpolated geometry can bridge dry
     // cells and cover the stranded foam. Use simulated depth for nearshore coverage.
     var local_depth=geometric_depth;
@@ -222,7 +244,8 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
             * ocean_weight(input.world.xz, shore) * (0.55 + 0.45 * foam_detail(input.grid));
         foam = camera.misc.x * (1.0 - (1.0 - deep_foam) * (1.0 - shore_foam));
     }
-    let foam_color = shore.water_foam_color.rgb * (0.65 + 0.35 * max(dot(normal, camera.sun.xyz), 0.0));
+    let foam_normal = shore_detail_normal(normalize(input.foam_normal), input.grid, input.world, local_depth, detail_footprint);
+    let foam_color = shore.water_foam_color.rgb * (0.65 + 0.35 * max(dot(foam_normal, camera.sun.xyz), 0.0));
     color = mix(color, foam_color, foam);
     if shore_active(shore) && shore.options.y > 5.5 {
         // No texture, lighting or FFT foam in density debug colors.

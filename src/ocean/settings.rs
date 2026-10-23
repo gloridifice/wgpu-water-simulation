@@ -58,6 +58,7 @@ impl SavedSettings {
             }
         }
         if !self.camera.yaw.is_finite()
+            || !self.camera.target.iter().all(|value| value.is_finite())
             || !self.camera.distance.is_finite()
             || self.camera.distance <= 0.0
             || self.camera.foam_debug > 2
@@ -167,6 +168,9 @@ impl NamedConfiguration {
 pub struct ConfigurationLibrary {
     default: SavedSettings,
     profiles: Vec<NamedConfiguration>,
+    /// Session selection; independent of the manually saved parameter snapshots.
+    #[serde(default)]
+    active: Option<usize>,
 }
 
 impl ConfigurationLibrary {
@@ -174,11 +178,22 @@ impl ConfigurationLibrary {
         Self {
             default,
             profiles: Vec::new(),
+            active: None,
         }
     }
 
     pub fn profiles(&self) -> &[NamedConfiguration] {
         &self.profiles
+    }
+
+    pub fn active(&self) -> Option<usize> {
+        self.active
+    }
+
+    pub fn select(&mut self, index: Option<usize>) -> Result<(), String> {
+        self.get(index)?;
+        self.active = index;
+        Ok(())
     }
 
     /// `None` identifies the immutable default; indices identify user profiles.
@@ -215,6 +230,7 @@ impl ConfigurationLibrary {
         settings.validate()?;
         let index = self.profiles.len();
         self.profiles.push(NamedConfiguration { name, settings });
+        self.active = Some(index);
         Ok(index)
     }
 
@@ -233,6 +249,20 @@ impl ConfigurationLibrary {
         let index = index.ok_or("默认配置不可覆盖")?;
         settings.validate()?;
         self.profiles.get_mut(index).ok_or("配置不存在")?.settings = settings;
+        Ok(())
+    }
+
+    pub fn delete(&mut self, index: Option<usize>) -> Result<(), String> {
+        let index = index.ok_or("默认配置不可删除")?;
+        if index >= self.profiles.len() {
+            return Err("配置不存在".into());
+        }
+        self.profiles.remove(index);
+        self.active = self.active.and_then(|active| match active.cmp(&index) {
+            std::cmp::Ordering::Less => Some(active),
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(active - 1),
+        });
         Ok(())
     }
 
@@ -263,9 +293,17 @@ fn read_document(path: &Path) -> Result<Option<SettingsDocument>, String> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.to_string()),
     };
-    let document: SettingsDocument = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    let mut document: SettingsDocument =
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     document.current.validate()?;
-    if let Some(library) = &document.configurations {
+    if let Some(library) = &mut document.configurations {
+        // A stale selection must not discard otherwise valid user configurations.
+        if library
+            .active
+            .is_some_and(|index| index >= library.profiles.len())
+        {
+            library.active = None;
+        }
         library.validate()?;
     }
     Ok(Some(document))
@@ -509,12 +547,26 @@ mod tests {
         s.optics.shore.foam_front_mode = 2;
         s.optics.shore.foam_velocity_threshold = 0.37;
         s.optics.shore.foam_velocity_transition = 1.25;
+        s.optics.shore.foam_drag_enabled = false;
+        s.optics.shore.foam_birth_speed = 0.65;
+        s.optics.shore.foam_response_time = 12.0;
+        s.optics.shore.foam_height_max = 0.12;
+        s.optics.shore.foam_height_threshold = 0.3;
+        s.optics.shore.foam_height_transition = 2.4;
+        s.optics.shore.colliders[3] = Some(super::super::collider::Collider {
+            position: [-11.0, 3.0],
+            height: 3.2,
+            angle: 20.0,
+            shape: super::super::collider::Shape::Box,
+            ..Default::default()
+        });
         s.optics.shore.filter_enabled = false;
         s.optics.shore.filter_cutoff = 3.0;
         s.optics.shore.filter_transition = 5.0;
         s.optics.shore.drying_time = 27.0;
         s.optics.shore.view = 4;
         s.camera.yaw = 1.6;
+        s.camera.target = [-12.5, 8.0];
         s.camera.foam = false;
         s.paused = true;
         s.speed = 0.4;
@@ -525,6 +577,22 @@ mod tests {
         assert_eq!(read(&dir.file()).unwrap().unwrap(), s);
         assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 1);
     }
+    #[test]
+    fn legacy_camera_defaults_to_origin_and_rejects_nonfinite_targets() {
+        let dir = Directory::new();
+        let mut legacy = serde_json::to_value(SavedSettings::default()).unwrap();
+        legacy["camera"].as_object_mut().unwrap().remove("target");
+        legacy["camera"]["yaw"] = serde_json::json!(1.2);
+        fs::write(dir.file(), serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let mut restored = read(&dir.file()).unwrap().unwrap();
+        assert_eq!(restored.camera.target, [0.0; 2]);
+        assert_eq!(restored.camera.yaw, 1.2);
+        for target in [[f32::NAN, 0.0], [0.0, f32::INFINITY]] {
+            restored.camera.target = target;
+            assert!(restored.validate().is_err());
+        }
+    }
+
     #[test]
     fn idle_debounce_exit_flush_and_restart_restore() {
         let dir = Directory::new();
@@ -658,6 +726,8 @@ mod tests {
         let before = library.clone();
         assert!(library.rename(None, "新的默认").is_err());
         assert!(library.overwrite(None, initial.clone()).is_err());
+        assert!(library.delete(None).is_err());
+        assert!(library.delete(Some(99)).is_err());
         assert!(library.save_as("默认配置", initial.clone()).is_err());
         assert!(library.save_as(" 方案一 ", initial.clone()).is_err());
         assert!(library.save_as(" \t ", initial.clone()).is_err());
@@ -672,6 +742,115 @@ mod tests {
         let other = library.save_as("方案二", SavedSettings::default()).unwrap();
         assert!(library.rename(Some(other), "方案一").is_err());
         assert_eq!(library.profiles()[other].name(), "方案二");
+    }
+
+    #[test]
+    fn deleting_profile_preserves_other_snapshots_and_survives_restart() {
+        let dir = Directory::new();
+        let now = Instant::now();
+        let (initial, mut store) = SettingsStore::open(dir.file(), now);
+        let mut library = store.configurations().clone();
+        library.save_as("删除的配置", initial.clone()).unwrap();
+        let mut other = initial.clone();
+        other.optics.depth = 17.0;
+        library.save_as("保留的配置", other.clone()).unwrap();
+        store.set_configurations(&library, now);
+        store.update(initial.clone(), now, true);
+        assert!(!store.failed);
+
+        library.delete(Some(0)).unwrap();
+        store.set_configurations(&library, now);
+        store.update(initial.clone(), now, true);
+        assert!(!store.failed);
+        let (restored, reopened) = SettingsStore::open(dir.file(), now);
+        assert_eq!(restored, initial);
+        assert_eq!(reopened.configurations().profiles().len(), 1);
+        assert_eq!(reopened.configurations().profiles()[0].name(), "保留的配置");
+        assert_eq!(reopened.configurations().get(Some(0)).unwrap(), &other);
+        assert_eq!(reopened.configurations().get(None).unwrap(), &initial);
+        assert_eq!(reopened.configurations().active(), Some(0));
+    }
+
+    #[test]
+    fn last_used_configuration_survives_restart_independently_of_unsaved_work() {
+        let dir = Directory::new();
+        let now = Instant::now();
+        let (initial, mut store) = SettingsStore::open(dir.file(), now);
+        let mut library = store.configurations().clone();
+        let first = library.save_as("方案一", initial.clone()).unwrap();
+        let second = library.save_as("方案二", initial.clone()).unwrap();
+        store.set_configurations(&library, now);
+        store.update(initial.clone(), now, true);
+        assert!(!store.failed);
+
+        // Identical parameters must not hide a change in the selected profile.
+        library.select(Some(first)).unwrap();
+        store.set_configurations(&library, now);
+        store.update(initial.clone(), now, true);
+        let (restored, mut reopened) = SettingsStore::open(dir.file(), now);
+        assert_eq!(restored, initial);
+        assert_eq!(reopened.configurations().active(), Some(first));
+
+        // Remember edits to the working session without overwriting the named snapshot.
+        let mut working = restored;
+        working.optics.depth = 17.0;
+        working.draft.seed = 123;
+        library.rename(Some(first), "上次使用").unwrap();
+        reopened.set_configurations(&library, now);
+        reopened.update(working.clone(), now, true);
+        let (restored, mut reopened) = SettingsStore::open(dir.file(), now);
+        assert_eq!(restored, working);
+        assert_eq!(reopened.configurations().active(), Some(first));
+        assert_eq!(
+            reopened.configurations().profiles()[first].name(),
+            "上次使用"
+        );
+        assert_eq!(
+            reopened.configurations().get(Some(first)).unwrap(),
+            &initial
+        );
+
+        // Explicitly choosing the default must not select an identical named profile.
+        library.select(None).unwrap();
+        reopened.set_configurations(&library, now);
+        reopened.update(initial.clone(), now, true);
+        let (_, reopened) = SettingsStore::open(dir.file(), now);
+        assert_eq!(reopened.configurations().active(), None);
+        library.select(Some(second)).unwrap();
+        library.delete(Some(second)).unwrap();
+        assert_eq!(library.active(), None);
+        let before = library.clone();
+        assert!(library.select(Some(99)).is_err());
+        assert_eq!(library, before);
+    }
+
+    #[test]
+    fn missing_or_stale_last_selection_preserves_legacy_configurations() {
+        let dir = Directory::new();
+        let now = Instant::now();
+        let initial = SavedSettings::default();
+        let mut library = ConfigurationLibrary::new(initial.clone());
+        library.save_as("原有配置", initial.clone()).unwrap();
+        let mut document = serde_json::to_value(SettingsDocument {
+            current: initial.clone(),
+            configurations: Some(library),
+        })
+        .unwrap();
+        document["configurations"]
+            .as_object_mut()
+            .unwrap()
+            .remove("active");
+        for stale in [false, true] {
+            if stale {
+                document["configurations"]["active"] = serde_json::json!(999);
+            }
+            fs::write(dir.file(), serde_json::to_vec(&document).unwrap()).unwrap();
+            let (restored, store) = SettingsStore::open(dir.file(), now);
+            assert!(!store.failed, "{}", store.status);
+            assert_eq!(restored, initial);
+            assert_eq!(store.configurations().active(), None);
+            assert_eq!(store.configurations().profiles()[0].name(), "原有配置");
+        }
     }
 
     #[test]

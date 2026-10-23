@@ -30,7 +30,7 @@ fn ground_vertex(@builtin(vertex_index) index: u32) -> GroundOut {
     let corners = array<vec2<f32>, 6>(vec2(-1.0, -1.0), vec2(-1.0, 1.0), vec2(1.0, -1.0),
                                     vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0));
     let xz = corners[index] * camera.ocean.y * 1.5;
-    let height = bottom_height(xz, shore);
+    let height = terrain_height(xz, shore);
     let world = vec3(xz.x, height, xz.y);
     return GroundOut(camera.view_projection * vec4(world, 1.0), world);
 }

@@ -27,7 +27,22 @@ fn sample_shore_extra(p: vec2<f32>) -> vec4<f32> {
 }
 fn shore_sample(p: vec2<f32>, s: ShoreParams) -> ShoreSample {
     let extra=sample_shore_extra(p);
-    return ShoreSample(extra.z*(1.0-ocean_weight(p,s)),vec2(sample_shore_history(p).w,extra.w),0.0);
+    var height=extra.z;
+    if s.collider_meta.x>0.5 && shore_active(s) {
+        // A dry obstacle's top is not a water surface. Do not interpolate that
+        // elevation into neighboring wet vertices and manufacture a water mound.
+        let grid=(p-s.domain.xy)/s.domain.zw*s.options.z-vec2(0.5);
+        let base=vec2<i32>(floor(grid)); let f=fract(grid);
+        var sum=0.0; var weight=0.0;
+        for(var y=0;y<2;y++) { for(var x=0;x<2;x++) {
+            let c=base+vec2(x,y);
+            if shore_field_at(c).z<=0.00001 { continue; }
+            let w=select(1.0-f.x,f.x,x==1)*select(1.0-f.y,f.y,y==1);
+            sum+=w*shore_extra_at(c).z; weight+=w;
+        }}
+        height=sum/max(weight,0.000001);
+    }
+    return ShoreSample(height*(1.0-ocean_weight(p,s)),vec2(sample_shore_history(p).w,extra.w),0.0);
 }
 // Packed mip chain, bilinear within a level and trilinear between levels.
 fn lace_at(p: vec2<i32>, level: u32) -> f32 {

@@ -74,6 +74,7 @@ fn image(
 }
 
 pub fn run(gpu: &Gpu) -> Result<(), Error> {
+    collider_raster(gpu)?;
     let config = OceanConfig {
         length: 64.0,
         resolution: 8,
@@ -377,6 +378,137 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
         return Err(format!("stranded foam tint invisible: {changed} pixels").into());
     }
     println!("GPU stranded tint: {changed} visible pixels respond independently of water foam");
+    // Exercise the actual vertex/fragment interface, with identical history,
+    // camera and time: only the render-only foam height changes.
+    let mut height_settings = settings;
+    height_settings.shore.view = 6;
+    height_settings.shore.foam_height_threshold = 0.0;
+    height_settings.shore.foam_height_transition = 0.2;
+    height_settings.shore.foam_height_max = 0.0;
+    let flat = image(gpu, &renderer, &ocean, &camera, height_settings, size)?;
+    height_settings.shore.foam_height_max = 0.3;
+    let raised = image(gpu, &renderer, &ocean, &camera, height_settings, size)?;
+    if raised.iter().flatten().any(|v| !v.is_finite()) {
+        return Err("foam height raster produced nonfinite pixels".into());
+    }
+    let changed = flat
+        .iter()
+        .zip(&raised)
+        .filter(|(a, b)| (0..3).any(|c| (a[c] - b[c]).abs() > 0.005))
+        .count();
+    if changed < 4 {
+        return Err(format!("foam height did not change raster geometry: {changed} pixels").into());
+    }
+    println!(
+        "GPU foam height raster: {changed} pixels change with fixed coastal history/camera/time"
+    );
     println!("GPU shore raster: world-space history reaches water shading at both target sizes OK");
+    Ok(())
+}
+
+fn collider_raster(gpu: &Gpu) -> Result<(), Error> {
+    use super::collider::{Collider, Shape};
+    let size = [385, 289];
+    let config = OceanConfig {
+        length: 64.0,
+        resolution: 8,
+        mesh_resolution: 128,
+        amplitude: 0.0,
+        ..Default::default()
+    };
+    let ocean = Ocean::new(gpu, config)?;
+    let foam = Foam::new(gpu, &ocean.fields, config.resolution);
+    let mut renderer = Renderer::new(
+        gpu,
+        &ocean,
+        &foam,
+        wgpu::TextureFormat::Rgba32Float,
+        size[0],
+        size[1],
+    );
+    let camera = Camera::beach(config.length).uniform(config, size[0] as f32 / size[1] as f32);
+    let mut settings = OpticsConfig {
+        shore_x: 0.0,
+        view: 6,
+        ..OpticsConfig::beach_scene()
+    };
+    settings.shore.colliders[1] = Some(Collider {
+        shape: Shape::Box,
+        position: [12.0, 8.0],
+        angle: -20.0,
+        ..Default::default()
+    });
+    for shape in [Shape::Cylinder, Shape::Box] {
+        for top in [2.92, -0.5] {
+            settings.shore.colliders[0] = Some(Collider {
+                shape,
+                position: [6.0, 0.0],
+                height: top + 1.08,
+                angle: 35.0,
+                ..Default::default()
+            });
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            ocean.encode_filtered(gpu, &mut encoder, 0.0, &settings.shore);
+            renderer
+                .shore
+                .encode(gpu, &mut encoder, &settings, 0.0, true, 0.0);
+            gpu.queue.submit([encoder.finish()]);
+            let pixels = image(gpu, &renderer, &ocean, &camera, settings, size)?;
+            let clip =
+                Mat4::from_cols_array_2d(&camera.view_projection) * Vec4::new(6.0, top, 0.0, 1.0);
+            let x = ((clip.x / clip.w * 0.5 + 0.5) * size[0] as f32) as usize;
+            let y = ((0.5 - clip.y / clip.w * 0.5) * size[1] as f32) as usize;
+            let actual = pixels[y * size[0] as usize + x];
+            let wet = if top < 0.0 { 0.65 } else { 1.0 };
+            for (channel, albedo) in [0.38, 0.41, 0.44].into_iter().enumerate() {
+                let expected = albedo * (0.3 + 0.7 * camera.sun[1]) * wet;
+                if !actual[channel].is_finite() || (actual[channel] - expected).abs() > 0.003 {
+                    return Err(format!("collider raster {shape:?} top {top}: {actual:?}, expected channel {channel}={expected}").into());
+                }
+            }
+            // Optional review artifact, inside the caller's chosen output path.
+            if shape == Shape::Cylinder
+                && top > 0.0
+                && let Some(path) = std::env::var_os("OCEAN_COLLIDER_PREVIEW")
+            {
+                let shaded = image(
+                    gpu,
+                    &renderer,
+                    &ocean,
+                    &camera,
+                    OpticsConfig {
+                        view: 0,
+                        ..settings
+                    },
+                    size,
+                )?;
+                let pixels: Vec<u8> = shaded
+                    .iter()
+                    .flat_map(|p| {
+                        p[..3].iter().map(|v| {
+                            let x = v.clamp(0.0, 1.0);
+                            let srgb = if x <= 0.0031308 {
+                                12.92 * x
+                            } else {
+                                1.055 * x.powf(1.0 / 2.4) - 0.055
+                            };
+                            (srgb * 255.0).round() as u8
+                        })
+                    })
+                    .collect();
+                let mut encoder = png::Encoder::new(
+                    std::io::BufWriter::new(std::fs::File::create(path)?),
+                    size[0],
+                    size[1],
+                );
+                encoder.set_color(png::ColorType::Rgb);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder.write_header()?.write_image_data(&pixels)?;
+            }
+        }
+    }
+    println!(
+        "GPU collider raster: cylinder/rotated box above and below water, opaque top/depth and underwater scene-color sampling OK"
+    );
     Ok(())
 }
