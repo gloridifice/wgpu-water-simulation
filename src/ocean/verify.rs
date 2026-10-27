@@ -226,6 +226,7 @@ pub async fn run() -> Result<(), Error> {
         }
     }
     println!("GPU IFFT agrees with direct f64 DFT at all three times.");
+    super::sand::verify(&gpu)?;
     verify_coupling(&gpu)?;
     super::spray::verify(&gpu)?;
     super::foam::verify(&gpu)?;

@@ -22,6 +22,7 @@
 - `gpu.rs::Renderer` 持有 `Shore`，组织天空、海底、模型与水面绘制。水面写入 `Depth32Float` 深度；主深度具有 `RENDER_ATTACHMENT | TEXTURE_BINDING` 用途，场景 pass 保存深度，后续浪花 pass 只采样，不把该深度同时挂为可写附件。
 - `render.wgsl` 的近岸 NSH 泡沫保留双相位孔隙覆盖，使用原始面密度的指数响应控制连续不透明度；`ShoreConfig::foam_opacity_scale` 仅控制外观，不修改密度／动量或重置历史。原灰度和远海泡沫路径独立。
 - `optics*`、`seabed*`、`skylight*`、`render.wgsl`：光学参数、水底、天空照明与水面材质。`terrain*`、`collider*`、`model*` 提供地形、碰撞物与导入模型支持。
+- `sand.rs` 与 `color_mips.wgsl`：沙地和导入模型颜色贴图在 CPU 解码 JPEG、上传原始层后，通过 GPU render pass 在线性空间生成完整 sRGB mip 链，不同步等待 GPU；每级写回 8 位 sRGB。沙地法线／标量贴图保留 CPU 过滤。`sand::verify` 回读实际 GPU mip，检查线性光平均及矩形纹理边界。
 
 ## 界面、配置与验证
 
