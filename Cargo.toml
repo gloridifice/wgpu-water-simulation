@@ -73,6 +73,11 @@ name = "foam-lab"
 path = "src/bin/foam_lab.rs"
 required-features = ["ocean"]
 
+[[bin]]
+name = "foam-weight-lab"
+path = "src/bin/foam_weight_lab.rs"
+required-features = ["ocean"]
+
 [dependencies.egui]
 version = "0.33.3"
 features = ["serde"]

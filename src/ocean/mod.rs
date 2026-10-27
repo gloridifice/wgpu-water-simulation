@@ -15,6 +15,7 @@ mod color_editor;
 mod configuration_panel;
 pub mod foam;
 mod foam_texture;
+pub mod foam_weight_lab;
 pub mod model;
 mod model_panel;
 mod model_render;
