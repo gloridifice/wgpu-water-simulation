@@ -6,37 +6,40 @@ use crate::ocean::{
 
 const DENSITIES: usize = 65;
 const FIXTURES: usize = 9;
-const WEIGHTS: usize = DENSITIES * FIXTURES * 3;
+const OPACITIES: usize = DENSITIES * FIXTURES * 3;
 const NORMALS: usize = 8;
 const SAMPLE_SIDE: usize = 16;
 const SAMPLES: usize = SAMPLE_SIDE * SAMPLE_SIDE;
-const COUNT: usize = WEIGHTS + NORMALS + 3 * 3 * SAMPLES;
+const COUNT: usize = OPACITIES + NORMALS + 3 * 3 * SAMPLES;
 
 pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
     let textures = FoamTextures::new(gpu);
     // The complete production module is used so the probe exercises the actual
     // helpers, not a second implementation of the material in a test shader.
-    let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("NSH material and texture probe"),
-        source: wgpu::ShaderSource::Wgsl(
-            format!(
-                "{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                include_str!("optics.wgsl"),
-                include_str!("sky.wgsl"),
-                include_str!("skylight.wgsl"),
-                include_str!("render.wgsl"),
-                include_str!("shore.wgsl"),
-                include_str!("shore_read.wgsl"),
-                r#"
+    let shader = gpu
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("NSH material and texture probe"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+                    include_str!("optics.wgsl"),
+                    include_str!("sky.wgsl"),
+                    include_str!("skylight.wgsl"),
+                    include_str!("render.wgsl"),
+                    include_str!("shore.wgsl"),
+                    include_str!("shore_read.wgsl"),
+                    r#"
 @group(1) @binding(0) var<storage, read_write> nsh_results: array<vec4<f32>>;
 @compute @workgroup_size(64) fn nsh_probe(@builtin(global_invocation_id) id: vec3<u32>) {
     let index=id.x;
     if index<1755u {
-        let amount=f32(index%65u)/64.0;
+        let density=f32(index%65u)/8.0;
         let fixture=(index/65u)%9u;
-        let opacity=f32(index/(65u*9u))*0.5;
-        let weights=nsh_weights(amount,f32(fixture%3u)*0.5,f32(fixture/3u)*0.5,0.04,0.06,0.35,opacity);
-        nsh_results[index]=vec4(weights,0.0,0.0);
+        let scale=array(0.01,2.0,20.0)[index/(65u*9u)];
+        let depth=array(0.0,0.01,1.0)[fixture/3u];
+        let opacity=nsh_opacity(density,depth,f32(fixture%3u)*0.5,0.04,2.0,scale);
+        nsh_results[index]=vec4(opacity,0.0,0.0,0.0);
         return;
     }
     if index<1763u {
@@ -69,10 +72,10 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
     nsh_results[index]=textureSampleLevel(foam_nsh,foam_nsh_sampler,uv,layer,lod);
 }
 "#,
-            )
-            .into(),
-        ),
-    });
+                )
+                .into(),
+            ),
+        });
     let pipeline = gpu
         .device
         .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -126,67 +129,59 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
     if values.iter().flatten().any(|v| !v.is_finite()) {
         return Err("NSH material returned a non-finite value".into());
     }
-    verify_weights(values)?;
-    verify_normals(&values[WEIGHTS..WEIGHTS + NORMALS])?;
-    verify_textures(&values[WEIGHTS + NORMALS..])?;
+    verify_opacity(values)?;
+    verify_normals(&values[OPACITIES..OPACITIES + NORMALS])?;
+    verify_textures(&values[OPACITIES + NORMALS..])?;
     println!(
-        "NSH GPU: zero/monotone bounded coverage, disjoint thin/thick layers, transformed unit normals, 3 linear RGBA layers/repeat/mip means OK"
+        "NSH GPU: continuous exponential opacity above density reference, preserved pores/dry guards, monotone density/scale response, transformed normals, 3 linear RGBA layers/repeat/mip means OK"
     );
     Ok(())
 }
 
-fn verify_weights(values: &[[f32; 4]]) -> Result<(), Error> {
-    let at = |opacity: usize, fixture: usize, density: usize| {
-        values[(opacity * FIXTURES + fixture) * DENSITIES + density]
+fn verify_opacity(values: &[[f32; 4]]) -> Result<(), Error> {
+    let at = |scale: usize, fixture: usize, density: usize| {
+        f64::from(values[(scale * FIXTURES + fixture) * DENSITIES + density][0])
     };
-    let mut found_thin = false;
-    let mut found_thick = false;
-    for opacity in 0..3 {
+    for (scale_index, scale) in [0.01_f64, 2.0, 20.0].into_iter().enumerate() {
         for fixture in 0..FIXTURES {
-            let mut previous = [0.0_f32; 2];
+            let mut previous = 0.0;
             for density in 0..DENSITIES {
-                let current = at(opacity, fixture, density);
-                let total = current[0] + current[1];
-                if current[..2].iter().any(|v| *v < -1e-6)
-                    || total > 1.0 + 1e-6
-                    || (density == 0 && total > 1e-6)
-                    || (opacity == 0 && current[0].abs() > 1e-6)
-                    || total + 1e-6 < previous[0]
-                    || current[1] + 1e-6 < previous[1]
+                let current = at(scale_index, fixture, density);
+                if !(0.0..=1.0).contains(&current)
+                    || ((density == 0 || fixture < 3) && current != 0.0)
+                    || current + 1e-6 < previous
+                    || (scale_index > 0 && current > at(scale_index - 1, fixture, density) + 1e-6)
                 {
                     return Err(format!(
-                        "NSH coverage invariant failed: opacity {opacity}, fixture {fixture}, density {density}: {current:?}, previous {previous:?}"
+                        "NSH opacity invariant failed: scale {scale}, fixture {fixture}, density {density}/8: {current}, previous {previous}"
                     ).into());
                 }
-                if density as f32 / 64.0 <= 0.35 && current[1] > 1e-6 {
-                    return Err("NSH thick foam survived below its density threshold".into());
+                previous = current;
+                let amount = density as f64 / 8.0;
+                let expected_response = -(-amount / scale).exp_m1();
+                // In deep water the pore coverage is complete at reference=2.
+                // Check the independent f64 exponential, including densities
+                // well above that old clipping point (2, 4, 6, 8).
+                if fixture >= 6 && amount >= 2.0 && (current - expected_response).abs() > 2e-6 {
+                    return Err(format!(
+                        "NSH density opacity clipped or mis-scaled at {amount}: {current}, expected {expected_response}"
+                    ).into());
                 }
-                previous = [total, current[1]];
-                found_thin |= current[0] > 0.05;
-                found_thick |= current[1] > 0.05;
+                // Divide out the optical response: the pore coverage must be
+                // independent of the new scale, even at wet/dry transitions.
+                if density > 0 {
+                    let coverage = at(0, fixture, density) / -(-amount / 0.01).exp_m1();
+                    if (current - coverage * expected_response).abs() > 2e-6 {
+                        return Err("NSH opacity scale changed pore coverage".into());
+                    }
+                }
             }
         }
     }
-    for fixture in 0..FIXTURES {
-        for density in 0..DENSITIES {
-            let clear = at(0, fixture, density);
-            let half = at(1, fixture, density);
-            let full = at(2, fixture, density);
-            if (half[0] * 2.0 - full[0]).abs() > 1e-6
-                || (clear[1] - full[1]).abs() > 1e-6
-                || (half[1] - full[1]).abs() > 1e-6
-            {
-                return Err(
-                    "NSH thin opacity changed thick coverage or did not scale linearly".into(),
-                );
-            }
-            if fixture >= 3 && full[1] + 1e-6 < at(2, fixture - 3, density)[1] {
-                return Err("NSH higher height reduced thick coverage".into());
-            }
-        }
-    }
-    if !found_thin || !found_thick {
-        return Err("NSH coverage probe did not exercise both thin and thick foam".into());
+    // At density=1, low Soft remains a hole while high Soft remains visible;
+    // an opacity-only sheet would pass the exponential checks but fail here.
+    if at(1, 6, 8) != 0.0 || at(1, 8, 8) < 0.1 {
+        return Err("NSH continuous opacity lost the pore pattern".into());
     }
     Ok(())
 }

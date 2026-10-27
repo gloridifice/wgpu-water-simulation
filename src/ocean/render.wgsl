@@ -171,17 +171,20 @@ fn shore_detail_normal(base: vec3<f32>, grid: vec2<f32>, world: vec3<f32>, depth
     return normalize(vec3(base.x - base.y * slope.x, base.y, base.z - base.y * slope.y));
 }
 
-// Display-only coverage. Density in the solver remains unbounded. Thin and
-// thick weights are disjoint; their sum is the final effective foam opacity.
-fn nsh_weights(amount: f32, soft: f32, height: f32, soft_width: f32, height_width: f32, thick_start: f32, thin_opacity: f32) -> vec2<f32> {
-    let m=clamp(amount,0.0,1.0);
-    let sw=max(soft_width,0.001); let hw=max(height_width,0.001);
+// Keep the existing density-dependent pores, but use unclipped density for
+// optical opacity. Changing opacity_scale never changes the pore threshold.
+// This is a render-only response, not a physical foam thickness or mass change.
+fn nsh_opacity(density: f32, depth: f32, soft: f32, soft_width: f32, coverage_reference: f32, opacity_scale: f32) -> f32 {
+    let amount=max(density,0.0);
+    let m=pow(clamp(amount/coverage_reference,0.0,1.0),1.5)*smoothstep(0.003,0.02,depth);
+    let sw=max(soft_width,0.001);
     let threshold=mix(1.0+sw,-sw,m);
     let coverage=smoothstep(threshold-sw,threshold+sw,soft)*smoothstep(0.0,0.02,m);
-    let dense=smoothstep(thick_start,min(thick_start+0.35,1.0),m);
-    let height_threshold=mix(0.85,0.25,m);
-    let thick=coverage*dense*smoothstep(height_threshold-hw,height_threshold+hw,height);
-    return vec2(max(coverage-thick,0.0)*thin_opacity,thick);
+    let optical_depth=amount/opacity_scale;
+    // Avoid cancellation for tiny densities without a discontinuous cutoff.
+    var opacity=1.0-exp(-optical_depth);
+    if optical_depth<0.001 { opacity=optical_depth*(1.0-0.5*optical_depth); }
+    return coverage*opacity;
 }
 
 // Apply the material-coordinate Jacobian to the decoded normal slopes. This
@@ -201,16 +204,14 @@ struct FoamAppearance {
     opacity: f32,
     pattern: vec2<f32>,
     normal: vec3<f32>,
-    weights: vec2<f32>,
 }
-fn nsh_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<f32>, amount: f32) -> FoamAppearance {
+fn nsh_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<f32>, density: f32, depth: f32) -> FoamAppearance {
     let layer=i32(shore.foam_material.x)-1;
     let uv=material/shore.foam_material.y;
     let coarse=textureSample(foam_nsh,foam_nsh_sampler,uv,layer);
     let fine=textureSample(foam_nsh,foam_nsh_sampler,uv*10.0,layer);
     let pattern=0.72*coarse.ba+0.28*fine.ba;
-    let widths=max(vec2(0.04,0.06),fwidth(pattern));
-    let weights=nsh_weights(amount,pattern.x,pattern.y,widths.x,widths.y,shore.foam_shading.x,shore.foam_material.w);
+    let opacity=nsh_opacity(density,depth,pattern.x,max(0.04,fwidth(pattern.x)),shore.density.y,shore.foam_material.w);
     let wx=dpdx(world.xz); let wy=dpdy(world.xz);
     let mx=dpdx(material); let my=dpdy(material);
     let determinant=wx.x*wy.y-wx.y*wy.x;
@@ -225,9 +226,8 @@ fn nsh_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<
     let roughness=shore.foam_shading.y;
     let exponent=max(2.0,2.0/pow(roughness,4.0)-2.0);
     let highlight=pow(max(dot(n,half_vector),0.0),exponent)*light*0.04;
-    let thin=shore.water_foam_color.rgb*0.72*(0.55+0.45*light)+vec3(highlight*0.5);
-    let thick=shore.water_foam_color.rgb*(0.65+0.35*light)+vec3(highlight);
-    return FoamAppearance(thin*weights.x+thick*weights.y,weights.x+weights.y,pattern,n,weights);
+    let color=shore.water_foam_color.rgb*(0.65+0.35*light)+vec3(highlight);
+    return FoamAppearance(color*opacity,opacity,pattern,n);
 }
 
 @fragment
@@ -334,9 +334,8 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
         // Each phase is thresholded and shaded before cross-fading. Blending
         // raw Soft/Height first would open/close unrelated holes at handoff.
         let motion=sample_shore_texture(input.world.xz);
-        let amount=pow(foam_density_level(shore_history.x,shore),1.5)*smoothstep(0.003,0.02,local_depth);
-        let a=nsh_phase(input.world.xz-motion.offsets.xy,input.world,foam_normal,view,amount);
-        let b=nsh_phase(input.world.xz-motion.offsets.zw,input.world,foam_normal,view,amount);
+        let a=nsh_phase(input.world.xz-motion.offsets.xy,input.world,foam_normal,view,shore_history.x,local_depth);
+        let b=nsh_phase(input.world.xz-motion.offsets.zw,input.world,foam_normal,view,shore_history.x,local_depth);
         let opacity=mix(b.opacity,a.opacity,motion.blend)*camera.misc.x;
         let contribution=mix(b.premultiplied,a.premultiplied,motion.blend)*camera.misc.x;
         // Offshore history retains its existing material.
@@ -349,10 +348,7 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
             if debug==1u { return vec4(vec3(pattern.x),1.0); }
             if debug==2u { return vec4(vec3(pattern.y),1.0); }
             if debug==3u { return vec4(normalize(mix(b.normal,a.normal,motion.blend))*0.5+vec3(0.5),1.0); }
-            if debug==4u {
-                let weights=mix(b.weights,a.weights,motion.blend);
-                return vec4(weights.y,weights.x,0.0,1.0);
-            }
+            if debug==4u { return vec4(vec3(opacity),1.0); }
         }
     } else {
         color = mix(color, foam_color, foam);

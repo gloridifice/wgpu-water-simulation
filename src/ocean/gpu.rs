@@ -307,6 +307,9 @@ pub struct Renderer {
     fields: wgpu::Buffer,
     foam: wgpu::Buffer,
     foam_textures: FoamTextures,
+    spray: Option<super::spray::SprayParticles>,
+    spray_depth_dirty: bool,
+    format: wgpu::TextureFormat,
 }
 
 impl Renderer {
@@ -619,6 +622,9 @@ impl Renderer {
             fields: ocean.fields.clone(),
             foam: foam.field.clone(),
             foam_textures,
+            spray: None,
+            spray_depth_dirty: false,
+            format,
         }
     }
 
@@ -635,6 +641,7 @@ impl Renderer {
             return;
         }
         let mut model = self.seabed.model.take();
+        self.spray = None;
         self.shore = Shore::with_resolution(gpu, ocean, resolution);
         self.shore.timer = super::gpu_timer::GpuTimer::new(gpu);
         self.seabed = Seabed::new(
@@ -706,7 +713,8 @@ impl Renderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             })
             .create_view(&Default::default())
@@ -714,6 +722,7 @@ impl Renderer {
 
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         self.depth = Self::depth_view(device, width, height);
+        self.spray_depth_dirty = true;
         self.seabed.resize(device, width, height);
         self.bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("resized ocean scene bindings"),
@@ -775,6 +784,39 @@ impl Renderer {
         });
     }
 
+    /// Consume GPU-only emission after Shore::encode, including snapshot warmup steps.
+    pub fn encode_spray(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder) {
+        let Some(source) = &self.shore.spray else {
+            self.spray = None;
+            return;
+        };
+        if self.shore.spray_error.is_some() {
+            return;
+        }
+        if self.spray.is_none() {
+            match super::spray::SprayParticles::new(
+                gpu,
+                &self.shore,
+                source,
+                &self.uniform,
+                &self.depth,
+                self.format,
+            ) {
+                Ok(particles) => self.spray = Some(particles),
+                Err(error) => {
+                    self.shore.spray_error = Some(error.to_string());
+                    return;
+                }
+            }
+        }
+        let particles = self.spray.as_mut().expect("spray created above");
+        if self.spray_depth_dirty {
+            particles.resize(gpu, source, &self.uniform, &self.depth);
+            self.spray_depth_dirty = false;
+        }
+        particles.encode(encoder, source, self.shore.spray_epoch);
+    }
+
     pub fn update_optics(&self, gpu: &Gpu, optics: &OpticsConfig) {
         self.shore.configure(gpu, optics);
         self.sky_lut.update(gpu, &optics.sky);
@@ -809,7 +851,7 @@ impl Renderer {
                 view: &self.depth,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Discard,
+                    store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
             }),
@@ -831,6 +873,10 @@ impl Renderer {
         }
         if let Some(model) = &self.seabed.model {
             model.draw_bounds(&mut pass);
+        }
+        drop(pass);
+        if let (Some(particles), Some(source)) = (&self.spray, &self.shore.spray) {
+            particles.render(encoder, target, source);
         }
     }
 }

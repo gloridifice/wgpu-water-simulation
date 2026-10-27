@@ -17,6 +17,7 @@ enum Panel {
     Ocean,
     Configurations,
     Foam,
+    Spray,
     Performance,
     Shore,
     Colliders,
@@ -32,8 +33,11 @@ fn default_dock() -> egui_dock::DockState<Panel> {
         0.23,
         vec![Panel::Ocean, Panel::Configurations],
     );
-    dock.main_surface_mut()
-        .split_below(left, 0.72, vec![Panel::Foam, Panel::Performance]);
+    dock.main_surface_mut().split_below(
+        left,
+        0.72,
+        vec![Panel::Foam, Panel::Spray, Panel::Performance],
+    );
     dock.main_surface_mut().split_right(
         center,
         0.68,
@@ -51,6 +55,7 @@ impl<F: FnMut(Panel, &mut egui::Ui)> egui_dock::TabViewer for PanelViewer<F> {
             Panel::Ocean => "海洋参数",
             Panel::Configurations => "配置保存",
             Panel::Foam => "远海泡沫",
+            Panel::Spray => "浪花粒子",
             Panel::Performance => "性能",
             Panel::Shore => "浅水模拟（SWE）",
             Panel::Colliders => "碰撞体",
@@ -256,7 +261,7 @@ fn help(name: &str) -> &'static str {
             "增强背景泡沫生成的水流汇聚阈值。已有泡沫仍会通过输送自然堆积，不受此阈值限制。"
         }
         "密度颜色参考值" => {
-            "达到此密度显示红色，低密度绿色，中间黄色。仅改变色标，不限制模拟密度；水上和沙地共用。"
+            "模拟泡沫量／面积，范围 0.01～20，默认 2。达到此值时密度调试显示红色，也控制材质孔隙的填充范围；不限制模拟密度。NSH 浓淡另由不透明度密度尺度控制。实时生效并保存，不重置。"
         }
         "沙地干燥时间（秒）" => "湿沙的干燥时间常数，不控制泡沫寿命。",
         "浅水调试视图" => {
@@ -305,6 +310,7 @@ pub struct Gui {
     pub swe_domain: [f32; 4],
     pub model_panel: super::model_panel::ModelPanel,
     pub error: Option<String>,
+    pub spray_error: Option<String>,
     pub foam_settings: FoamConfig,
     pub clear_foam: bool,
     pub optics: OpticsConfig,
@@ -367,6 +373,7 @@ impl Gui {
             swe_domain: [-32.0, -192.0, 64.0, 384.0],
             model_panel: super::model_panel::ModelPanel::default(),
             error: None,
+            spray_error: None,
             foam_settings: FoamConfig::default(),
             clear_foam: false,
             optics: OpticsConfig::default(),
@@ -562,6 +569,9 @@ parameter_table(ui, "playback table", |ui| {
 Panel::Performance => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
     self.performance.ui(ui);
 }); },
+Panel::Spray => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false,false]).show(ui, |ui| {
+    super::spray_panel::show(ui, &mut self.optics.spray, self.spray_error.as_deref());
+}); },
 Panel::Model => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false,false]).show(ui, |ui| {
     self.model_panel.show(ui, &mut self.optics, camera, current.length);
 }); },
@@ -654,10 +664,9 @@ parameter(ui, "水上泡沫", help("水上泡沫"), |ui| ui.color_edit_button_rg
                                 });
                                 parameter(ui, "纹理尺寸（米）", "粗层每块覆盖的世界长度，0.25～64 米，默认 12 米；细层固定为其 1/10。只作用于 NSH 路径。实时生效并保存，不重置密度或位移历史。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_texture_size,0.25..=64.0).logarithmic(true)));
                                 parameter(ui, "泡沫微法线强度", "无量纲，0～3，默认 0.65；0 关闭 NSH 细法线，保留密度厚度法线。只改变泡沫光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_micro_normal,0.0..=3.0)));
-                                parameter(ui, "薄泡沫不透明度", "0～1，默认 0.55。Soft 覆盖内尚未成为浓密白沫的部分使用此值；0 隐藏薄层，1 完全遮挡水面。不改变模拟密度，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_soft_opacity,0.0..=1.0)));
-                                parameter(ui, "厚泡沫起始强度", "归一化显示强度，0～0.9，默认 0.35。超过后结合 Height 图案逐渐形成浓密白沫；不是物理密度阈值。实时生效并保存，不重置。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_thick_start,0.0..=0.9)));
+                                parameter(ui, "不透明度密度尺度", "模拟泡沫量／面积，非实测质量单位；范围 0.01～20，默认 2。NSH 不透明度 = 孔隙覆盖率 × (1 − exp(−原始密度／此值))。完整覆盖处，密度等于此值时约 63%，三倍时约 95%；越大越透水，不改变孔隙阈值。实时生效并保存，不重置或改变模拟密度。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_opacity_scale,0.01..=20.0).logarithmic(true).max_decimals(3)));
                                 parameter(ui, "泡沫粗糙度", "无量纲，0.15～1，默认 0.85；越高高光越宽。仅作用于 NSH 泡沫的简化光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_roughness,0.15..=1.0)));
-                                parameter(ui, "材质调试", "显示 Soft、相对 Height、泡沫世界法线或覆盖权重（薄绿／厚红）。只在 NSH、显示泡沫且浅水视图为正常着色时启用；不会覆盖密度调试。实时生效并保存。", |ui| {
+                                parameter(ui, "材质调试", "显示 Soft、相对 Height、泡沫世界法线或最终不透明度（黑色 0、白色 1），含孔隙和双相位混合。Height 不再划分薄／厚层。只在 NSH、显示泡沫且浅水视图为正常着色时启用；不会覆盖密度调试。实时生效并保存。", |ui| {
                                     let names=super::shore::FOAM_MATERIAL_VIEWS;
                                     ui.add_enabled_ui(shore.foam_texture>0, |ui| {
                                         egui::ComboBox::from_id_salt("foam material view").width(ui.available_width()).selected_text(names[shore.foam_material_view as usize]).show_ui(ui, |ui| {

@@ -157,7 +157,7 @@ impl Performance {
                 (
                     4,
                     "模拟 CPU",
-                    "FFT、远海泡沫与近岸 SWE 的 CPU 指令编码及参数上传耗时，不是 GPU 执行耗时。",
+                    "FFT、远海泡沫、近岸 SWE 与浪花源/粒子的 CPU 指令编码及参数上传耗时，不是 GPU 执行耗时。",
                 ),
                 (
                     5,
@@ -186,7 +186,7 @@ impl Performance {
             parameter(
                 ui,
                 "SWE GPU",
-                "真实 GPU 时间戳的采样平均耗时；从首个 SWE 计算 pass 开始到最后一个结束，包含近岸泡沫和中间子步复制。不包含 FFT、远海泡沫、渲染及首尾复制。",
+                "真实 GPU 时间戳的采样平均耗时；包含 SWE、近岸泡沫和中间子步复制，开启浪花时包含全部发射信号 pass。不包含 FFT、远海泡沫、粒子更新/绘制及首尾复制。",
                 |ui| {
                     ui.label(gpu.map_or_else(|| status.into(), |g| ms(Some(g.ms / g.count as f64))))
                 },

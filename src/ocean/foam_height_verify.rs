@@ -224,8 +224,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                 foam_texture: 3,
                 foam_texture_size: 3.5,
                 foam_micro_normal: 2.0,
-                foam_soft_opacity: 0.1,
-                foam_thick_start: 0.8,
+                foam_opacity_scale: 8.0,
                 foam_roughness: 0.3,
                 foam_material_view: 4,
                 ..a.shore

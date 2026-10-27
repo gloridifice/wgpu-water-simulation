@@ -23,6 +23,7 @@ pub const VIEW_NAMES: [&str; 12] = [
 pub struct OpticsConfig {
     pub model: super::terrain::ModelConfig,
     pub shore: super::shore::ShoreConfig,
+    pub spray: super::spray::SprayConfig,
     pub depth: f32,
     pub beach: bool,
     pub beach_slope: f32,
@@ -47,6 +48,7 @@ impl Default for OpticsConfig {
         Self {
             model: super::terrain::ModelConfig::default(),
             shore: super::shore::ShoreConfig::default(),
+            spray: super::spray::SprayConfig::default(),
             depth: 6.0,
             beach: false,
             beach_slope: 0.18,
@@ -94,6 +96,7 @@ impl OpticsConfig {
     pub fn validate(&self) -> Result<(), String> {
         self.model.validate()?;
         self.shore.validate()?;
+        self.spray.validate()?;
         self.sky.validate()?;
         if !self.beach_slope.is_finite()
             || !(0.01..=1.0).contains(&self.beach_slope)

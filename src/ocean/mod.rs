@@ -24,6 +24,8 @@ mod seabed;
 pub mod settings;
 pub mod shore;
 pub mod skylight;
+pub mod spray;
+mod spray_panel;
 pub mod terrain;
 
 mod optics_verify;

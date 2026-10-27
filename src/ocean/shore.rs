@@ -33,7 +33,7 @@ pub const FOAM_MATERIAL_VIEWS: [&str; 5] = [
     "Soft 图案",
     "Height 图案",
     "泡沫法线",
-    "薄／厚覆盖",
+    "不透明度（黑透／白实）",
 ];
 pub const VIEWS: [(u32, &str); 6] = [
     (0, "正常着色"),
@@ -66,8 +66,7 @@ pub struct ShoreConfig {
     pub foam_texture: u32,
     pub foam_texture_size: f32,
     pub foam_micro_normal: f32,
-    pub foam_soft_opacity: f32,
-    pub foam_thick_start: f32,
+    pub foam_opacity_scale: f32,
     pub foam_roughness: f32,
     pub foam_material_view: u32,
     pub breaking_depth: f32,
@@ -111,8 +110,7 @@ impl Default for ShoreConfig {
             foam_texture: 1,
             foam_texture_size: 12.0,
             foam_micro_normal: 0.65,
-            foam_soft_opacity: 0.55,
-            foam_thick_start: 0.35,
+            foam_opacity_scale: 2.0,
             foam_roughness: 0.85,
             foam_material_view: 0,
             breaking_depth: 2.0,
@@ -163,8 +161,12 @@ impl ShoreConfig {
             ("shore normal strength", self.normal_strength, 0.0, 3.0),
             ("foam texture size (m)", self.foam_texture_size, 0.25, 64.0),
             ("foam micro normal", self.foam_micro_normal, 0.0, 3.0),
-            ("foam soft opacity", self.foam_soft_opacity, 0.0, 1.0),
-            ("foam thick start", self.foam_thick_start, 0.0, 0.9),
+            (
+                "foam opacity density scale",
+                self.foam_opacity_scale,
+                0.01,
+                20.0,
+            ),
             ("foam roughness", self.foam_roughness, 0.15, 1.0),
             ("breaking depth", self.breaking_depth, 0.5, 5.0),
             ("shore foam generation", self.generation, 0.0, 15.0),
@@ -309,6 +311,9 @@ pub struct Shore {
     corrector_bind: wgpu::BindGroup,
     pub substeps: u32,
     pub simulated_dt: f32,
+    pub spray: Option<super::spray::SpraySource>,
+    pub spray_epoch: u64,
+    pub spray_error: Option<String>,
     pub timer: Option<super::gpu_timer::GpuTimer>,
     length: f32,
     fft_resolution: u32,
@@ -480,6 +485,9 @@ impl Shore {
             corrector_bind,
             substeps: 0,
             simulated_dt: 0.0,
+            spray: None,
+            spray_epoch: 0,
+            spray_error: None,
             timer: None,
             length,
             fft_resolution: ocean.config.resolution,
@@ -656,14 +664,9 @@ impl Shore {
                 c.foam_texture as f32,
                 c.foam_texture_size,
                 c.foam_micro_normal,
-                c.foam_soft_opacity,
+                c.foam_opacity_scale,
             ],
-            foam_shading: [
-                c.foam_thick_start,
-                c.foam_roughness,
-                c.foam_material_view as f32,
-                0.0,
-            ],
+            foam_shading: [0.0, c.foam_roughness, c.foam_material_view as f32, 0.0],
             options: [c.generation, c.view as f32, self.resolution as f32, 0.0],
             collider_meta: [collider_count as f32, 0.0, 0.0, 0.0],
             model: [
@@ -775,7 +778,31 @@ impl Shore {
         self.substeps = 0;
         self.simulated_dt = 0.0;
         let mut step = self.parameters(optics, time, reset, height_gain);
+        if !optics.spray.enabled || !optics.swe_enabled() {
+            self.spray = None;
+            self.spray_error = None;
+        } else if self.spray_error.is_some() {
+            self.spray = None;
+        } else if self.spray.is_none() {
+            match super::spray::SpraySource::new(gpu, self, &self.previous) {
+                Ok(source) => self.spray = Some(source),
+                Err(error) => self.spray_error = Some(error.to_string()),
+            }
+        }
+        if let Some(source) = &mut self.spray {
+            // A paused frame retains the last debug signal but never consumes it (dt=0).
+            if step.timing[1] > 0.0 || step.options[3] > 0.5 {
+                source.begin_frame(encoder);
+            }
+            source.configure(
+                gpu,
+                optics.spray,
+                0.0,
+                step.domain[2] * step.domain[3] / self.resolution.pow(2) as f32,
+            );
+        }
         if step.options[3] > 0.5 {
+            self.spray_epoch = self.spray_epoch.wrapping_add(1);
             self.start_time = time;
         }
         step.waves[1] = (time - self.start_time).max(0.0);
@@ -784,6 +811,10 @@ impl Shore {
             && (old.colliders != step.colliders || old.collider_meta[0] != step.collider_meta[0])
         {
             self.encode_collider_edit(gpu, encoder, step, old);
+            self.spray_epoch = self.spray_epoch.wrapping_add(1);
+            if let Some(source) = &self.spray {
+                source.begin_frame(encoder);
+            }
         }
         if step.options[3] == 0.0 && (step.timing[1] == 0.0 || !optics.swe_enabled()) {
             gpu.queue
@@ -808,6 +839,14 @@ impl Shore {
         let dt = elapsed / count as f32;
         self.substeps = count;
         self.simulated_dt = elapsed;
+        if let Some(source) = &mut self.spray {
+            source.configure(
+                gpu,
+                optics.spray,
+                if step.options[3] > 0.5 { 0.0 } else { elapsed },
+                step.domain[2] * step.domain[3] / self.resolution.pow(2) as f32,
+            );
+        }
         let stages = if optics.shore.order == 2 && step.options[3] == 0.0 {
             2
         } else {
@@ -851,7 +890,8 @@ impl Shore {
                     Some(wgpu::ComputePassTimestampWrites {
                         query_set: &self.timer.as_ref().unwrap().queries,
                         beginning_of_pass_write_index: if i == 0 { Some(0) } else { None },
-                        end_of_pass_write_index: if i + 1 == count * stages {
+                        end_of_pass_write_index: if i + 1 == count * stages && self.spray.is_none()
+                        {
                             Some(1)
                         } else {
                             None
@@ -884,6 +924,22 @@ impl Shore {
                 );
             }
             if (i + 1) % stages == 0 {
+                if step.options[3] == 0.0
+                    && let Some(source) = &self.spray
+                {
+                    source.encode_substep(
+                        encoder,
+                        if timed && i + 1 == count * stages {
+                            Some(wgpu::ComputePassTimestampWrites {
+                                query_set: &self.timer.as_ref().unwrap().queries,
+                                beginning_of_pass_write_index: None,
+                                end_of_pass_write_index: Some(1),
+                            })
+                        } else {
+                            None
+                        },
+                    );
+                }
                 encoder.copy_buffer_to_buffer(&self.field, 0, &self.previous, 0, self.field.size());
             }
         }
@@ -2210,8 +2266,13 @@ mod tests {
 
     #[test]
     fn foam_material_legacy_defaults_and_invalid_inputs() {
-        let old: super::ShoreConfig = serde_json::from_str(r#"{"generation":2.5}"#).unwrap();
+        let old: super::ShoreConfig = serde_json::from_str(
+            r#"{"generation":2.5,"foam_soft_opacity":0.4,"foam_thick_start":0.6,"foam_material_view":4}"#,
+        ).unwrap();
+        old.validate().unwrap();
         assert_eq!(old.generation, 2.5);
+        assert_eq!(old.foam_opacity_scale, 2.0);
+        assert_eq!(old.foam_material_view, 4);
         assert_eq!(old.foam_texture, 1);
         assert_eq!(old.foam_texture_size, 12.0);
         for source in 0..super::FOAM_TEXTURE_NAMES.len() as u32 {
@@ -2243,11 +2304,19 @@ mod tests {
                 ..old
             },
             super::ShoreConfig {
-                foam_soft_opacity: f32::INFINITY,
+                foam_opacity_scale: f32::INFINITY,
                 ..old
             },
             super::ShoreConfig {
-                foam_thick_start: 1.0,
+                foam_opacity_scale: 0.0,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_opacity_scale: f32::NAN,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_opacity_scale: 20.01,
                 ..old
             },
             super::ShoreConfig {

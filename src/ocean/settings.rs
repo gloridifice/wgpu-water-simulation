@@ -129,7 +129,15 @@ impl SavedSettings {
                 "--no-skylight" | "--skylight" => self.optics.sky.enabled = optics.sky.enabled,
                 "--water-view" => self.optics.view = optics.view,
                 "--shore-view" => self.optics.shore.view = optics.shore.view,
+                "--spray" => self.optics.spray.enabled = optics.spray.enabled,
+                "--spray-debug" => {
+                    self.optics.spray.enabled = optics.spray.enabled;
+                    self.optics.spray.debug = optics.spray.debug;
+                }
                 "--foam-texture" => self.optics.shore.foam_texture = optics.shore.foam_texture,
+                "--foam-opacity-scale" => {
+                    self.optics.shore.foam_opacity_scale = optics.shore.foam_opacity_scale
+                }
                 "--foam-material-view" => {
                     self.optics.shore.foam_material_view = optics.shore.foam_material_view
                 }
@@ -582,8 +590,7 @@ mod tests {
         s.optics.shore.foam_texture = 3;
         s.optics.shore.foam_texture_size = 8.5;
         s.optics.shore.foam_micro_normal = 1.2;
-        s.optics.shore.foam_soft_opacity = 0.4;
-        s.optics.shore.foam_thick_start = 0.6;
+        s.optics.shore.foam_opacity_scale = 6.5;
         s.optics.shore.foam_roughness = 0.75;
         s.optics.shore.foam_material_view = 4;
         s.optics.shore.colliders[3] = Some(super::super::collider::Collider {
@@ -930,8 +937,13 @@ mod tests {
         assert_eq!(s.camera.distance, Camera::default().distance * 2.0);
         let mut optics = OpticsConfig::default();
         optics.shore.order = 2;
+        optics.shore.foam_opacity_scale = 8.0;
+        s.optics.shore.foam_opacity_scale = 3.0;
         s.apply_cli(ocean, optics, &["--swe-order".into()]);
         assert_eq!(s.optics.shore.order, 2);
+        assert_eq!(s.optics.shore.foam_opacity_scale, 3.0);
+        s.apply_cli(ocean, optics, &["--foam-opacity-scale".into()]);
+        assert_eq!(s.optics.shore.foam_opacity_scale, 8.0);
         s.optics.model.enabled = true;
         s.optics.model.center = [11.0, 2.0, -7.0];
         optics.model.size = [96.0, 48.0, 112.0];
@@ -939,6 +951,15 @@ mod tests {
         assert!(s.optics.model.enabled);
         assert_eq!(s.optics.model.center, [11.0, 2.0, -7.0]);
         assert_eq!(s.optics.model.size, [96.0, 48.0, 112.0]);
+        s.optics.spray.rate = 321.0;
+        optics.spray.enabled = true;
+        s.apply_cli(ocean, optics, &["--spray".into()]);
+        assert!(s.optics.spray.enabled);
+        assert_eq!(s.optics.spray.rate, 321.0);
+        optics.spray.debug = true;
+        s.apply_cli(ocean, optics, &["--spray-debug".into()]);
+        assert!(s.optics.spray.debug);
+        assert_eq!(s.optics.spray.rate, 321.0);
         s.apply_cli(ocean, OpticsConfig::beach_scene(), &["--beach".into()]);
         assert!(!s.optics.model.enabled);
     }

@@ -20,6 +20,8 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --seed N         Deterministic ocean seed (default: 42)
   --verify         Headless GPU IFFT vs independent direct DFT; then exit
   --verify-terrain Headless GPU model-bed/lake/conservation/regrid checks only
+  --spray          Enable nearshore GPU textured spray (place after scene preset)
+  --spray-debug    Show normalized spray emission intensity (also enables spray)
   --snapshot PATH  Render an offscreen PNG; file must not exist
   --beach         Sloped sand beach preset, shallow-to-deep water and overview camera
   --model         Challaborough model + disk heightfield preset (bake first)
@@ -56,7 +58,8 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
                    8=local sky source, 9=integrated sky, 10=manual, 11=total local source
   --foam-view N    Snapshot: 0=water, 1=Jacobian, 2=foam coverage
   --foam-texture N Nearshore: 0=legacy, 1=Shorewaves NSH, 2=Crest foam, 3=Crest Foam2
-  --foam-material-view N  0=shaded, 1=Soft, 2=Height, 3=normal, 4=thin green/thick red
+  --foam-opacity-scale N  NSH density for 63% opacity at full coverage (0.01..20, default: 2)
+  --foam-material-view N  0=shaded, 1=Soft, 2=Height, 3=normal, 4=opacity (black/white)
   --time S         Snapshot time, >=0 (default: 3)
   --settings PATH  Local GUI settings file (default: LOCALAPPDATA/water-simulation/ocean-settings.json)
   --no-settings    Disable loading/saving local GUI settings
@@ -139,6 +142,8 @@ fn run() -> Result<(), Error> {
                 let edges=text.split(',').map(|v| match v {"0"=>Ok(false),"1"=>Ok(true),_=>Err("edge values must be 0 or 1")}).collect::<Result<Vec<_>,_>>()?;
                 optics.model.open_edges=edges.try_into().map_err(|_| "--swe-open-edges requires four values")?;
             },
+            "--spray" => optics.spray.enabled = true,
+            "--spray-debug" => { optics.spray.enabled = true; optics.spray.debug = true; },
             "--shore-view" => optics.shore.view = value(&mut args, &arg)?,
             "--shore-amplitude" | "--shore-period" => return Err("Independent shore waves were removed; use FFT --amplitude / --wind and Height gain".into()),
             "--swe-filter-cutoff" => optics.shore.filter_cutoff = value(&mut args, &arg)?,
@@ -164,6 +169,7 @@ fn run() -> Result<(), Error> {
             "--snapshot" => path = Some(value(&mut args, &arg)?),
             "--foam-view" => foam_view = value(&mut args, &arg)?,
             "--foam-texture" => optics.shore.foam_texture = value(&mut args, &arg)?,
+            "--foam-opacity-scale" => optics.shore.foam_opacity_scale = value(&mut args, &arg)?,
             "--foam-material-view" => optics.shore.foam_material_view = value(&mut args, &arg)?,
             "--time" => time = value(&mut args, &arg)?,
             "--frames" => frames = Some(value(&mut args, &arg)?),

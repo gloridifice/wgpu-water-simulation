@@ -102,3 +102,31 @@ target\release\ocean.exe --beach --no-settings --frames 600
 - 不把构建产物、截图、临时配置或调试日志加入版本管理，除非用户明确要求。
 - 参考外部项目时核查资源许可与来源，按需保留署名；复制资源后使用仓库内路径，不依赖个人下载目录。
 - 完成后简述改动、验证结果及未验证的限制。不要把代码检查、编译通过或截图推断说成实际运行确认。
+
+<!-- DOCO:START -->
+<!-- doco:entry template=v2 -->
+## Doco
+
+For current project documentation and explicitly tracked changes, use the
+`doco` skill. Read `.agents/skills/doco/SKILL.md` before creating, executing, completing,
+or archiving a change. Perform only the requested phase.
+A doco change package is optional for implementation and is not an
+implementation-history mechanism: archiving retains only proposal.md. Routine
+behavior fixes and implementation-detail changes may proceed without creating
+a doco change unless the user explicitly requests tracking. Use Git, pull
+requests, or release notes for implementation history. Regardless of tracking,
+update current architecture and specs when their documented facts or contracts
+change.
+Use the doco library nearest to the working directory, or select one with
+`doco --root <library-root> ...`. Child libraries keep their own documents and
+changes but reuse this installed skill; do not generate child skill or Agent
+entry files. Resolve the skill path above from this entry's directory and
+`doco/` paths from the selected library. Parent documents describe shared
+constraints; child documents describe local facts without automatic overrides.
+`doco list` includes all project libraries, current first; write commands and
+change IDs remain local to the selected library.
+Start from its `doco/architecture.md` and relevant current specs and decisions.
+When implementing a selected tracked change, use its proposal and any present
+design and task files. Treat completed changes, archived changes, and
+`doco/tmp/` as non-current material; consult them only when explicitly needed.
+<!-- DOCO:END -->

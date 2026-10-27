@@ -385,6 +385,50 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
     println!(
         "GPU foam height raster: {changed} pixels change with fixed coastal history/camera/time"
     );
+    // Exercise CPU configuration -> uniform -> real fragment wiring on the
+    // same history/camera/time. Wider density response must reduce NSH opacity,
+    // while neither the legacy material nor the raw density view may change.
+    let mut opacity_settings = settings;
+    opacity_settings.shore.view = 0;
+    opacity_settings.shore.foam_material_view = 4;
+    for (source, view) in [(0, 0), (1, 0), (2, 0), (3, 0), (1, 6)] {
+        opacity_settings.shore.foam_texture = source;
+        opacity_settings.shore.view = view;
+        opacity_settings.shore.foam_opacity_scale = 2.0;
+        let dense = image(gpu, &renderer, &ocean, &camera, opacity_settings, size)?;
+        opacity_settings.shore.foam_opacity_scale = 8.0;
+        let transparent = image(gpu, &renderer, &ocean, &camera, opacity_settings, size)?;
+        if transparent.iter().flatten().any(|v| !v.is_finite()) {
+            return Err("NSH opacity raster produced nonfinite pixels".into());
+        }
+        if source == 0 || view == 6 {
+            if dense != transparent {
+                return Err("NSH opacity scale changed legacy shading or density debug".into());
+            }
+            continue;
+        }
+        let mut decreased = 0;
+        for (a, b) in dense.iter().zip(&transparent) {
+            if (0..3).any(|c| b[c] > a[c] + 1e-6) {
+                return Err("larger NSH density scale increased raster opacity".into());
+            }
+            if a[0] - b[0] > 0.005 {
+                if (b[0] - b[1]).abs() > 1e-6 || (b[0] - b[2]).abs() > 1e-6 {
+                    return Err("NSH opacity debug is not grayscale".into());
+                }
+                decreased += 1;
+            }
+        }
+        if decreased < 8 {
+            return Err(format!(
+                "NSH source {source} opacity parameter did not reach raster: {decreased} pixels"
+            )
+            .into());
+        }
+    }
+    println!(
+        "GPU NSH opacity raster: all 3 textures respond continuously to density scale; legacy material and raw density view unchanged OK"
+    );
     println!("GPU shore raster: world-space history reaches water shading at both target sizes OK");
     Ok(())
 }

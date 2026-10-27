@@ -16,8 +16,8 @@ struct ShoreParams {
     foam_motion: vec4<f32>, // flow following multiplier, response time seconds, reserved
     foam_inertia: vec4<f32>, // drag enabled, newborn water velocity multiplier, reserved
     water_foam_color: vec4<f32>, // linear RGB, render only
-    foam_material: vec4<f32>, // source (0 legacy, 1..3 NSH), tile size m, micro normal, thin opacity
-    foam_shading: vec4<f32>, // thick start (display density), roughness, material debug, reserved
+    foam_material: vec4<f32>, // source (0 legacy, 1..3 NSH), tile size m, micro normal, opacity density scale
+    foam_shading: vec4<f32>, // reserved, roughness, material debug, reserved
     options: vec4<f32>, // foam generation /s, debug view, resolution, reset
     collider_meta: vec4<f32>, // packed active count, reserved
     model: vec4<f32>, // enabled, minimum bed, fallback bed, sponge width
@@ -25,7 +25,8 @@ struct ShoreParams {
     colliders: array<Collider, 8>,
 }
 
-// Density is not clipped in the solver; this reference only sets the color scale.
+// Density is not clipped in the solver. This reference sets the debug color
+// scale and pore coverage, never the NSH optical opacity response.
 fn foam_density_level(amount: f32, s: ShoreParams) -> f32 {
     return clamp(amount/s.density.y,0.0,1.0);
 }

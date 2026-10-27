@@ -385,6 +385,8 @@ impl State {
             reset,
             camera.ocean[3],
         );
+        self.renderer.encode_spray(&self.gpu, &mut encoder);
+        self.gui.spray_error = self.renderer.shore.spray_error.clone();
         let simulation = simulation_start.elapsed().as_secs_f64() * 1000.0;
         let render_start = Instant::now();
         self.renderer
@@ -681,6 +683,7 @@ pub async fn snapshot(
                 false,
                 camera.ocean[3],
             );
+            renderer.encode_spray(&gpu, &mut encoder);
             foam_field.encode(
                 &gpu,
                 &mut encoder,
@@ -701,6 +704,10 @@ pub async fn snapshot(
     renderer
         .shore
         .encode(&gpu, &mut encoder, &optics, time, false, camera.ocean[3]);
+    renderer.encode_spray(&gpu, &mut encoder);
+    if let Some(error) = &renderer.shore.spray_error {
+        return Err(error.clone().into());
+    }
     foam_field.encode(
         &gpu,
         &mut encoder,
