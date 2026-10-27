@@ -58,6 +58,7 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
                    8=local sky source, 9=integrated sky, 10=manual, 11=total local source
   --foam-view N    Snapshot: 0=water, 1=Jacobian, 2=foam coverage
   --foam-texture N Nearshore: 0=legacy, 1=Shorewaves NSH, 2=Crest foam, 3=Crest Foam2
+  --foam-transport-order N  Foam spatial flux: 1=baseline (default), 2=MUSCL (requires --swe-order 2)
   --foam-opacity-scale N  NSH density for 63% opacity at full coverage (0.01..20, default: 2)
   --foam-material-view N  0=shaded, 1=Soft, 2=Height, 3=normal, 4=opacity (black/white)
   --time S         Snapshot time, >=0 (default: 3)
@@ -169,6 +170,7 @@ fn run() -> Result<(), Error> {
             "--snapshot" => path = Some(value(&mut args, &arg)?),
             "--foam-view" => foam_view = value(&mut args, &arg)?,
             "--foam-texture" => optics.shore.foam_texture = value(&mut args, &arg)?,
+            "--foam-transport-order" => optics.shore.foam_transport_order = value(&mut args, &arg)?,
             "--foam-opacity-scale" => optics.shore.foam_opacity_scale = value(&mut args, &arg)?,
             "--foam-material-view" => optics.shore.foam_material_view = value(&mut args, &arg)?,
             "--time" => time = value(&mut args, &arg)?,

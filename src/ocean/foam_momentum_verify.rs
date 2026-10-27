@@ -46,7 +46,9 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
     // Two 2 m strips: rear 1 m/s, front 0.2 m/s, separated by 1 m.
     // Water remains stationary. No source, drag, decay, or shoreline deposition.
     // The inlet is over 30 m away; the wave from its relaxation cannot arrive.
-    for order in [1, 2] {
+    // Repeat MUSCL near vacuum: density scaling must not erase momentum or
+    // produce a different velocity because of a reconstruction denominator floor.
+    for (order, space_order, amplitude) in [(1, 1, 1.0), (2, 1, 1.0), (2, 2, 1.0), (2, 2, 1e-7)] {
         let shore = Shore::new(gpu, &ocean);
         let stage_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("foam collision predictor"),
@@ -69,6 +71,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                 } else {
                     (0.0, 0.0)
                 };
+                let amount = amount * amplitude;
                 seed[i] = [amount, 1.0, 2.0, 0.0];
                 seed[cells + i] = [2.0, 0.0, 0.0, amount];
                 seed[2 * cells + i] = [0.0, amount, 2.0, 0.0];
@@ -85,6 +88,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
         p.options[3] = 0.0;
         p.foam_front[0] = 0.0;
         p.foam_inertia[0] = 0.0;
+        p.foam_inertia[2] = space_order as f32;
         p.timing[1] = 0.002;
         p.timing[2] = 0.0;
         p.solver[0] = order as f32;
@@ -180,14 +184,15 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             // Spatially varying Rusanov viscosity shifts the first moment by
             // O(dx), while total amount/momentum must remain conservative.
             || (travel - expected_travel).abs() > 0.125
-            || peak < 0.9
+            || peak < 0.9 * amplitude
             || end[4] >= initial[4] * 0.99
         {
-            return Err(format!("foam catch-up order {order}: mass error {mass_error}, momentum error {momentum_error}, travel {travel}/{expected_travel}, peak {peak}, energy {}/{}, state {end:?}", end[4], initial[4]).into());
+            return Err(format!("foam catch-up time {order} space {space_order} scale {amplitude}: mass error {mass_error}, momentum error {momentum_error}, travel {travel}/{expected_travel}, peak {peak}, energy {}/{}, state {end:?}", end[4], initial[4]).into());
         }
         eprintln!(
-            "Foam catch-up order {order}: 5 s, mean speed {:.6} m/s, travel {travel:.6} m, peak {peak:.6} (initial 0.8), mass error {mass_error:.3e}, momentum error {momentum_error:.3e}, energy {:.3}->{:.3}",
+            "Foam catch-up time {order} space {space_order} scale {amplitude}: 5 s, mean speed {:.6} m/s, travel {travel:.6} m, peak/scale {:.6} (initial 0.8), mass error {mass_error:.3e}, momentum error {momentum_error:.3e}, energy {:.3}->{:.3}",
             end[1] / end[0],
+            peak / amplitude,
             initial[4],
             end[4]
         );

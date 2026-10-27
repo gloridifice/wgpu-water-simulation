@@ -68,6 +68,11 @@ name = "foam-bake"
 path = "src/bin/foam_bake.rs"
 required-features = ["ocean"]
 
+[[bin]]
+name = "foam-lab"
+path = "src/bin/foam_lab.rs"
+required-features = ["ocean"]
+
 [dependencies.egui]
 version = "0.33.3"
 features = ["serde"]

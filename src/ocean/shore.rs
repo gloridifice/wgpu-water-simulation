@@ -83,6 +83,7 @@ pub struct ShoreConfig {
     pub foam_response_time: f32,
     pub foam_drag_enabled: bool,
     pub foam_birth_speed: f32,
+    pub foam_transport_order: u32,
     pub decay: f32,
     pub foam_compression_threshold: f32,
     pub foam_density_reference: f32,
@@ -126,6 +127,7 @@ impl Default for ShoreConfig {
             foam_response_time: 0.35,
             foam_drag_enabled: true,
             foam_birth_speed: 1.0,
+            foam_transport_order: 1,
             decay: 0.45,
             foam_compression_threshold: 0.1,
             foam_density_reference: 2.0,
@@ -256,6 +258,9 @@ impl ShoreConfig {
         }
         if !(1..=2).contains(&self.order) {
             return Err("SWE order must be 1 or 2".into());
+        }
+        if !(1..=2).contains(&self.foam_transport_order) {
+            return Err("foam transport order must be 1 or 2".into());
         }
         if self.foam_texture >= FOAM_TEXTURE_NAMES.len() as u32
             || self.foam_material_view >= FOAM_MATERIAL_VIEWS.len() as u32
@@ -653,7 +658,16 @@ impl Shore {
                 0.0,
             ],
             foam_motion: [c.foam_follow, c.foam_response_time, 0.0, 0.0],
-            foam_inertia: [f32::from(c.foam_drag_enabled), c.foam_birth_speed, 0.0, 0.0],
+            foam_inertia: [
+                f32::from(c.foam_drag_enabled),
+                c.foam_birth_speed,
+                if c.order == 2 {
+                    c.foam_transport_order as f32
+                } else {
+                    1.0
+                },
+                0.0,
+            ],
             water_foam_color: [
                 c.water_foam_color[0],
                 c.water_foam_color[1],
@@ -1342,13 +1356,13 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     verify_foam_motion(gpu)?;
     verify_foam_generation_controls(gpu)?;
     verify_front_foam(gpu)?;
-    for order in [1, 2] {
-        verify_order(gpu, order)?;
+    for (order, space_order) in [(1, 1), (2, 1), (2, 2)] {
+        verify_order(gpu, order, space_order)?;
     }
     Ok(())
 }
 
-fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
+fn verify_order(gpu: &Gpu, order: u32, space_order: u32) -> Result<(), super::gpu::Error> {
     let ocean = Ocean::new(
         gpu,
         super::spectrum::OceanConfig {
@@ -1359,6 +1373,7 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
     let mut shore = Shore::new(gpu, &ocean);
     let mut optics = OpticsConfig::beach_scene();
     optics.shore.order = order;
+    optics.shore.foam_transport_order = space_order;
     let gain = 0.0;
     let advance = |shore: &mut Shore, optics: &OpticsConfig, time, reset, gain| {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
@@ -1468,7 +1483,7 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
             return Err("invalid SWE GPU timing".into());
         }
         eprintln!(
-            "SWE order {order}: GPU {:.3} ms / {} substeps / {:.1} simulated ms",
+            "SWE order {order}, foam space {space_order}: GPU {:.3} ms / {} substeps / {:.1} simulated ms",
             sample.ms,
             sample.substeps,
             sample.simulated_dt * 1000.0
@@ -1528,6 +1543,7 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
     optics.shore.foam_response_time = 0.7;
     optics.shore.foam_drag_enabled = false;
     optics.shore.foam_birth_speed = 0.5;
+    optics.shore.foam_transport_order = 3 - space_order;
     optics.shore.foam_background_multiplier = 0.05;
     optics.shore.water_foam_color = [0.2, 0.7, 0.9];
     advance(&mut shore, &optics, 24.1, false, gain);
@@ -1545,6 +1561,7 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
     optics.shore.foam_response_time = 0.35;
     optics.shore.foam_drag_enabled = true;
     optics.shore.foam_birth_speed = 1.0;
+    optics.shore.foam_transport_order = space_order;
     optics.shore.foam_background_multiplier = 0.15;
     optics.shore.filter_cutoff = 3.0;
     advance(&mut shore, &optics, 24.1, false, gain);
@@ -1590,6 +1607,7 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
     let mut quiet = Shore::new(gpu, &zero);
     let mut quiet_optics = OpticsConfig::beach_scene();
     quiet_optics.shore.order = order;
+    quiet_optics.shore.foam_transport_order = space_order;
     for i in 0..=120 {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         let time = i as f32 / 30.0;
@@ -1605,7 +1623,7 @@ fn verify_order(gpu: &Gpu, order: u32) -> Result<(), super::gpu::Error> {
         return Err("zero FFT amplitude generated shore waves/foam".into());
     }
     eprintln!(
-        "SWE GPU order {order}: lake at rest ({error:.2e}), pulse mass/2D foam transport, dry foam removal and sand drying/rewetting, run-up, pause/reset/disable, terrain reset and extreme slopes OK"
+        "SWE GPU order {order}, foam space {space_order}: lake at rest ({error:.2e}), pulse mass/2D foam transport, dry foam removal and sand drying/rewetting, run-up, pause/reset/disable, terrain reset and extreme slopes OK"
     );
     Ok(())
 }
@@ -1898,7 +1916,7 @@ fn verify_surface_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     let n = RESOLUTION as usize;
     let cells = n * n;
     let dt = 0.004_f32;
-    for order in [1, 2] {
+    for (order, space_order) in [(1, 1), (2, 1), (2, 2)] {
         for mode in 0..7 {
             let shore = Shore::new(gpu, &ocean);
             let mut seed = vec![[0.0_f32; 4]; cells * 5];
@@ -1936,6 +1954,7 @@ fn verify_surface_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
             p.terrain[1] = 0.0;
             p.domain = [0.0, 0.0, 64.0, 64.0];
             p.foam_motion = [1.0, 0.0, 0.0, 0.0];
+            p.foam_inertia[2] = space_order as f32;
             p.options[0] = 0.0;
             p.foam_front[0] = 0.0;
             p.options[3] = 0.0;
@@ -1995,12 +2014,12 @@ fn verify_surface_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
                 || (mode == 2 && center >= 0.5)
                 || (mode == 3 && (center - 0.5 * (-0.7 * dt).exp()).abs() > 1e-6)
             {
-                return Err(format!("surface foam order {order} mode {mode}: total {total}, expected {expected}, center {center}").into());
+                return Err(format!("surface foam time {order} space {space_order} mode {mode}: total {total}, expected {expected}, center {center}").into());
             }
         }
     }
     eprintln!(
-        "Surface foam: both orders conserve area amount, transport, concentrate/dilute and decay independently of depth; dry-cell removal OK"
+        "Surface foam: Euler/RK2 and both spatial orders conserve area amount, transport, concentrate/dilute and decay independently of depth; dry-cell removal OK"
     );
     Ok(())
 }
@@ -2392,7 +2411,10 @@ mod tests {
         assert!(config.foam_drag_enabled);
         assert_eq!(config.foam_birth_speed, 1.0);
         assert_eq!(config.foam_follow, 0.6);
+        assert_eq!(config.foam_transport_order, 1);
+        config.foam_transport_order = 2;
         config.apply_foam_reference();
+        assert_eq!(config.foam_transport_order, 2);
         config.validate().unwrap();
         config.foam_drag_enabled = false;
         config.foam_response_time = 20.0;
@@ -2400,6 +2422,16 @@ mod tests {
         config.validate().unwrap();
         let saved = serde_json::to_string(&config).unwrap();
         assert_eq!(serde_json::from_str::<ShoreConfig>(&saved).unwrap(), config);
+        for order in [0, 3, u32::MAX] {
+            assert!(
+                ShoreConfig {
+                    foam_transport_order: order,
+                    ..config
+                }
+                .validate()
+                .is_err()
+            );
+        }
         for value in [-0.01, 1.01, f32::NAN, f32::INFINITY] {
             config.foam_birth_speed = value;
             assert!(config.validate().is_err());

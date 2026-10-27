@@ -720,6 +720,16 @@ parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui
 
                             ui.label(egui::RichText::new("泡沫动量与水流拖曳").strong());
                             parameter_table(ui, "foam motion table", |ui| {
+                                parameter(ui, "泡沫空间输送", "无单位，1 为原一阶通量（默认），2 为受限 MUSCL 重构，减少细丝和孔洞的数值扩散。密度和动量共同守恒输送，不限制密度到 1。仅 SWE 二阶（RK2）启用此选择；SWE 一阶始终使用原通量。改变选择实时生效并保存，不清空历史；不改生成、衰减或材质。", |ui| {
+                                    ui.add_enabled_ui(shore.order == 2, |ui| {
+                                        egui::ComboBox::from_id_salt("foam spatial order").width(ui.available_width())
+                                            .selected_text(if shore.foam_transport_order == 2 {"二阶（MUSCL）"} else {"一阶（基线）"})
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut shore.foam_transport_order, 1, "一阶（基线）");
+                                                ui.selectable_value(&mut shore.foam_transport_order, 2, "二阶（MUSCL）");
+                                            });
+                                    });
+                                });
                                 parameter(ui, "启用水流拖曳", "开启时水流逐渐改变泡沫动量；关闭后保留惯性输送，适合隔离观察追赶汇聚。生成仍注入动量，衰减仍移除动量，落到沙地后停止。实时生效并保存，不重置。", |ui| ui.checkbox(&mut shore.foam_drag_enabled, ""));
                                 parameter(ui, "水流跟随倍率", "拖曳目标速度 = 水流速度 × 此倍率，范围 0～1。仅在拖曳开启时有效。物理参考取 1；小于 1 是额外视觉阻滞。泡沫量与动量共同输送，合流速度按泡沫量加权，水体不受反作用。实时生效并保存。", |ui| ui.add_enabled(shore.foam_drag_enabled, egui::Slider::new(&mut shore.foam_follow, 0.0..=1.0).max_decimals(2)));
                                 parameter(ui, "速度响应时间（秒）", "范围 0～20；越大越保留惯性，0 为立即随流。约经过此时间完成 63% 的速度响应；只在拖曳开启时有效。物理参考起点 2 秒，属于模拟校准值。实时生效并保存，不清空历史。", |ui| ui.add_enabled(shore.foam_drag_enabled, egui::Slider::new(&mut shore.foam_response_time, 0.0..=20.0).max_decimals(2)));

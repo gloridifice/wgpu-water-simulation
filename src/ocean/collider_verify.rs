@@ -177,8 +177,9 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
     )?;
     let shore = Shore::new(gpu, &ocean);
     let mut p = shore.parameters(&OpticsConfig::beach_scene(), 0.0, false, 0.0);
-    for order in [1, 2] {
+    for (order, space_order) in [(1, 1), (2, 1), (2, 2)] {
         p.solver[0] = order as f32;
+        p.foam_inertia[2] = space_order as f32;
         for shape in [Shape::Cylinder, Shape::Box] {
             for top in [2.0, -0.5] {
                 let mut c = Collider {
@@ -240,7 +241,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
         let water_error = (total(&blocked, 0) / total(&seed, 0) - 1.0).abs();
         let foam_error = (total(&blocked, 3) / total(&seed, 3) - 1.0).abs();
         if reflected >= -0.1 || leak > 0.0002 || water_error > 0.0001 || foam_error > 0.0001 {
-            return Err(format!("collider wall order {order}: reflected={reflected}, leak={leak}, water={water_error}, foam={foam_error}").into());
+            return Err(format!("collider wall time {order} space {space_order}: reflected={reflected}, leak={leak}, water={water_error}, foam={foam_error}").into());
         }
         let circle = Collider {
             position: [8.0, 8.0],
@@ -271,7 +272,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             return Err(format!("wave did not overtop low obstacle: {overtopped}").into());
         }
         println!(
-            "Colliders order {order}: rotated box/cylinder static balance, wall reflection {reflected:.3}, no water/foam leak, conserved water {water_error:.2e}/foam {foam_error:.2e}, lateral flow {negative:.3}..{positive:.3}, overtopping depth {overtopped:.3} m OK"
+            "Colliders time {order} space {space_order}: rotated box/cylinder static balance, wall reflection {reflected:.3}, no water/foam leak, conserved water {water_error:.2e}/foam {foam_error:.2e}, lateral flow {negative:.3}..{positive:.3}, overtopping depth {overtopped:.3} m OK"
         );
     }
     verify_live_edits(gpu, &ocean)?;

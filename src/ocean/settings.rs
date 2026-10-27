@@ -135,6 +135,9 @@ impl SavedSettings {
                     self.optics.spray.debug = optics.spray.debug;
                 }
                 "--foam-texture" => self.optics.shore.foam_texture = optics.shore.foam_texture,
+                "--foam-transport-order" => {
+                    self.optics.shore.foam_transport_order = optics.shore.foam_transport_order
+                }
                 "--foam-opacity-scale" => {
                     self.optics.shore.foam_opacity_scale = optics.shore.foam_opacity_scale
                 }
@@ -938,12 +941,17 @@ mod tests {
         let mut optics = OpticsConfig::default();
         optics.shore.order = 2;
         optics.shore.foam_opacity_scale = 8.0;
+        optics.shore.foam_transport_order = 2;
         s.optics.shore.foam_opacity_scale = 3.0;
         s.apply_cli(ocean, optics, &["--swe-order".into()]);
         assert_eq!(s.optics.shore.order, 2);
         assert_eq!(s.optics.shore.foam_opacity_scale, 3.0);
         s.apply_cli(ocean, optics, &["--foam-opacity-scale".into()]);
         assert_eq!(s.optics.shore.foam_opacity_scale, 8.0);
+        assert_eq!(s.optics.shore.foam_transport_order, 1);
+        s.apply_cli(ocean, optics, &["--foam-transport-order".into()]);
+        assert_eq!(s.optics.shore.foam_transport_order, 2);
+        assert_eq!(s.optics.shore.order, 2);
         s.optics.model.enabled = true;
         s.optics.model.center = [11.0, 2.0, -7.0];
         optics.model.size = [96.0, 48.0, 112.0];

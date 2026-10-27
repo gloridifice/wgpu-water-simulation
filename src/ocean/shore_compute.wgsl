@@ -128,6 +128,35 @@ fn advance_foam_motion(c: vec2<i32>, q: vec4<f32>, original: vec4<f32>, momentum
     return FoamMotionStep(vec4(select(vec2(0.0),momentum,wet),select(vec2(0.0),a,wet)),
         vec4(select(vec2(0.0),b,wet),next,0.0));
 }
+// Conservative MUSCL states: one common slope scale keeps density positive
+// AND bounds momentum/density by neighboring velocities, including near vacuum.
+// The opposite faces average back to the cell state; never clip density to 1.
+fn foam_face_state(c: vec2<i32>, delta: vec2<i32>) -> vec3<f32> {
+    let q=foam_state(c);
+    let n=i32(shore.options.z);
+    if shore.foam_inertia.z<1.5 || q.x<=0.0
+        || any(c<=vec2(0)) || any(c>=vec2(n-1)) { return q; }
+    if min(state(c).x,min(state(c-delta).x,state(c+delta).x))<=max(0.02,shore.density.z)
+        || collider_blocks_face(c,c-delta) || collider_blocks_face(c,c+delta) { return q; }
+    let left=foam_state(c-delta); let right=foam_state(c+delta);
+    let a=q-left; let b=right-q;
+    var slope=select(vec3(0.0),sign(a)*min(min(2.0*abs(a),2.0*abs(b)),0.5*abs(a+b)),a*b>vec3(0.0));
+    let v=q.yz/q.x;
+    // Empty neighbors impose no velocity. A roundoff-sized margin avoids
+    // cancelling a valid density slope in a constant non-binary velocity field.
+    let vl=select(v,left.yz/max(left.x,1e-30),left.x>0.0);
+    let vr=select(v,right.yz/max(right.x,1e-30),right.x>0.0);
+    let tolerance=2e-6*max(vec2(1.0),abs(v));
+    let lo=min(v,min(vl,vr))-tolerance; let hi=max(v,max(vl,vr))+tolerance;
+    var scale=min(1.0,2.0*q.x/max(abs(slope.x),1e-30));
+    let lower=max(vec2(0.0),q.yz-lo*q.x);
+    let upper=max(vec2(0.0),hi*q.x-q.yz);
+    let lower_scale=2.0*lower/max(abs(slope.yz-lo*slope.x),vec2(1e-30));
+    let upper_scale=2.0*upper/max(abs(hi*slope.x-slope.yz),vec2(1e-30));
+    scale=min(scale,min(min(lower_scale.x,lower_scale.y),min(upper_scale.x,upper_scale.y)));
+    slope*=scale;
+    return q+0.5*slope;
+}
 fn foam_flux(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec3<f32> {
     let b=c+delta; let n=i32(shore.options.z);
     if any(b<vec2(0)) || any(b>=vec2(n)) {
@@ -136,16 +165,21 @@ fn foam_flux(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec3<f32> {
     }
     if collider_blocks_face(c,b) { return vec3(0.0); }
     let normal=f32(delta[axis]);
-    let a_speed=foam_transport_velocity(c)[axis]*normal;
-    let b_speed=foam_transport_velocity(b)[axis]*normal;
+    let a=foam_face_state(c,delta); let neighbor=foam_face_state(b,-delta);
+    // Use the same physical velocity response as before, now on face states.
+    let a_speed=foam_response(foam_speed(a.x,a.yz,velocity(state(c))),velocity(state(c)),shore.timing.y*0.5)[axis]*normal;
+    let b_speed=foam_response(foam_speed(neighbor.x,neighbor.yz,velocity(state(b))),velocity(state(b)),shore.timing.y*0.5)[axis]*normal;
     let signal=max(abs(a_speed),abs(b_speed));
     let outflow=select(0.0,0.5*(a_speed+signal),state(c).x>shore.density.z);
     let inflow=select(0.0,0.5*(b_speed-signal),state(b).x>shore.density.z);
     // Local Rusanov flux: identical positive donor weights for amount and
     // momentum, antisymmetric across a shared face. Unlike cell-speed splitting,
     // this resolves dilution at stagnation points inside an expanding flow.
-    return outflow*foam_state(c)+inflow*foam_state(b);
+    return outflow*a+inflow*neighbor;
 }
+// Positivity: the cell is the mean of its four nonnegative face states.
+// dt * outward Rusanov donor weight / axis spacing must be <= 1/4 per face.
+// Production's 0.2 CFL with the 12 m/s bound satisfies this (also for RK stages).
 fn transport_foam(c: vec2<i32>) -> vec3<f32> {
     let spacing=shore.domain.zw/shore.options.z;
     var foam=foam_state(c)-shore.timing.y*((foam_flux(c,vec2(1,0),0u)+foam_flux(c,vec2(-1,0),0u))/spacing.x

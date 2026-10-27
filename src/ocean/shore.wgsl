@@ -14,7 +14,7 @@ struct ShoreParams {
     foam_front: vec4<f32>, // front rate /s, sample distance m, reserved, background multiplier
     foam_velocity: vec4<f32>, // reserved, threshold /s, transition /s, reserved
     foam_motion: vec4<f32>, // flow following multiplier, response time seconds, reserved
-    foam_inertia: vec4<f32>, // drag enabled, newborn water velocity multiplier, reserved
+    foam_inertia: vec4<f32>, // drag enabled, newborn velocity multiplier, foam spatial order (1/2), reserved
     water_foam_color: vec4<f32>, // linear RGB, render only
     foam_material: vec4<f32>, // source (0 legacy, 1..3 NSH), tile size m, micro normal, opacity density scale
     foam_shading: vec4<f32>, // reserved, roughness, material debug, reserved
