@@ -231,6 +231,51 @@ pub fn verify(gpu: &Gpu) -> Result<(), Error> {
             return Err("spray fraction lost".into());
         }
     }
+    // Verify configured size bounds on particles actually born through the GPU consumer.
+    for range in [[0.5, 0.5], [0.25, 1.75]] {
+        source.configure(gpu, config, 0.0, 1.0);
+        submit(gpu, |e| {
+            particles.encode(e, &source, particles.epoch + 1);
+            source.begin_frame(e);
+        });
+        source.configure(
+            gpu,
+            SprayConfig {
+                size: 2.0,
+                size_range: range,
+                ..config
+            },
+            0.001,
+            1.0,
+        );
+        gpu.queue.write_buffer(
+            &source.field,
+            (center * 32) as u64,
+            bytemuck::cast_slice(&signal(64.0)),
+        );
+        submit(gpu, |e| particles.encode(e, &source, particles.epoch));
+        if count(gpu, &particles)? != 64 {
+            return Err("spray size check missing births".into());
+        }
+        let bytes = gpu.read_buffer(&particles.lists[particles.front], 16 + 64 * 48)?;
+        let sizes: Vec<f32> = bytes[16..]
+            .as_chunks::<48>()
+            .0
+            .iter()
+            .map(|p| f32::from_le_bytes(p[32..36].try_into().unwrap()))
+            .collect();
+        if sizes
+            .iter()
+            .any(|s| !s.is_finite() || *s < 2.0 * range[0] - 1e-6 || *s > 2.0 * range[1] + 1e-6)
+        {
+            return Err(format!("GPU spray size outside configured range {range:?}").into());
+        }
+        let spread = sizes.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+            - sizes.iter().copied().fold(f32::INFINITY, f32::min);
+        if range[0] < range[1] && spread < 0.1 {
+            return Err("GPU spray random size collapsed to a constant".into());
+        }
+    }
     // Pause must neither respawn nor move: compare actual particle buffer, not code paths.
     let before = gpu.read_buffer(
         &particles.lists[particles.front],
@@ -654,10 +699,14 @@ mod tests {
         assert_eq!(saved.optics.depth, 9.0);
         assert_eq!(saved.optics.shore.generation, 2.5);
         assert!(!saved.optics.spray.enabled);
+        let legacy: SprayConfig = serde_json::from_str(r#"{"size":0.8}"#).unwrap();
+        assert_eq!(legacy.size, 0.8);
+        assert_eq!(legacy.size_range, [0.65, 1.35]);
         saved.optics.spray = SprayConfig {
             enabled: true,
             rate: 321.0,
-            size: 0.3,
+            size: 2.0,
+            size_range: [0.25, 1.75],
             debug: true,
             ..Default::default()
         };
@@ -675,5 +724,34 @@ mod tests {
         saved.optics.spray = SprayConfig::default();
         saved.optics.spray.depth = 0.0;
         assert!(saved.validate().is_err());
+        for range in [
+            [1.0, 0.5],
+            [-0.1, 1.0],
+            [0.5, 2.01],
+            [f32::NAN, 1.0],
+            [1.0, f32::INFINITY],
+        ] {
+            let config = SprayConfig {
+                size_range: range,
+                ..Default::default()
+            };
+            assert!(config.validate().is_err());
+        }
+        assert!(
+            SprayConfig {
+                size: 2.01,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+        for range in [[0.0, 0.0], [1.0, 1.0], [0.0, 2.0]] {
+            SprayConfig {
+                size_range: range,
+                ..Default::default()
+            }
+            .validate()
+            .unwrap();
+        }
     }
 }

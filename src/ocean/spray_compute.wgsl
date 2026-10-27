@@ -80,7 +80,7 @@ fn spawn_particles(@builtin(global_invocation_id) id:vec3<u32>) {
         let start=vec3(horizontal.x,water_surface.x+0.025,horizontal.y);
         let v=velocity+vec3((r.x-0.5)*0.8,r.y*0.5,(r.z-0.5)*0.8);
         particles.items[slot]=Particle(vec4(start,0.0),vec4(v,spray.motion.z*(0.75+0.25*r.z)),
-            vec4(spray.motion.w*(0.65+0.7*r.x),r.y*6.2831853,floor(random(seed+3u)*4.0),0.0));
+            vec4(spray.motion.w*mix(spray.grid.z,spray.grid.w,r.x),r.y*6.2831853,floor(random(seed+3u)*4.0),0.0));
     }
 }
 @compute @workgroup_size(64)

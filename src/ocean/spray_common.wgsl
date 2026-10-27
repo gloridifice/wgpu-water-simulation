@@ -3,7 +3,7 @@ struct SprayParams {
     motion: vec4<f32>,   // upward m/s, forward m/s, lifetime s, diameter m
     style: vec4<f32>,    // drag /s, soft distance m, simulated dt, debug
     counts: vec4<u32>,   // capacity, source cells, seed, reserved
-    grid: vec4<f32>,     // source cell area m², last source dt for paused debug, reserved
+    grid: vec4<f32>,     // source cell area m², last source dt for paused debug, size multiplier min/max
 }
 struct SpraySignal { position_amount: vec4<f32>, velocity_reserved: vec4<f32> }
 struct Particle { position_age: vec4<f32>, velocity_life: vec4<f32>, appearance: vec4<f32> }

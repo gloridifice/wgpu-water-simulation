@@ -54,6 +54,8 @@ pub struct SprayConfig {
     pub forward: f32,
     pub lifetime: f32,
     pub size: f32,
+    /// Inclusive bounds of the random multiplier applied to the base diameter.
+    pub size_range: [f32; 2],
     pub drag: f32,
     pub softness: f32,
 }
@@ -70,6 +72,7 @@ impl Default for SprayConfig {
             forward: 0.5,
             lifetime: 1.2,
             size: 0.2,
+            size_range: [0.65, 1.35],
             drag: 0.5,
             softness: 0.15,
         }
@@ -85,13 +88,18 @@ impl SprayConfig {
             ("upward", self.upward, 0.0, 10.0),
             ("forward", self.forward, 0.0, 10.0),
             ("lifetime", self.lifetime, 0.05, 5.0),
-            ("size", self.size, 0.01, 1.0),
+            ("size", self.size, 0.01, 2.0),
+            ("size multiplier minimum", self.size_range[0], 0.0, 2.0),
+            ("size multiplier maximum", self.size_range[1], 0.0, 2.0),
             ("drag", self.drag, 0.0, 10.0),
             ("softness", self.softness, 0.001, 1.0),
         ] {
             if !value.is_finite() || !(min..=max).contains(&value) {
                 return Err(format!("spray {name} must be finite in {min}..={max}"));
             }
+        }
+        if self.size_range[0] > self.size_range[1] {
+            return Err("spray size multiplier minimum must not exceed maximum".into());
         }
         Ok(())
     }
@@ -101,7 +109,7 @@ impl SprayConfig {
             motion: [self.upward, self.forward, self.lifetime, self.size],
             style: [self.drag, self.softness, dt, f32::from(self.debug)],
             counts: [CAPACITY, cells, 0x19ab_3217, 0],
-            grid: [area, 0.0, 0.0, 0.0],
+            grid: [area, 0.0, self.size_range[0], self.size_range[1]],
         }
     }
 }

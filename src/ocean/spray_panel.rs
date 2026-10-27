@@ -72,8 +72,8 @@ pub fn show(ui: &mut egui::Ui, config: &mut SprayConfig, error: Option<&str>) {
                 "尺寸（米）",
                 &mut config.size,
                 0.01,
-                1.0,
-                "0.01～1 米，默认 0.2；四边形直径带 0.65～1.35 倍随机变化。只影响新生粒子。",
+                2.0,
+                "基础四边形直径，0.01～2 米，默认 0.2。最终直径 = 此尺寸 × 随机尺寸倍率，因此最终尺寸可以超过 2 米。实时影响新生粒子，已有粒子不变；保存到配置。",
             ),
             (
                 "空气阻力（每秒）",
@@ -94,6 +94,19 @@ pub fn show(ui: &mut egui::Ui, config: &mut SprayConfig, error: Option<&str>) {
                 ui.add(egui::Slider::new(value, min..=max).max_decimals(3))
             });
         }
+        let [minimum, maximum] = &mut config.size_range;
+        parameter(
+            ui,
+            "随机尺寸倍率下限",
+            "无量纲，0～2，默认 0.65，不能超过上限。新生粒子在上下限之间均匀随机；上下限相同则为固定倍率。实时生效并保存，不重置模拟。",
+            |ui| ui.add(egui::Slider::new(&mut *minimum, 0.0..=*maximum).max_decimals(3)),
+        );
+        parameter(
+            ui,
+            "随机尺寸倍率上限",
+            "无量纲，0～2，默认 1.35，不能低于下限。例如尺寸 2 米、倍率 0.5～1，实际为 1～2 米。只影响新生粒子，实时生效并保存。",
+            |ui| ui.add(egui::Slider::new(&mut *maximum, *minimum..=2.0).max_decimals(3)),
+        );
     });
     if let Some(error) = error {
         ui.colored_label(egui::Color32::RED, error);
