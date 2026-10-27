@@ -1,5 +1,6 @@
 use super::{
     foam::Foam,
+    foam_texture::FoamTextures,
     optics::{OpticsConfig, OpticsUniform},
     seabed::Seabed,
     shore::Shore,
@@ -291,6 +292,9 @@ pub struct Renderer {
     pub shore: Shore,
     sky: wgpu::RenderPipeline,
     water: wgpu::RenderPipeline,
+    local_water: wgpu::RenderPipeline,
+    model_active: bool,
+    pub(crate) model_assets: Option<std::sync::Arc<super::model_render::ModelAssets>>,
     bind: wgpu::BindGroup,
     uniform: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -302,6 +306,7 @@ pub struct Renderer {
     layout: wgpu::BindGroupLayout,
     fields: wgpu::Buffer,
     foam: wgpu::Buffer,
+    foam_textures: FoamTextures,
 }
 
 impl Renderer {
@@ -327,11 +332,38 @@ impl Renderer {
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         let sky_lut = SkyLut::new(gpu);
+        let foam_textures = FoamTextures::new(gpu);
         let shore = Shore::new(gpu, ocean);
         let seabed = Seabed::new(gpu, &uniform, &optics, &shore, format, width, height);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ocean render layout"),
             entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 13,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
                 wgpu::BindGroupLayoutEntry {
                     binding: 9,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -439,6 +471,18 @@ impl Renderer {
             layout: &layout,
             entries: &[
                 wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: shore.terrain_bed.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::TextureView(&foam_textures.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::Sampler(&foam_textures.sampler),
+                },
+                wgpu::BindGroupEntry {
                     binding: 9,
                     resource: shore.lace.as_entire_binding(),
                 },
@@ -538,6 +582,7 @@ impl Renderer {
         };
         let sky = pipeline("sky_vertex", "sky_fragment", false);
         let water = pipeline("water_vertex", "water_fragment", true);
+        let local_water = pipeline("local_water_vertex", "water_fragment", true);
         let n = ocean.config.mesh_resolution;
         let mut indices = Vec::with_capacity((n * n * 6) as usize);
         for z in 0..n {
@@ -559,6 +604,9 @@ impl Renderer {
             shore,
             sky,
             water,
+            local_water,
+            model_active: false,
+            model_assets: None,
             bind,
             uniform,
             indices,
@@ -570,6 +618,7 @@ impl Renderer {
             layout,
             fields: ocean.fields.clone(),
             foam: foam.field.clone(),
+            foam_textures,
         }
     }
 
@@ -585,6 +634,7 @@ impl Renderer {
         if self.shore.resolution == resolution {
             return;
         }
+        let mut model = self.seabed.model.take();
         self.shore = Shore::with_resolution(gpu, ocean, resolution);
         self.shore.timer = super::gpu_timer::GpuTimer::new(gpu);
         self.seabed = Seabed::new(
@@ -596,7 +646,51 @@ impl Renderer {
             size[0],
             size[1],
         );
+        if let Some(model) = &mut model {
+            model.rebind(gpu, &self.uniform, &self.shore);
+        }
+        self.seabed.model = model;
         self.resize(&gpu.device, size[0], size[1]);
+    }
+
+    /// Fallible lazy loading keeps the original ocean independent of model assets.
+    pub fn prepare_scene(
+        &mut self,
+        gpu: &Gpu,
+        optics: &OpticsConfig,
+        format: wgpu::TextureFormat,
+    ) -> Result<(), Error> {
+        optics.model.validate()?;
+        if optics.model.enabled && self.model_assets.is_none() {
+            self.model_assets = Some(std::sync::Arc::new(
+                super::model_render::ModelAssets::load()?
+            ));
+        }
+        if optics.model.enabled && self.seabed.model.is_none() {
+            self.seabed.model = Some(super::model_render::ModelRenderer::new(
+                gpu,
+                &self.uniform,
+                &self.shore,
+                &self
+                    .model_assets
+                    .as_ref()
+                    .ok_or("model assets missing")?
+                    .model,
+                format,
+            )?);
+        }
+        self.shore
+            .prepare_terrain(gpu, optics, self.model_assets.as_ref().map(|a| &a.height))?;
+        self.seabed.ground_vertices = if optics.model.enabled {
+            6 + 6 * self.shore.resolution.pow(2)
+        } else {
+            6
+        };
+        self.model_active = optics.model.enabled && optics.swe_enabled();
+        if let Some(model) = &mut self.seabed.model {
+            model.update(gpu, optics, self.shore.resolution);
+        }
+        Ok(())
     }
 
     fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
@@ -625,6 +719,18 @@ impl Renderer {
             label: Some("resized ocean scene bindings"),
             layout: &self.layout,
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: self.shore.terrain_bed.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::TextureView(&self.foam_textures.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::Sampler(&self.foam_textures.sampler),
+                },
                 wgpu::BindGroupEntry {
                     binding: 9,
                     resource: self.shore.lace.as_entire_binding(),
@@ -719,5 +825,12 @@ impl Renderer {
         pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
         // 3×3 周期块。边界采样取模，因此几何位置和法线都连续。
         pass.draw_indexed(0..self.index_count, 0, 0..9);
+        if self.model_active {
+            pass.set_pipeline(&self.local_water);
+            pass.draw(0..6 * self.shore.resolution.pow(2), 0..1);
+        }
+        if let Some(model) = &self.seabed.model {
+            model.draw_bounds(&mut pass);
+        }
     }
 }

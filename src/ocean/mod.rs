@@ -14,12 +14,17 @@ mod collider_panel;
 mod color_editor;
 mod configuration_panel;
 pub mod foam;
+mod foam_texture;
+pub mod model;
+mod model_panel;
+mod model_render;
 pub mod optics;
 mod sand;
 mod seabed;
 pub mod settings;
 pub mod shore;
 pub mod skylight;
+pub mod terrain;
 
 mod optics_verify;
 mod skylight_verify;

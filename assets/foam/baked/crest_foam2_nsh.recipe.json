@@ -1,0 +1,27 @@
+{
+  "algorithm": "periodic-mask-nsh-v1",
+  "channels": {
+    "A": "designed relative Height, not physical meters",
+    "B": "linear Soft",
+    "G": "tangent normal Y encoded 0..1; positive along increasing texture V",
+    "R": "tangent normal X encoded 0..1"
+  },
+  "height_model": "periodic box blur of Soft raised to height_gamma; artistic approximation",
+  "input": "assets/foam/crest/Foam2.png",
+  "input_fnv1a64": "31ed47ab67d1f8dc",
+  "input_space": "srgb",
+  "normal_convention": "normal = normalize(-dH/du * normal_height, -dH/dv * normal_height, 1)",
+  "output": "assets/foam/baked/crest_foam2_nsh.png",
+  "output_color_space": "linear data; no gamma or alpha premultiplication",
+  "settings": {
+    "blur_radius": 2,
+    "height_gamma": 1.350000023841858,
+    "normal_height": 0.004000000189989805,
+    "size": 1024,
+    "soft_gamma": 1.0
+  },
+  "source_size": [
+    450,
+    450
+  ]
+}

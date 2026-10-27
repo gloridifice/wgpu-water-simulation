@@ -10,7 +10,7 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 
 [features]
 default = ["ocean"]
-ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:ron"]
+ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:ron", "dep:gltf", "dep:sha2"]
 
 [dependencies.wgpu]
 version = "27.0.1"
@@ -46,6 +46,26 @@ optional = true
 [[bin]]
 name = "ocean"
 path = "src/bin/ocean.rs"
+required-features = ["ocean"]
+
+[dependencies.gltf]
+version = "1.4"
+default-features = false
+features = ["utils", "KHR_materials_unlit"]
+optional = true
+
+[dependencies.sha2]
+version = "0.10"
+optional = true
+
+[[bin]]
+name = "terrain-bake"
+path = "src/bin/terrain_bake.rs"
+required-features = ["ocean"]
+
+[[bin]]
+name = "foam-bake"
+path = "src/bin/foam_bake.rs"
 required-features = ["ocean"]
 
 [dependencies.egui]

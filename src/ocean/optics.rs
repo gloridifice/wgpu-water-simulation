@@ -21,6 +21,7 @@ pub const VIEW_NAMES: [&str; 12] = [
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OpticsConfig {
+    pub model: super::terrain::ModelConfig,
     pub shore: super::shore::ShoreConfig,
     pub depth: f32,
     pub beach: bool,
@@ -44,6 +45,7 @@ pub struct OpticsConfig {
 impl Default for OpticsConfig {
     fn default() -> Self {
         Self {
+            model: super::terrain::ModelConfig::default(),
             shore: super::shore::ShoreConfig::default(),
             depth: 6.0,
             beach: false,
@@ -79,7 +81,18 @@ impl OpticsConfig {
         }
     }
 
+    pub fn model_scene() -> Self {
+        let mut optics = Self::beach_scene();
+        optics.model.enabled = true;
+        optics
+    }
+
+    pub fn swe_enabled(&self) -> bool {
+        (self.beach || self.model.enabled) && self.shore.enabled
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        self.model.validate()?;
         self.shore.validate()?;
         self.sky.validate()?;
         if !self.beach_slope.is_finite()

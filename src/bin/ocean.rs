@@ -19,13 +19,24 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --mesh-resolution N  Mesh cells per axis, 8..512 (default: 128)
   --seed N         Deterministic ocean seed (default: 42)
   --verify         Headless GPU IFFT vs independent direct DFT; then exit
+  --verify-terrain Headless GPU model-bed/lake/conservation/regrid checks only
   --snapshot PATH  Render an offscreen PNG; file must not exist
   --beach         Sloped sand beach preset, shallow-to-deep water and overview camera
-  --shore-view N  0=shaded, 1=water depth, 2=flow, 3=shore foam, 4=sand wetness, 5=stranded foam, 6=foam density (green/red)
+  --model         Challaborough model + disk heightfield preset (bake first)
+  --model-position X,Y,Z  Model translation in meters (source datum)
+  --model-scale N  Uniform meters per model unit (0.01..100)
+  --model-yaw DEG  Rotation about vertical axis (-180..180)
+  --sea-level M    Mean water elevation in the model scene datum
+  --swe-center X,Y,Z  Custom SWE box center; Y is visualization only
+  --swe-size X,Y,Z    Custom SWE box dimensions in meters; Y does not clip water
+  --swe-resolution N SWE cells per axis: 64,128,256,512,1024
+  --swe-sponge M   Model-scene open-boundary relaxation width in meters
+  --swe-open-edges A,B,C,D  -X,+X,-Z,+Z; each 0=wall or 1=FFT open
+  --hide-swe-box   Hide model-scene domain wireframe
+  --shore-view N  0=shaded, 1=water depth, 2=flow, 3=shore foam, 4=sand wetness, 6=foam density (green/red)
   --swe-filter-cutoff M    Reject inlet wavelengths <= M (0..512, default: 12)
   --swe-filter-transition M  Transition width in meters (0..512, default: 12)
   --water-foam-color R,G,B    Water foam linear RGB (each 0..1)
-  --stranded-foam-color R,G,B Sand residue linear RGB (each 0..1)
   --swe-input-gain N  FFT elevation and momentum multiplier (0..3, default: 1)
   --swe-order N   SWE solver order: 1=Euler, 2=MUSCL+RK2 (default: 1)
   --shore-normal-strength N  Nearshore FFT normal detail (0..3, default: 1)
@@ -44,6 +55,8 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
                    5=extinction loss, 6=raw bottom, 7=medium sum,
                    8=local sky source, 9=integrated sky, 10=manual, 11=total local source
   --foam-view N    Snapshot: 0=water, 1=Jacobian, 2=foam coverage
+  --foam-texture N Nearshore: 0=legacy, 1=Shorewaves NSH, 2=Crest foam, 3=Crest Foam2
+  --foam-material-view N  0=shaded, 1=Soft, 2=Height, 3=normal, 4=thin green/thick red
   --time S         Snapshot time, >=0 (default: 3)
   --settings PATH  Local GUI settings file (default: LOCALAPPDATA/water-simulation/ocean-settings.json)
   --no-settings    Disable loading/saving local GUI settings
@@ -55,7 +68,7 @@ C: horizontal choppiness | F: foam | Up/Down: amplitude | Esc/Q: quit
 
 The FFT and spectral evolution run on the GPU. This is a periodic ocean
 surface. The beach preset adds local 2D shallow-water waves, transported foam and
-wet sand and stranded foam. FFT elevation and momentum drive the inlet; waves cannot overturn.
+wet sand and waterborne foam. FFT elevation and momentum drive the inlet; waves cannot overturn.
 ";
 
 fn value<T: std::str::FromStr>(
@@ -73,13 +86,14 @@ fn rgb(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<[f32; 3], 
     let values: Vec<f32> = text.split(',').map(str::parse).collect::<Result<_, _>>()?;
     values
         .try_into()
-        .map_err(|_| format!("{flag} requires R,G,B").into())
+        .map_err(|_| format!("{flag} requires three comma-separated values").into())
 }
 
 fn run() -> Result<(), Error> {
     let mut config = OceanConfig::default();
     let mut optics = OpticsConfig::default();
     let mut verify = false;
+    let mut verify_terrain = false;
     let mut path: Option<PathBuf> = None;
     let mut time = 3.0_f32;
     let mut foam_view = 0u32;
@@ -110,12 +124,26 @@ fn run() -> Result<(), Error> {
             "--mesh-resolution" => config.mesh_resolution = value(&mut args, &arg)?,
             "--seed" => config.seed = value(&mut args, &arg)?,
             "--beach" => optics = OpticsConfig::beach_scene(),
+            "--model" => optics = OpticsConfig::model_scene(),
+            "--model-position" => optics.model.position = rgb(&mut args,&arg)?,
+            "--model-scale" => optics.model.scale = value(&mut args,&arg)?,
+            "--model-yaw" => optics.model.yaw_deg = value(&mut args,&arg)?,
+            "--sea-level" => optics.model.sea_level = value(&mut args,&arg)?,
+            "--swe-center" => optics.model.center = rgb(&mut args,&arg)?,
+            "--swe-size" => optics.model.size = rgb(&mut args,&arg)?,
+            "--swe-resolution" => optics.shore.resolution = value(&mut args,&arg)?,
+            "--swe-sponge" => optics.model.sponge_width = value(&mut args,&arg)?,
+            "--hide-swe-box" => optics.model.show_bounds = false,
+            "--swe-open-edges" => {
+                let text:String=value(&mut args,&arg)?;
+                let edges=text.split(',').map(|v| match v {"0"=>Ok(false),"1"=>Ok(true),_=>Err("edge values must be 0 or 1")}).collect::<Result<Vec<_>,_>>()?;
+                optics.model.open_edges=edges.try_into().map_err(|_| "--swe-open-edges requires four values")?;
+            },
             "--shore-view" => optics.shore.view = value(&mut args, &arg)?,
             "--shore-amplitude" | "--shore-period" => return Err("Independent shore waves were removed; use FFT --amplitude / --wind and Height gain".into()),
             "--swe-filter-cutoff" => optics.shore.filter_cutoff = value(&mut args, &arg)?,
             "--swe-filter-transition" => optics.shore.filter_transition = value(&mut args, &arg)?,
             "--water-foam-color" => optics.shore.water_foam_color = rgb(&mut args, &arg)?,
-            "--stranded-foam-color" => optics.shore.stranded_foam_color = rgb(&mut args, &arg)?,
             "--swe-input-gain" => optics.shore.input_gain = value(&mut args, &arg)?,
             "--swe-order" => optics.shore.order = value(&mut args, &arg)?,
             "--shore-normal-strength" => optics.shore.normal_strength = value(&mut args, &arg)?,
@@ -132,8 +160,11 @@ fn run() -> Result<(), Error> {
             "--skylight" => optics.sky.enabled = true,
             "--water-view" => optics.view = value(&mut args, &arg)?,
             "--verify" => verify = true,
+            "--verify-terrain" => verify_terrain = true,
             "--snapshot" => path = Some(value(&mut args, &arg)?),
             "--foam-view" => foam_view = value(&mut args, &arg)?,
+            "--foam-texture" => optics.shore.foam_texture = value(&mut args, &arg)?,
+            "--foam-material-view" => optics.shore.foam_material_view = value(&mut args, &arg)?,
             "--time" => time = value(&mut args, &arg)?,
             "--frames" => frames = Some(value(&mut args, &arg)?),
             "--settings" => settings_path = Some(value(&mut args, &arg)?),
@@ -152,10 +183,22 @@ fn run() -> Result<(), Error> {
     if frames == Some(0) {
         return Err("--frames must be positive".into());
     }
-    if (verify && path.is_some()) || (frames.is_some() && (verify || path.is_some())) {
-        return Err("--verify, --snapshot and --frames select different run modes".into());
+    if ((verify || verify_terrain) && path.is_some())
+        || (frames.is_some() && (verify || verify_terrain || path.is_some()))
+        || (verify && verify_terrain)
+    {
+        return Err(
+            "--verify, --verify-terrain, --snapshot and --frames select different run modes".into(),
+        );
     }
-    if verify {
+    if verify_terrain {
+        pollster::block_on(async {
+            let gpu =
+                water_simulation::ocean::gpu::Gpu::new(&wgpu::Instance::default(), None).await?;
+            eprintln!("Terrain verification: {}", gpu.name);
+            water_simulation::ocean::shore::verify_terrain(&gpu)
+        })
+    } else if verify {
         pollster::block_on(verify::run())
     } else if let Some(path) = path {
         pollster::block_on(viewer::snapshot(config, time, &path, foam_view, optics))

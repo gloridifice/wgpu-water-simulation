@@ -65,6 +65,15 @@ impl Camera {
         }
     }
 
+    pub fn model(length: f32) -> Self {
+        Self {
+            yaw: 0.65,
+            pitch: 0.65,
+            distance: 95.0,
+            ..Self::beach(length)
+        }
+    }
+
     pub fn pan(&mut self, direction: Vec2, elapsed: f32) {
         let direction = direction.normalize_or_zero();
         let right = Vec2::new(self.yaw.cos(), -self.yaw.sin());
@@ -127,6 +136,7 @@ struct State {
     title_frames: u32,
     frames: u32,
     settings: Option<SettingsStore>,
+    applied_model: super::terrain::ModelConfig,
 }
 
 impl State {
@@ -172,6 +182,7 @@ impl State {
             title_frames: 0,
             frames: 0,
             settings: None,
+            applied_model: super::terrain::ModelConfig::default(),
         })
     }
 
@@ -211,6 +222,7 @@ impl State {
             self.gui.viewport_size[1],
         );
         renderer.shore.timer = super::gpu_timer::GpuTimer::new(&self.gpu);
+        renderer.model_assets = self.renderer.model_assets.clone();
         self.ocean = ocean;
         self.foam_field = foam_field;
         self.renderer = renderer;
@@ -263,11 +275,7 @@ impl State {
             let sample = timer.latest.take();
             let status = if timer.failed {
                 SweStatus::Failed
-            } else if self.paused
-                || self.gui.speed == 0.0
-                || !self.gui.optics.beach
-                || !self.gui.optics.shore.enabled
-            {
+            } else if self.paused || self.gui.speed == 0.0 || !self.gui.optics.swe_enabled() {
                 SweStatus::Idle
             } else {
                 SweStatus::Active(self.gui.optics.shore.order)
@@ -310,8 +318,6 @@ impl State {
             self.renderer
                 .resize(&self.gpu.device, self.render_size[0], self.render_size[1]);
         }
-        let force_save = std::mem::take(&mut self.gui.save_now);
-        self.persist(force_save);
         self.renderer.set_shore_resolution(
             &self.gpu,
             &self.ocean,
@@ -319,6 +325,30 @@ impl State {
             self.config.format,
             self.render_size,
         );
+        if let Err(error) =
+            self.renderer
+                .prepare_scene(&self.gpu, &self.gui.optics, self.config.format)
+        {
+            self.gui.model_panel.error = Some(error.to_string());
+            self.gui.optics.model = self.applied_model;
+            // Re-establish the previous valid scene after a failed asset load.
+            if let Err(error) =
+                self.renderer
+                    .prepare_scene(&self.gpu, &self.gui.optics, self.config.format)
+            {
+                self.gui.error = Some(error.to_string());
+                return Err(wgpu::SurfaceError::Other);
+            }
+        }
+        self.applied_model = self.gui.optics.model;
+        self.gui.model_panel.source_bounds = self
+            .renderer
+            .model_assets
+            .as_ref()
+            .map(|a| a.height.metadata.bounds);
+        self.gui.model_panel.bed_range = self.renderer.shore.terrain_height_range();
+        let force_save = std::mem::take(&mut self.gui.save_now);
+        self.persist(force_save);
         self.renderer.update_optics(&self.gpu, &self.gui.optics);
         let simulation_start = Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
@@ -421,6 +451,23 @@ impl ApplicationHandler for App {
                 state.gui.speed = self.initial.speed;
                 state.paused = self.initial.paused;
                 state.camera = self.initial.camera;
+                state.renderer.set_shore_resolution(
+                    &state.gpu,
+                    &state.ocean,
+                    state.gui.optics.shore.resolution,
+                    state.config.format,
+                    [state.config.width, state.config.height],
+                );
+                if let Err(error) =
+                    state
+                        .renderer
+                        .prepare_scene(&state.gpu, &state.gui.optics, state.config.format)
+                {
+                    self.error = Some(error.to_string());
+                    event_loop.exit();
+                    return;
+                }
+                state.applied_model = state.gui.optics.model;
                 state.gui.configuration_panel =
                     ConfigurationPanel::new(ConfigurationLibrary::new(self.initial.clone()));
                 state.settings = self.settings.take();
@@ -576,6 +623,14 @@ pub async fn snapshot(
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let foam_field = Foam::new(&gpu, &ocean.fields, config.resolution);
     let mut renderer = Renderer::new(&gpu, &ocean, &foam_field, format, width, height);
+    renderer.set_shore_resolution(
+        &gpu,
+        &ocean,
+        optics.shore.resolution,
+        format,
+        [width, height],
+    );
+    renderer.prepare_scene(&gpu, &optics, format)?;
     renderer.update_optics(&gpu, &optics);
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("snapshot"),
@@ -599,18 +654,16 @@ pub async fn snapshot(
         mapped_at_creation: false,
     });
     // Deterministic history warm-up: up to 60 s for wet sand, 8 s for open ocean.
-    let preset = if optics.beach {
+    let preset = if optics.model.enabled {
+        Camera::model(config.length)
+    } else if optics.beach {
         Camera::beach(config.length)
     } else {
         Camera::new(config.length)
     };
     let mut camera = preset.uniform(config, width as f32 / height as f32);
     camera.misc[2] = foam_view as f32;
-    let duration = time.min(if optics.beach && optics.shore.enabled {
-        60.0
-    } else {
-        8.0
-    });
+    let duration = time.min(if optics.swe_enabled() { 60.0 } else { 8.0 });
     let steps = (duration * 60.0).ceil() as u32;
     if steps > 0 {
         let dt = duration / steps as f32;
@@ -701,10 +754,10 @@ pub async fn snapshot(
         100.0 * covered as f32 / diagnostics.len() as f32
     );
     let mapped = gpu.map_buffer(&staging)?;
-    if optics.beach && optics.shore.enabled {
+    if optics.swe_enabled() {
         let bytes = gpu.read_buffer(
             &renderer.shore.field,
-            u64::from(super::shore::RESOLUTION * super::shore::RESOLUTION) * 16,
+            u64::from(renderer.shore.resolution.pow(2)) * 16,
         )?;
         let samples: Vec<[f32; 4]> = bytes
             .as_chunks::<16>()

@@ -20,6 +20,7 @@ enum Panel {
     Performance,
     Shore,
     Colliders,
+    Model,
     Optics,
 }
 
@@ -36,7 +37,7 @@ fn default_dock() -> egui_dock::DockState<Panel> {
     dock.main_surface_mut().split_right(
         center,
         0.68,
-        vec![Panel::Shore, Panel::Colliders, Panel::Optics],
+        vec![Panel::Shore, Panel::Model, Panel::Colliders, Panel::Optics],
     );
     dock
 }
@@ -53,6 +54,7 @@ impl<F: FnMut(Panel, &mut egui::Ui)> egui_dock::TabViewer for PanelViewer<F> {
             Panel::Performance => "性能",
             Panel::Shore => "浅水模拟（SWE）",
             Panel::Colliders => "碰撞体",
+            Panel::Model => "模型与区域",
             Panel::Optics => "水体光学",
         }
         .into()
@@ -222,7 +224,6 @@ fn help(name: &str) -> &'static str {
             "一阶使用欧拉积分，二阶使用 MUSCL 与 RK2。切换会重置模拟；比较几何时可将法线细节设为 0。"
         }
         "水上泡沫" => "水上泡沫的线性 RGB 颜色，包含远海泡沫。只改变显示。",
-        "沙地残留泡沫" => "暴露沙地上的残留泡沫颜色，采用线性 RGB，只改变显示。",
         "法线细节强度" => {
             "来自 FFT 的短波法线细节；0 为关闭，1 为默认。薄水区域逐渐减弱，不重置模拟。开启反射更容易观察。"
         }
@@ -240,7 +241,7 @@ fn help(name: &str) -> &'static str {
             "在此水深到其 2.5 倍之间，从 SWE 过渡到 FFT。修改后重置浅水。"
         }
         "背景生成速率（每秒）" => {
-            "原有上涨、流速和汇聚判据的泡沫生成速率，还会乘以背景生成倍率。设为 0 仅关闭背景生成，前沿生成独立控制。"
+            "范围 0～15，默认 4；单位为每模拟秒增加的泡沫面密度，另乘背景生成倍率。0 关闭背景源，前沿速率独立。实时生效并保存，不重置历史。"
         }
         "背景生成起始阈值" => {
             "水深上涨速度除以浅水波速超过此值时开始生成背景泡沫。无量纲，越低越容易生成；默认 0.25。实时生效，不重置。"
@@ -249,16 +250,13 @@ fn help(name: &str) -> &'static str {
             "从起始阈值到完整生成权重的过渡宽度。默认 0.4，即 0.25 开始、0.65 达到完整权重。0 为硬阈值，不影响前沿生成。"
         }
         "水上泡沫衰减（每秒）" => {
-            "水上泡沫的指数衰减系数；越小存活越久，0 为无自然衰减。不控制沙地残留寿命。"
+            "水上泡沫的指数衰减系数；越小存活越久，0 为无自然衰减。"
         }
         "汇聚增强阈值（每秒）" => {
             "增强背景泡沫生成的水流汇聚阈值。已有泡沫仍会通过输送自然堆积，不受此阈值限制。"
         }
         "密度颜色参考值" => {
             "达到此密度显示红色，低密度绿色，中间黄色。仅改变色标，不限制模拟密度；水上和沙地共用。"
-        }
-        "泡沫沉积水深（毫米）" => {
-            "水深不超过此值时，水上泡沫沉积到沙地；超过时冲淡沙地残留。越大越早沉积，0 要求水深为零。实时生效，不改变水面几何或沙地湿度。"
         }
         "沙地干燥时间（秒）" => "湿沙的干燥时间常数，不控制泡沫寿命。",
         "浅水调试视图" => {
@@ -273,7 +271,9 @@ fn help(name: &str) -> &'static str {
         "沙滩坡度（高／宽）" | "岸线 X（米）" => {
             "负 X 为陆地，正 X 为深水。修改后重新初始化浅水模拟。"
         }
-        "海底深度（米）" => "水平海底的深度。倾斜沙滩模式下禁用，水深由地形决定。",
+        "海底深度（米）" => {
+            "单位米，0.25～100。平面场景控制海底；模型场景控制补充海床，修改即时重建并重置近岸历史；纯倾斜沙滩下禁用。"
+        }
         "启用天空散射" => {
             "基于平均海平面与直线光路的各向同性天空散射。手动光源解析积分，天空光源分段解析积分。"
         }
@@ -303,6 +303,7 @@ pub struct Gui {
     pub speed: f32,
     pub performance: super::performance::Performance,
     pub swe_domain: [f32; 4],
+    pub model_panel: super::model_panel::ModelPanel,
     pub error: Option<String>,
     pub foam_settings: FoamConfig,
     pub clear_foam: bool,
@@ -364,6 +365,7 @@ impl Gui {
             speed: 1.0,
             performance: super::performance::Performance::default(),
             swe_domain: [-32.0, -192.0, 64.0, 384.0],
+            model_panel: super::model_panel::ModelPanel::default(),
             error: None,
             foam_settings: FoamConfig::default(),
             clear_foam: false,
@@ -560,6 +562,9 @@ parameter_table(ui, "playback table", |ui| {
 Panel::Performance => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
     self.performance.ui(ui);
 }); },
+Panel::Model => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false,false]).show(ui, |ui| {
+    self.model_panel.show(ui, &mut self.optics, camera, current.length);
+}); },
 Panel::Colliders => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
     super::collider_panel::show(ui, &mut self.optics, self.swe_domain);
 }); },
@@ -606,7 +611,7 @@ Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fal
                                 }
                             let shore = &mut self.optics.shore;
                             parameter_table(ui, "solver table", |ui| {
-parameter(ui, "倾斜沙滩", help("倾斜沙滩"), |ui| ui.checkbox(&mut self.optics.beach, ""));
+parameter(ui, "倾斜沙滩", help("倾斜沙滩"), |ui| ui.add_enabled(!self.optics.model.enabled,egui::Checkbox::new(&mut self.optics.beach, "")));
                             parameter(ui, "启用浅水模拟", help("启用浅水模拟"), |ui| ui.checkbox(&mut shore.enabled, ""));
                             parameter(ui, "每轴网格数", "SWE 模拟分辨率，64～1024，默认 256。覆盖范围不变；增大后网格更细，显存和计算耗时增加，稳定步长缩短。切换立即重建并重新初始化近岸水体、泡沫和湿沙历史；自动保存。", |ui| egui::ComboBox::from_id_salt("SWE resolution")
                                 .width(ui.available_width()).selected_text(format!("{} × {}", shore.resolution, shore.resolution))
@@ -631,25 +636,36 @@ parameter(ui, "倾斜沙滩", help("倾斜沙滩"), |ui| ui.checkbox(&mut self.o
                             ui.label(egui::RichText::new("泡沫颜色").strong());
                             parameter_table(ui, "foam colors table", |ui| {
 parameter(ui, "水上泡沫", help("水上泡沫"), |ui| ui.color_edit_button_rgb(&mut shore.water_foam_color));
-                            parameter(ui, "沙地残留泡沫", help("沙地残留泡沫"), |ui| ui.color_edit_button_rgb(&mut shore.stranded_foam_color));
 
 });
-                            ui.horizontal(|ui| {
-                                if ui.button("默认区分色").clicked() {
-                                    shore.water_foam_color=[0.87,0.92,0.90];
-                                    shore.stranded_foam_color=[0.36,0.50,0.58];
-                                }
-                                if ui.button("恢复原配色").clicked() {
-                                    shore.water_foam_color=[0.87,0.92,0.90];
-                                    shore.stranded_foam_color=[0.82;3];
-                                }
-                            });
-                            if ui.button("区分位置：水绿／沙红").clicked() {
-                                shore.water_foam_color=[0.0,1.0,0.0];
-                                shore.stranded_foam_color=[1.0,0.0,0.0];
+                            if ui.button("恢复默认泡沫颜色").clicked() {
+                                shore.water_foam_color=[0.87,0.92,0.90];
                             }
 
 
+                            ui.separator();
+                            ui.label(egui::RichText::new("泡沫纹理与材质").strong());
+                            parameter_table(ui, "foam material table", |ui| {
+                                parameter(ui, "纹理来源", "0 为原灰度效果；其余为线性 NSH：法线 XY、Soft、Height。三张图使用同一密度与双相位运动，可在暂停时比较。实时生效并保存，不重置模拟；只改变近岸水上泡沫。", |ui| {
+                                    let names=super::shore::FOAM_TEXTURE_NAMES;
+                                    egui::ComboBox::from_id_salt("foam texture source").width(ui.available_width()).selected_text(names[shore.foam_texture as usize]).show_ui(ui, |ui| {
+                                        for (index,name) in names.iter().enumerate() { ui.selectable_value(&mut shore.foam_texture,index as u32,*name); }
+                                    });
+                                });
+                                parameter(ui, "纹理尺寸（米）", "粗层每块覆盖的世界长度，0.25～64 米，默认 12 米；细层固定为其 1/10。只作用于 NSH 路径。实时生效并保存，不重置密度或位移历史。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_texture_size,0.25..=64.0).logarithmic(true)));
+                                parameter(ui, "泡沫微法线强度", "无量纲，0～3，默认 0.65；0 关闭 NSH 细法线，保留密度厚度法线。只改变泡沫光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_micro_normal,0.0..=3.0)));
+                                parameter(ui, "薄泡沫不透明度", "0～1，默认 0.55。Soft 覆盖内尚未成为浓密白沫的部分使用此值；0 隐藏薄层，1 完全遮挡水面。不改变模拟密度，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_soft_opacity,0.0..=1.0)));
+                                parameter(ui, "厚泡沫起始强度", "归一化显示强度，0～0.9，默认 0.35。超过后结合 Height 图案逐渐形成浓密白沫；不是物理密度阈值。实时生效并保存，不重置。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_thick_start,0.0..=0.9)));
+                                parameter(ui, "泡沫粗糙度", "无量纲，0.15～1，默认 0.85；越高高光越宽。仅作用于 NSH 泡沫的简化光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0,egui::Slider::new(&mut shore.foam_roughness,0.15..=1.0)));
+                                parameter(ui, "材质调试", "显示 Soft、相对 Height、泡沫世界法线或覆盖权重（薄绿／厚红）。只在 NSH、显示泡沫且浅水视图为正常着色时启用；不会覆盖密度调试。实时生效并保存。", |ui| {
+                                    let names=super::shore::FOAM_MATERIAL_VIEWS;
+                                    ui.add_enabled_ui(shore.foam_texture>0, |ui| {
+                                        egui::ComboBox::from_id_salt("foam material view").width(ui.available_width()).selected_text(names[shore.foam_material_view as usize]).show_ui(ui, |ui| {
+                                            for (index,name) in names.iter().enumerate() { ui.selectable_value(&mut shore.foam_material_view,index as u32,*name); }
+                                        });
+                                    });
+                                });
+                            });
                             ui.separator();
                             ui.label(egui::RichText::new("小波法线").strong());
                             parameter_table(ui, "normal table", |ui| {
@@ -684,26 +700,12 @@ parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui
 
                             ui.label(egui::RichText::new("前沿泡沫").strong());
                             parameter_table(ui, "front foam table", |ui| {
-                            parameter(ui, "生成模式", "水面落差：检测前方较低的水面。速度差绝对值：速度向量差的长度除以采样距离，包含挤压、拉开和横向变化。有方向的压缩：只保留沿采样方向相互靠近的速度差，再除以距离，同向追赶也能触发。模式实时生效并保存，不清空历史；对比时建议背景生成倍率设为 0，并从相同时间重启模拟。", |ui| {
-                                let names=super::shore::FOAM_FRONT_MODE_NAMES;
-                                egui::ComboBox::from_id_salt("front foam mode")
-                                    .width(ui.available_width())
-                                    .selected_text(names[shore.foam_front_mode as usize])
-                                    .show_ui(ui, |ui| {
-                                        for (mode,name) in names.iter().enumerate() {
-                                            ui.selectable_value(&mut shore.foam_front_mode,mode as u32,*name);
-                                        }
-                                    });
-                            });
-                            parameter(ui, "前沿生成速率（每秒）", "三种模式共用的满权重泡沫生成速率，范围 0～30。0 关闭前沿生成；独立于背景上涨阈值。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_generation, 0.0..=30.0)));
-                            parameter(ui, "前沿采样距离（米）", "沿当前水流方向，在此距离内均匀采样 4 个位置，范围 0.05～10 米，默认 1 米。水面模式取最大落差；速度模式分别除以每个点的实际距离再取最大强度。按世界距离采样，兼容非正方形网格；干燥和越界点跳过。实时生效，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_distance, 0.05..=10.0).max_decimals(2)));
-                            if shore.foam_front_mode==0 {
-                            parameter(ui, "前沿满强度水面落差（米）", "比较实际水面高度（地形高度＋水深）。当前水面减去前方最低水面，从 0 到此值平滑增强；达到或超过此值时权重保持为 1。干燥采样点跳过，不把沙坡高度当成水面。越小越敏感，默认 0.03 米。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_depth_drop, 0.001..=1.0).logarithmic(true).max_decimals(3)));
-                            } else {
-                            parameter(ui, "速度变化起始阈值（每秒）", "速度模式共用。速度差除以实际采样距离后超过此值才开始产泡，范围 0～20，默认 0.1。比如 0.5 米内速度相差 1 米/秒，对应强度 2/秒。有方向模式仅计入相互靠近的部分。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_threshold, 0.0..=20.0).max_decimals(3)));
-                            parameter(ui, "速度变化过渡范围（每秒）", "范围 0～20，默认 0.5；强度从起始阈值到阈值加此范围，生成权重平滑升至 1。0 为严格大于阈值才生成，零速度差不产泡。两个速度模式共用，切换时保留数值。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_transition, 0.0..=20.0).max_decimals(3)));
-                            }
-                            parameter(ui, "背景生成倍率", "缩放原有上涨、流速与汇聚触发的泡沫，默认 0.15。对比三种前沿模式时建议设为 0，只观察前沿源。前沿速率设为 0、此倍率设为 1，可恢复原背景生成算法。实时生效，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_background_multiplier, 0.0..=1.0).max_decimals(2)));
+                            parameter(ui, "前沿生成速率（每秒）", "有方向的压缩达到满权重时的泡沫生成速率，范围 0～30。0 关闭前沿生成；独立于背景上涨阈值。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_generation, 0.0..=30.0)));
+                            parameter(ui, "前沿采样距离（米）", "沿当前水流方向，在此距离内均匀采样 4 个位置，范围 0.05～10 米，默认 1 米。沿采样方向相互靠近的速度差除以实际距离，再取最大压缩强度；同向追赶也能触发，拉开和纯横向速度差不触发。按世界距离采样，兼容非正方形网格；干燥和越界点跳过。实时生效，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_distance, 0.05..=10.0).max_decimals(2)));
+                            parameter(ui, "速度变化起始阈值（每秒）", "沿采样方向的压缩速度差除以实际采样距离后超过此值才开始产泡，范围 0～20，默认 0.1。比如 0.5 米内速度相差 1 米/秒，对应强度 2/秒。仅计入相互靠近的部分。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_threshold, 0.0..=20.0).max_decimals(3)));
+                            parameter(ui, "速度变化过渡范围（每秒）", "范围 0～20，默认 0.5；强度从起始阈值到阈值加此范围，生成权重平滑升至 1。0 为严格大于阈值才生成，零速度差不产泡。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_transition, 0.0..=20.0).max_decimals(3)));
+                            parameter(ui, "背景生成速率（每秒）", help("背景生成速率（每秒）"), |ui| ui.add(egui::Slider::new(&mut shore.generation,0.0..=15.0)));
+                            parameter(ui, "背景生成倍率", "范围 0～1，默认 0.15，只缩放上涨、流速与汇聚触发的背景源。单独观察前沿时设为 0。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_background_multiplier, 0.0..=1.0).max_decimals(2)));
                             });
                             ui.separator();
 
@@ -720,7 +722,7 @@ parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui
                             ui.label(egui::RichText::new("泡沫高度（仅外观）").strong());
                             parameter_table(ui, "foam height table", |ui| {
                                 parameter(ui, "最大高度（米）", "范围 0～1 米，默认 0.05 米；0 关闭高度效果。只根据近岸水上泡沫密度向上移动渲染顶点，不增加水位、水深或动量。泡沫明暗使用抬高后的法线，水体仍使用原水面。实时生效并保存，不重置历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_height_max, 0.0..=1.0).max_decimals(3)));
-                                parameter(ui, "起始密度", "范围 0～20，默认 0.1。使用模拟中的泡沫量／面积，未截断为 0～1；小于等于此值时不抬高。不依赖密度颜色参考值，也不采样孔隙纹理。仅近岸水上泡沫生效，沙地残留与远海泡沫不抬高。实时生效并保存。", |ui| ui.add(egui::Slider::new(&mut shore.foam_height_threshold, 0.0..=20.0).max_decimals(3)));
+                                parameter(ui, "起始密度", "范围 0～20，默认 0.1。使用模拟中的泡沫量／面积，未截断为 0～1；小于等于此值时不抬高。不依赖密度颜色参考值，也不采样孔隙纹理。仅近岸水上泡沫生效，远海泡沫不抬高。实时生效并保存。", |ui| ui.add(egui::Slider::new(&mut shore.foam_height_threshold, 0.0..=20.0).max_decimals(3)));
                                 parameter(ui, "密度过渡范围", "范围 0.001～20，默认 1.9。密度从起始值增加到起始值加此范围时，smoothstep 将高度从 0 平滑增加到最大值；超过后保持最大值。浅于 20 毫米时平滑减弱，8 毫米及以下不抬高；关闭显示泡沫也关闭高度。实时生效并保存。", |ui| ui.add(egui::Slider::new(&mut shore.foam_height_transition, 0.001..=20.0).logarithmic(true).max_decimals(3)));
                             });
                             ui.separator();
@@ -728,10 +730,6 @@ parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui
                             parameter_table(ui, "shore foam table", |ui| {
 parameter(ui, "FFT 混合水深（米）", help("FFT 混合水深（米）"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.breaking_depth, 0.5..=5.0)
-                                    ,
-                            ));
-                            parameter(ui, "背景生成速率（每秒）", help("背景生成速率（每秒）"), |ui| ui.add(
-                                egui::Slider::new(&mut shore.generation, 0.0..=15.0)
                                     ,
                             ));
                             parameter(ui, "背景生成起始阈值", help("背景生成起始阈值"), |ui| ui.add(
@@ -755,23 +753,21 @@ parameter(ui, "FFT 混合水深（米）", help("FFT 混合水深（米）"), |u
 
 
 
-                            parameter(ui, "泡沫沉积水深（毫米）", help("泡沫沉积水深（毫米）"), |ui| ui.add(egui::Slider::new(&mut shore.foam_deposit_depth_mm, 0.0..=100.0).max_decimals(2)));
                             parameter(ui, "沙地干燥时间（秒）", help("沙地干燥时间（秒）"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.drying_time, 1.0..=120.0)
                                     ,
                             ));
                             parameter(ui, "浅水调试视图", help("浅水调试视图"), |ui| egui::ComboBox::from_id_salt("浅水调试视图")
                                 .width(ui.available_width()).selected_text(
-                                    super::shore::VIEW_NAMES[shore.view as usize],
+                                    super::shore::VIEWS.iter().find(|(id, _)| *id == shore.view).map_or("正常着色", |(_, name)| *name),
                                 )
                                 .show_ui(ui, |ui| {
-                                    for (i, name) in
-                                        super::shore::VIEW_NAMES.iter().enumerate()
+                                    for &(id, name) in &super::shore::VIEWS
                                     {
                                         ui.selectable_value(
                                             &mut shore.view,
-                                            i as u32,
-                                            *name,
+                                            id,
+                                            name,
                                         );
                                     }
                                 }));
@@ -796,12 +792,12 @@ parameter(ui, "沙地纹理尺寸（米）", help("沙地纹理尺寸（米）")
 parameter(ui, "沙地纹理旋转（度）", help("沙地纹理旋转（度）"), |ui| ui.add(
                                     egui::Slider::new(&mut self.optics.sand_rotation_deg, -180.0..=180.0),
                                 ));
-parameter(ui, "沙滩坡度（高／宽）", help("沙滩坡度（高／宽）"), |ui| ui.add(
+parameter(ui, "沙滩坡度（高／宽）", help("沙滩坡度（高／宽）"), |ui| ui.add_enabled(!self.optics.model.enabled,
                                     egui::Slider::new(&mut self.optics.beach_slope, 0.01..=0.5)
                                         .clamping(egui::SliderClamping::Edits)
                                         ,
                                 ));
-                                parameter(ui, "岸线 X（米）", help("岸线 X（米）"), |ui| ui.add(
+                                parameter(ui, "岸线 X（米）", help("岸线 X（米）"), |ui| ui.add_enabled(!self.optics.model.enabled,
                                     egui::Slider::new(
                                         &mut self.optics.shore_x,
                                         -current.length..=current.length,
@@ -821,7 +817,7 @@ Panel::Optics => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([fa
 
                             parameter_table(ui, "seabed table", |ui| {
 parameter(ui, "海底深度（米）", help("海底深度（米）"), |ui| ui.add_enabled(
-                                !self.optics.beach,
+                                !self.optics.beach || self.optics.model.enabled,
                                 egui::Slider::new(&mut self.optics.depth, 0.25..=100.0)
                                     .logarithmic(true)
                                     .clamping(egui::SliderClamping::Edits)

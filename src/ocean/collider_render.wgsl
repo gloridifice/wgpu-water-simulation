@@ -36,7 +36,8 @@ fn collider_vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) i
     let scaled=local.xz*c.footprint.zw;
     let xz=c.footprint.xy+vec2(c.solid.z*scaled.x-c.solid.w*scaled.y,c.solid.w*scaled.x+c.solid.z*scaled.y);
     let extent_x=abs(c.solid.z)*c.footprint.z+abs(c.solid.w)*c.footprint.w;
-    let base=terrain_height(c.footprint.xy,shore)-shore.terrain.y*extent_x-0.1;
+    var base=terrain_height(c.footprint.xy,shore)-shore.terrain.y*extent_x-0.1;
+    if shore.model.x>0.5 { base=min(terrain_height(xz,shore),c.solid.y-0.1)-0.1; }
     let world=vec3(xz.x,mix(base,c.solid.y,local.y),xz.y);
     normal=vec3(c.solid.z*normal.x-c.solid.w*normal.z,normal.y,c.solid.w*normal.x+c.solid.z*normal.z);
     return ColliderOut(camera.view_projection*vec4(world,1.0),world,normal);

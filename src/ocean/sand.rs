@@ -28,7 +28,7 @@ pub(super) fn textures(gpu: &Gpu) -> [wgpu::TextureView; 4] {
             Map::Scalar,
         ),
     ]
-    .map(|(bytes, map)| upload(gpu, bytes, map))
+    .map(|(bytes, map)| upload(gpu, bytes, map).expect("bundled Ground061 texture"))
 }
 
 fn srgb_to_linear(v: f32) -> f32 {
@@ -47,12 +47,22 @@ fn linear_to_srgb(v: f32) -> f32 {
     }
 }
 
-fn upload(gpu: &Gpu, bytes: &[u8], map: Map) -> wgpu::TextureView {
-    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg)
-        .expect("bundled Ground061 JPEG")
-        .to_rgb8();
+pub(super) fn color_texture(
+    gpu: &Gpu,
+    bytes: &[u8],
+) -> Result<wgpu::TextureView, super::gpu::Error> {
+    upload(gpu, bytes, Map::Color)
+}
+
+fn upload(gpu: &Gpu, bytes: &[u8], map: Map) -> Result<wgpu::TextureView, super::gpu::Error> {
+    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Jpeg)?.to_rgb8();
     let (mut width, mut height) = image.dimensions();
-    assert!(width.is_power_of_two() && height.is_power_of_two());
+    if !width.is_power_of_two()
+        || !height.is_power_of_two()
+        || width.max(height) > gpu.device.limits().max_texture_dimension_2d
+    {
+        return Err("texture must be power-of-two and fit device limits".into());
+    }
     let scalar = matches!(map, Map::Scalar);
     let format = match map {
         Map::Color => wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -153,5 +163,5 @@ fn upload(gpu: &Gpu, bytes: &[u8], map: Map) -> wgpu::TextureView {
         height = nh;
         mip += 1;
     }
-    texture.create_view(&Default::default())
+    Ok(texture.create_view(&Default::default()))
 }

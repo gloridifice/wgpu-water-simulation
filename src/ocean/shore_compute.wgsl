@@ -1,12 +1,13 @@
 // Hydrostatic reconstruction + local Lax-Friedrichs flux on a rectangular grid.
 // State blocks: visible (surface foam density,wetness,h,u),
-// conservative (h,hu,hv,surface foam amount per area), ground (deposit,last wet density,eta,v).
+// conservative (h,hu,hv,surface foam amount per area), surface (reserved,reserved,eta,v).
 // Fourth block: foam area momentum X/Z and texture A displacement X/Z in meters.
 // Fifth block: texture B displacement X/Z, shared cycle phase, reserved.
 @group(0) @binding(0) var<uniform> shore: ShoreParams;
 @group(0) @binding(1) var<storage, read> old_shore: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read_write> new_shore: array<vec4<f32>>;
 @group(0) @binding(5) var<storage, read> initial_shore: array<vec4<f32>>;
+@group(0) @binding(7) var<storage, read> terrain_bed: array<vec2<f32>>;
 fn world(q: vec2<i32>) -> vec2<f32> {
     return shore.domain.xy + (vec2<f32>(q) + vec2(0.5)) * shore.domain.zw / shore.options.z;
 }
@@ -14,9 +15,21 @@ fn state(q: vec2<i32>) -> vec4<f32> {
     let n = i32(shore.options.z);
     let c = clamp(q, vec2(0), vec2(n-1));
     var v = old_shore[u32(n*n + c.y*n+c.x)];
-    if q.x < 0 { v.y = -v.y; }
-    if q.y < 0 || q.y >= n { v.z = -v.z; }
+    if shore.model.x>0.5 {
+        // Zero-gradient open ghosts, reflective closed ghosts. Incoming waves
+        // are supplied by the FFT relaxation band, never a second wavemaker.
+        if (q.x<0 && shore.edges.x<0.5) || (q.x>=n && shore.edges.y<0.5) { v.y=-v.y; }
+        if (q.y<0 && shore.edges.z<0.5) || (q.y>=n && shore.edges.w<0.5) { v.z=-v.z; }
+    } else {
+        if q.x < 0 { v.y = -v.y; }
+        if q.y < 0 || q.y >= n { v.z = -v.z; }
+    }
     return v;
+}
+fn model_open_outside(q: vec2<i32>) -> bool {
+    let n=i32(shore.options.z);
+    return shore.model.x>0.5 && ((q.x<0 && shore.edges.x>0.5) || (q.x>=n && shore.edges.y>0.5)
+        || (q.y<0 && shore.edges.z>0.5) || (q.y>=n && shore.edges.w>0.5));
 }
 fn bed(q: vec2<i32>) -> f32 {
     let n = i32(shore.options.z);
@@ -25,19 +38,22 @@ fn bed(q: vec2<i32>) -> f32 {
 fn velocity(q: vec4<f32>) -> vec2<f32> {
     return q.yz / max(q.x, 0.005);
 }
-// Foam must accumulate in front of an emergent solid instead of being deposited
+// Foam must accumulate in front of an emergent solid instead of leaking
 // through its side. Wet overtopped cells remain ordinary transport cells.
 fn collider_blocks_face(a: vec2<i32>, b: vec2<i32>) -> bool {
-    if shore.collider_meta.x<0.5 { return false; }
+    if shore.collider_meta.x<0.5 && shore.model.x<0.5 { return false; }
     let za=bed(a); let zb=bed(b);
-    let raised=za>terrain_height(world(a),shore)+0.00001 || zb>terrain_height(world(b),shore)+0.00001;
+    let raised=shore.model.x>0.5 || za>terrain_height(world(a),shore)+0.00001 || zb>terrain_height(world(b),shore)+0.00001;
     return raised && max(za,zb)>=max(za+state(a).x,zb+state(b).x);
 }
 // Shared face velocity: identical on either side, zero at closed boundaries.
 // Dry cells may receive foam from advancing water but cannot export it.
 fn water_face_velocity(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> f32 {
     let b=c+delta; let n=i32(shore.options.z);
-    if any(b<vec2(0)) || any(b>=vec2(n)) { return 0.0; }
+    if any(b<vec2(0)) || any(b>=vec2(n)) {
+        if model_open_outside(b) { return velocity(state(c))[axis]*f32(delta[axis]); }
+        return 0.0;
+    }
     if collider_blocks_face(c,b) { return 0.0; }
     let a_state=state(c); let b_state=state(b);
     let speed=0.5*(velocity(a_state)[axis]+velocity(b_state)[axis])*f32(delta[axis]);
@@ -114,7 +130,10 @@ fn advance_foam_motion(c: vec2<i32>, q: vec4<f32>, original: vec4<f32>, momentum
 }
 fn foam_flux(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec3<f32> {
     let b=c+delta; let n=i32(shore.options.z);
-    if any(b<vec2(0)) || any(b>=vec2(n)) { return vec3(0.0); }
+    if any(b<vec2(0)) || any(b>=vec2(n)) {
+        if model_open_outside(b) { return max(0.0,foam_transport_velocity(c)[axis]*f32(delta[axis]))*foam_state(c); }
+        return vec3(0.0);
+    }
     if collider_blocks_face(c,b) { return vec3(0.0); }
     let normal=f32(delta[axis]);
     let a_speed=foam_transport_velocity(c)[axis]*normal;
@@ -259,19 +278,6 @@ fn foam_breaking_weight(rise_ratio: f32) -> f32 {
 }
 // Sample one immutable solver stage; never compare a newly updated center with
 // old neighbors. World-space direction accounts for unequal X/Z cell spacing.
-fn foam_surface_cell(c: vec2<i32>) -> vec2<f32> {
-    let depth=state(c).x;
-    // Dry terrain has no free surface and must not contribute a fake height.
-    let wet=select(0.0,1.0,depth>0.00001);
-    return vec2((bed(c)+depth)*wet,wet);
-}
-fn foam_surface_at(grid: vec2<f32>) -> vec2<f32> {
-    let c=vec2<i32>(floor(grid)); let f=fract(grid);
-    // Interpolate height only over wet contributors, preserving a level surface
-    // beside dry cells. Return weighted height and coverage for normalization.
-    return mix(mix(foam_surface_cell(c),foam_surface_cell(c+vec2(1,0)),f.x),
-        mix(foam_surface_cell(c+vec2(0,1)),foam_surface_cell(c+vec2(1,1)),f.x),f.y);
-}
 fn foam_flow_cell(c: vec2<i32>) -> vec3<f32> {
     let q=state(c);
     let wet=select(0.0,1.0,q.x>0.00001);
@@ -294,36 +300,24 @@ fn foam_front_weight(c: vec2<i32>) -> f32 {
     let center=state(c); let flow=velocity(center); let speed=length(flow);
     // A stationary surface has no forward direction; suppress tiny velocity noise.
     if speed<=0.02 || center.x<=0.00001 { return 0.0; }
-    let surface=bed(c)+center.x;
     let spacing=shore.domain.zw/shore.options.z;
     let direction=flow/speed;
     let offset=direction*shore.foam_front.y/spacing;
-    var drop=0.0;
     var velocity_strength=0.0;
     for(var sample=1u;sample<=4u;sample++) {
         let fraction=f32(sample)/4.0;
         let ahead=vec2<f32>(c)+offset*fraction;
-        // Leaving the patch is not evidence of a falling surface or collision.
+        // Leaving the patch is not evidence of a collision.
         if any(ahead<vec2(0.0)) || any(ahead>vec2(shore.options.z-1.0)) { continue; }
-        if shore.foam_velocity.x<0.5 {
-            let sampled=foam_surface_at(ahead);
-            if sampled.y<=0.000001 { continue; }
-            drop=max(drop,surface-sampled.x/sampled.y);
-        } else {
-            let sampled=foam_flow_at(ahead);
-            if sampled.z<=0.000001 { continue; }
-            let difference=flow-sampled.xy/sampled.z;
-            // Absolute mode includes separation and transverse changes. Signed
-            // mode only accepts closing motion, including same-direction catch-up.
-            let relative_speed=select(length(difference),max(0.0,dot(difference,direction)),
-                shore.foam_velocity.x>1.5);
-            velocity_strength=max(velocity_strength,relative_speed/(shore.foam_front.y*fraction));
-        }
+        let sampled=foam_flow_at(ahead);
+        if sampled.z<=0.000001 { continue; }
+        let difference=flow-sampled.xy/sampled.z;
+        // Only closing motion contributes, including same-direction catch-up.
+        let relative_speed=max(0.0,dot(difference,direction));
+        velocity_strength=max(velocity_strength,relative_speed/(shore.foam_front.y*fraction));
     }
     // Deliberately no dry-front, rising-water or shore-direction requirement.
-    var weight=smoothstep(0.0,shore.foam_front.z,drop);
-    if shore.foam_velocity.x>0.5 { weight=foam_velocity_weight(velocity_strength); }
-    return weight*smoothstep(0.02,0.1,speed);
+    return foam_velocity_weight(velocity_strength)*smoothstep(0.02,0.1,speed);
 }
 @group(0) @binding(6) var<uniform> previous_bed: ShoreParams;
 
@@ -347,18 +341,16 @@ fn edit_colliders(@builtin(global_invocation_id) id: vec3<u32>) {
     let depth_ratio=q.x/max(old_depth,0.0000001);
     q.y=q.y*depth_ratio;
     q.z=q.z*depth_ratio;
-    var ground=old_shore[2u*cells+i];
     if q.x<=shore.density.z {
-        // No sand deposition on a newly inserted solid and no ghost foam
-        // momentum/texture in a newly dry cell. Ground memory stays intact.
-        q.w=0.0; ground.y=0.0;
+        // Clear foam momentum/texture in newly dry cells; preserve wetness.
+        q.w=0.0;
         new_shore[3u*cells+i]=vec4(0.0);
         new_shore[4u*cells+i]=vec4(0.0,0.0,old_shore[4u*cells+i].zw);
     }
     let v=velocity(q);
     new_shore[i]=vec4(q.w,old_shore[i].y,q.x,v.x);
     new_shore[cells+i]=q;
-    new_shore[2u*cells+i]=vec4(ground.xy,q.x+after,v.y);
+    new_shore[2u*cells+i]=vec4(0.0,0.0,q.x+after,v.y);
 }
 
 @compute @workgroup_size(8,8)
@@ -402,7 +394,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     q.w=foam.x;
     q.y+=dt*bed_source(c,0u)/spacing.x; q.z+=dt*bed_source(c,1u)/spacing.y;
     // One-way FFT boundary relaxation; outgoing SWE disturbances are damped here.
-    let edge=smoothstep(0.80,1.0,(f32(id.x)+0.5)/f32(n));
+    let edge=select(smoothstep(0.80,1.0,(f32(id.x)+0.5)/f32(n)),model_edge_weight(p,shore),shore.model.x>0.5);
     let incoming=incident(p,max(-z,0.1));
     let imposed=vec4(max(incoming.x-z,0.0),incoming.yz,0.0);
     if shore.solver.x>1.5 {
@@ -448,22 +440,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let compression=smoothstep(shore.density.x,shore.density.x+0.5,max(0.0,-divergence));
     let background_source=shore.options.x*shore.foam_front.w*breaking*mix(0.25,1.0,max(bore,compression));
     let front_source=shore.foam_front.x*foam_front_weight(c);
-    let source=(background_source+front_source)
-        *smoothstep(0.003,0.03,q.x)*(1.0-edge);
+    // Inject once per completed SWE substep; transport handles convergence.
+    let source=(background_source+front_source)*smoothstep(0.003,0.03,q.x)*(1.0-edge);
     foam=foam_sources(vec3(q.w,foam.yz),velocity(q),source);
     q.w=foam.x;
-    let old=initial_shore[index]; let ground=initial_shore[2u*cells+index];
-    let wet=q.x>shore.density.z;
-    let surface_density=q.w;
-    var stranded=ground.x*exp(-dt/10.0);
-    if !wet { stranded+=q.w; q.w=0.0; foam.y=0.0; foam.z=0.0; }
-    if wet { stranded*=exp(-dt/0.12); }
+    let old=initial_shore[index];
+    // Foam exists only on water; drying removes it without leaving sand residue.
+    if q.x<=shore.density.z { q.w=0.0; foam.y=0.0; foam.z=0.0; }
     let motion=advance_foam_motion(c,q,original,foam.yz);
     new_shore[3u*cells+index]=motion.motion;
     new_shore[4u*cells+index]=motion.texture;
     let wetness=select(old.y*exp(-dt/shore.timing.w),1.0,q.x>0.003);
     new_shore[index]=vec4(q.w,wetness,q.x,velocity(q).x);
     new_shore[cells+index]=q;
-    new_shore[2u*cells+index]=vec4(stranded,select(0.0,surface_density,wet),q.x+z,velocity(q).y);
+    new_shore[2u*cells+index]=vec4(0.0,0.0,q.x+z,velocity(q).y);
 }
 

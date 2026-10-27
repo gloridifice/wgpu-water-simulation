@@ -2,6 +2,8 @@
 pub struct Seabed {
     pub color: wgpu::TextureView,
     pub depth: wgpu::TextureView,
+    pub model: Option<super::model_render::ModelRenderer>,
+    pub ground_vertices: u32,
     bind: wgpu::BindGroup,
     prepass: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
@@ -65,6 +67,16 @@ impl Seabed {
             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
             count: None,
         });
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 10,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("seabed uniforms"),
             entries: &entries,
@@ -73,6 +85,10 @@ impl Seabed {
             label: Some("seabed bindings"),
             layout: &layout,
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: shore.terrain_bed.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&maps[0]),
@@ -165,6 +181,8 @@ impl Seabed {
         let color = Self::target(device, width, height, wgpu::TextureFormat::Rgba16Float);
         let depth = Self::target(device, width, height, wgpu::TextureFormat::Depth32Float);
         Self {
+            model: None,
+            ground_vertices: 6,
             color,
             depth,
             bind,
@@ -237,9 +255,12 @@ impl Seabed {
         });
         pass.set_pipeline(&self.prepass);
         pass.set_bind_group(0, &self.bind, &[]);
-        pass.draw(0..6, 0..1);
+        pass.draw(0..self.ground_vertices, 0..1);
         pass.set_pipeline(&self.collider_prepass);
         pass.draw(0..576, 0..super::collider::MAX_COLLIDERS as u32);
+        if let Some(model) = &self.model {
+            model.draw(&mut pass, true);
+        }
     }
 
     /// Redraw ground and colliders into the final depth buffer. This handles
@@ -247,8 +268,11 @@ impl Seabed {
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(&self.composite);
         pass.set_bind_group(0, &self.bind, &[]);
-        pass.draw(0..6, 0..1);
+        pass.draw(0..self.ground_vertices, 0..1);
         pass.set_pipeline(&self.collider_composite);
         pass.draw(0..576, 0..super::collider::MAX_COLLIDERS as u32);
+        if let Some(model) = &self.model {
+            model.draw(pass, false);
+        }
     }
 }

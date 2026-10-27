@@ -56,6 +56,57 @@ egui 控件和 egui_dock 使用从 `wgpu_pbr` 移植的深色主题与 MiSans �
 
 命令行也支持 `--amplitude 0.002 --phillips-length 20 --wind-angle 45 --mesh-resolution 192`。旧的 `--wind 14` 仍可用，作用是设置 `L=U²/g`；若同时提供 `--phillips-length`，后出现的选项生效。
 
+## 扫描海岸模型与可调 SWE 区域
+
+新增 **模型与区域** Dock 页签。模型场景使用 `assets/models/challaborough_pillbox.glb` 显示岩岸，使用预烘焙的 `.sweh` 高度场驱动 SWE；保留原沙滩／平面场景，不改变默认启动场景。资源来源、CC BY 4.0 署名、裁切面清理和磁盘格式见 [`assets/models/README.md`](assets/models/README.md)。
+
+```powershell
+# 首次生成磁盘高度场；已有输出不会被覆盖。此步骤不需要 GPU。
+cargo run --release --bin terrain-bake
+
+# 启动模型预设，避免覆盖个人设置。
+cargo run --release --bin ocean -- --model --no-settings
+
+# 设置包围盒中心、尺寸和网格精度；覆盖参数写在场景预设后面。
+cargo run --release --bin ocean -- --model --no-settings --swe-center 0,4,0 --swe-size 128,64,128 --swe-resolution 512
+
+# 专项真实 GPU 验证，不依赖扫描资产，也不读写个人设置。
+cargo run --release --bin ocean -- --verify-terrain
+```
+
+模型预设会覆盖会话中的场景参数，类似 `--beach`。恢复自己的已保存模型摆放时只用 `cargo run`，不要重复加 `--model`。模型参数、已应用包围盒、开放边界和显示开关进入会话及命名配置；旧配置缺少模型字段时默认关闭，继续原有场景。待应用草稿不保存。命令行快照仍使用显式参数，而不是个人配置。
+
+### 离线资产与运行时重建
+
+离线工具以约 0.05 个模型单位的格距生成 984×890 单元中心高度及有效覆盖标记；初始化时从磁盘加载一次并核对源 GLB SHA-256。修改区域时不重新读 GLB、不逐三角形求交。目前在 CPU 对驻留源高度场做 O(N²) 重采样，再上传静态 GPU 床面缓冲；求解子步只读该缓冲。它不是 GPU 重烘焙，也不在每帧重采样。控制台的重建毫秒数是 CPU 重采样及上传调用耗时，不是 GPU timestamp。
+
+有效扫描区域使用模型高度，不与原沙坡处处取最大值。扫描包围盒外沿最近边缘高度，在可调的**海床衔接宽度**内平滑过渡到水体光学面板设置的海底深度；无效内部采样使用该背景深度。补充海床不是当地实测水下地形，也不是自动修复扫描洞穴。俯视最高表面只构成单层地形代理，不能模拟悬挑下穿流、洞穴与屋顶同时有水或三维飞溅。
+
+### 参数与应用语义
+
+| 参数 | 含义与生效方式 |
+| --- | --- |
+| 启用模型 | 应用后切换模型／原场景，重新初始化近岸历史 |
+| 模型位置 X/Y/Z（米）、统一比例、旋转 Y（度） | 调整摆放；统一比例是米／模型单位。应用后从源高度场重采样，不重新离线烘焙。俯仰／翻滚不支持，需要重新烘焙 |
+| 海平面高程（米） | 与模型位置 Y 使用同一高程基准；内部渲染和求解以该海平面为 Y=0。修改是静态场景编辑并重置，不是动态潮汐 |
+| 包围盒中心／尺寸 X/Y/Z（米） | XZ 决定实际二维计算域；Y 只用于线框和范围检查，不截平床面，不是三维网格，也不是封闭顶盖 |
+| 按模型范围自动覆盖 | 加载资产后，根据变换后的包围盒和松弛带自动计算近方形区域，留出绕流余量；先修改草稿，再点击应用 |
+| 每轴网格数 | 在 SWE 页签选择 64～1024；独立于离线高度场与 FFT。模型场景另绘制与 SWE 同密度的局部水面网格 |
+| 四边开放开关 | 顺序 −X、+X、−Z、+Z；开启是零梯度开放边界加 FFT 松弛输入，关闭为反射边界。开放边界允许泡沫与泡沫动量流出，不导入外部泡沫 |
+| 松弛带宽（米） | 每个开放边缘的过渡宽度，必须小于 X/Z 最小尺寸的一半。模型及主要交互区应避开该带；角点取最大权重，不重复叠加 |
+| 海床衔接宽度（米） | 默认 12 米，扫描外人为海床的过渡距离；应留在计算域及松弛带以内 |
+| 显示包围盒 | 橙色三维线框；仅外观 |
+
+模型和范围控件先编辑草稿，点击 **应用模型与区域** 后才生效。XZ 范围、模型变换、水位、边界、补充海床或精度变化会重建／重新初始化近岸水体，清空近岸泡沫与湿润历史；FFT 时间和远海泡沫继续推进。仅改变 Y 显示范围和线框开关不重置。水体光学页的海底深度控件仍为即时生效，模型场景下修改会即时重建补充海床并重置。暂停时也能应用；尚未实现不同计算网格之间的守恒历史迁移。
+
+模型内部及主要交互区以 SWE 水面为主，外缘渐变回 FFT；耦合仍是 **FFT → SWE 单向**。保留原输入的水位／两个动量通道、共同增益与短波过滤。当前开放处理不是严格无反射特征边界；需要结合输入波长调整松弛带，尚未标定反射系数。提高网格精度也不会修复深水 FFT 与非色散 SWE 的相速差异。
+
+模型同时写入不透明颜色／深度预绘制和最终场景，水下部分参与现有光程积分。近岸水面插值忽略干地高度，泡沫输送在未淹没地形处阻挡；湿润和残留只投影到接近床面的模型表面，不涂满整个垂直岩壁。没有接入独立的岩壁水痕模型。
+
+可用 `--model-position X,Y,Z`、`--model-scale N`、`--model-yaw DEG`、`--sea-level M`、`--swe-center X,Y,Z`、`--swe-size X,Y,Z`、`--swe-resolution N`、`--swe-sponge M`、`--swe-open-edges 1,1,1,1`、`--hide-swe-box` 设置初始参数。模型比例与默认水位仅供预览，未做现场测量校准。
+
+`--verify-terrain` 使用生产 GPU 求解路径，覆盖一阶／二阶的解析斜床上传、干湿静水、运动水脉冲水量守恒、Y 范围／线框编辑不改变暂停状态、暂停时改域重采样，以及四个开放边缘的静水保持。CPU 库测试覆盖磁盘资产往返、源哈希不匹配／截断拒绝、旋转缩放后解析床面采样和无效覆盖。完整 `--verify` 也包含这些 GPU 检查。
+
 ## 性能面板
 
 左下 Dock 的 **性能** 标签页与 **远海泡沫** 并列，使用两列表格显示指标和数值；原浅水面板中的 GPU 耗时行已移至此处。数据每 1 秒更新一次，CPU 指标为该窗口内每帧平均值，GPU 指标只统计新读回且匹配当前求解阶数的样本。
@@ -167,7 +218,7 @@ src/ocean/viewer.rs    窗口、相机、交互、离屏 PNG
 src/ocean/verify.rs    独立直接 DFT 与 GPU 验证
 ```
 
-基础 FFT 生成周期海面，不模拟水体内部速度或岸边碰撞。沙滩预设现已叠加程序化岸浪、泡沫输运和湿沙历史，详见文末；仍不包含守恒浅水求解或真实翻卷。水平位移过大使网格折叠并不等于物理破浪。
+基础 FFT 生成周期海面，本身不求解岸边碰撞。沙滩和扫描模型场景叠加局部二维 SWE、泡沫输运及湿润历史，详见相关章节；耦合方向为 FFT → SWE。仍不包含真实翻卷或三维空气卷入，水平位移过大使网格折叠并不等于物理破浪。
 
 公式参考：[Jerry Tessendorf, Simulating Ocean Water，§3.2–3.4、3.7](https://jtessen.people.clemson.edu/reports/papers_files/coursenotes2002.pdf)。图形接口：[wgpu](https://docs.rs/wgpu/27.0.1/wgpu/)、[winit ApplicationHandler](https://docs.rs/winit/0.30.13/winit/application/trait.ApplicationHandler.html)。
 
@@ -391,12 +442,12 @@ cargo run --release --features ocean --bin ocean -- --snapshot manual-scattering
 
 σ_t 和手动 S 使用 egui 原生颜色选择器配合 Strength，实际线性系数为 `color * strength`，可展开精确 RGB 输入；颜色表示通道比例，强度不会受颜色选择器 0～1 范围限制。天空颜色和反照率直接使用 0～1 线性 RGB，天空另有独立强度。
 
-## Local 2D shallow water, FFT offshore and stranded foam
+## Local 2D shallow water, FFT offshore and waterborne foam
 
 ```powershell
 cargo run --release --features ocean --bin ocean -- --beach --no-settings
 cargo run --release --features ocean --bin ocean -- --beach --snapshot shore.png --time 24
-cargo run --release --features ocean --bin ocean -- --beach --shore-view 5 --snapshot stranded.png --time 27
+cargo run --release --features ocean --bin ocean -- --beach --no-settings --shore-view 6 --snapshot foam-density.png --time 27
 cargo run --release --features ocean --bin ocean -- --beach --no-shore
 ```
 
@@ -409,14 +460,13 @@ The independent **浅水模拟（SWE）** panel contains the SWE, foam, wet-sand
 | 2 | Cross-shore velocity: blue incoming, orange outgoing |
 | 3 | Waterborne foam concentration |
 | 4 | Stationary sand wetness |
-| 5 | Stranded foam on the ground |
-| 6 | Surface/deposited foam density: green (low) to red (reference or higher), no texture |
+| 6 | Waterborne foam density: green (low) to red (reference or higher), no texture |
 
 ### Solver and rendering
 
 `shore_compute.wgsl` advances a rectangular, world-space finite-volume grid (default 256²). It offers the original first-order hydrostatic Rusanov + Euler solver and a second-order MUSCL + SSP-RK2 solver. The latter reconstructs free surface, velocity and bed using a generalized minmod limiter (theta=1.3), with hydrostatic face corrections and a matching centered bed source. Reconstruction falls back to first order near dry cells and patch boundaries. Both retain wet/dry handling and the 12 m/s velocity safeguard; RK2 stages include boundary relaxation and bottom friction. Foam generation/decay and ground memory update once per completed substep and remain split first-order source updates. This is not a port of the reference project's KP07 solver.
 
-The stored variables are `(h, hu, hv, surface_foam_density)`. Foam is an effective amount per unit surface area in arbitrary units, not a depth-weighted concentration or physical mass density. A separate conservative upwind flux transports foam using shared face velocities: convergence concentrates it and divergence dilutes it, without creating foam. Both orders use first-order spatial foam transport; second-order SWE uses RK2 for its transport time integration. Foam is not divided by water depth or clipped at 1. The offshore sponge removes foam; dry cells deposit their remaining amount on the sand. Closed boundaries have zero foam flux.
+The stored variables are `(h, hu, hv, surface_foam_density)`. Foam is an effective amount per unit surface area in arbitrary units, not a depth-weighted concentration or physical mass density. A separate conservative upwind flux transports foam using shared face velocities: convergence concentrates it and divergence dilutes it, without creating foam. Both orders use first-order spatial foam transport; second-order SWE uses RK2 for its transport time integration. Foam is not divided by water depth or clipped at 1. The offshore sponge removes foam; cells at or below 3 mm water depth discard their remaining foam without leaving ground residue. Closed boundaries have zero foam flux.
 
 Generation combines the original rising-water source (scaled by the background multiplier, default 0.15) with a directional front source: sample free-surface elevation (bed height plus water depth) ahead of the flow and emit where the surface falls. The front source does not require rising water or nearby dry land. Both retain wet-depth and offshore-sponge gating. This is a visual proxy, not resolved air entrainment; the criterion follows surface slope, so retreat can also emit when its forward water surface is lower; dry samples are excluded. Generation and exponential decay are integrated analytically with a frozen source per completed substep. Density may exceed the color reference, retaining accumulated amount rather than clipping it.
 
@@ -463,9 +513,9 @@ Adding three channels doubles the FFT field/scratch storage and butterfly work r
 
 ### Ground memory and foam appearance
 
-Ground memory is stationary. When water depth crosses below 3 mm, the last wet foam concentration becomes stranded foam at that location. It fades with a 10-second time constant and is cleared rapidly by rewetting (0.12 seconds). Wet sand dries with the configurable time constant, default 18 seconds. Waterborne foam continues to move with the conservative flux.
+Sand wetness is stationary and dries with the configurable time constant, default 18 seconds. Waterborne foam moves with the conservative flux and is removed when water depth falls to 3 mm or below. No foam is stored or rendered on exposed ground.
 
-The water material uses two offset flow phases driven by the simulated velocity and coarse/fine Voronoi lace samples. Concentration changes an erosion threshold, opening holes as foam disappears. The ground uses the same lace in fixed world coordinates. Mip filtering and derivative-smoothed thresholds reduce distant shimmer. F / Show foam affects both waterborne and stranded foam without stopping their evolution.
+The water material uses two offset flow phases driven by the simulated velocity and coarse/fine Voronoi lace samples. Concentration changes an erosion threshold, opening holes as foam disappears. Mip filtering and derivative-smoothed thresholds reduce distant shimmer. F / Show foam affects waterborne foam without stopping its evolution.
 
 The bundled `assets/shorewaves/voronoi_lace.png` comes from Reboot16 / Enrico K.'s Shorewaves project. Its MIT notice is retained in `assets/shorewaves/LICENSE.txt`. The solver and material implementation here are adapted to Rust/wgpu/WGSL and the existing FFT renderer; no Godot runtime is needed.
 
@@ -473,7 +523,7 @@ The bundled `assets/shorewaves/voronoi_lace.png` comes from Reboot16 / Enrico K.
 
 Pause freezes simulation and texture flow. R, Restart time and **重置浅水、泡沫和沙地** reinitialize the local simulation from the current FFT and clear foam/sand history. Terrain, 波高增益, SWE input gain, blend-depth and enable changes also reset it; applying a new FFT spectrum rebuilds the coupled resources; foam-rate, drying-time and view changes preserve history. Settings persist, but simulation state does not. Snapshot mode prewarms up to 60 seconds of shore history (8 seconds offshore); later snapshots approximate a finite history window.
 
-`--verify` exercises the actual GPU shader: lake at rest, local pulse mass conservation away from the inlet, propagation and foam transport in both axes, stranded deposition/decay/rewetting, extreme slope/amplitude settings, terrain reset, run-up, finite/nonnegative states, pause, reset and disable. Raster verification prewarms 24 seconds and checks water history at two target sizes. The FFT test compares all six channels to a double-precision direct DFT and checks analytic oblique waves in both directions. An inlet probe checks production world-coordinate wrapping, time interpolation and gain against CPU samples. Zero FFT power must generate no shoreline flow/foam. Existing optics and sky tests remain enabled. `cargo test --all-features` covers configuration compatibility and the existing CPU suites.
+`--verify` exercises the actual GPU shader: lake at rest, local pulse mass conservation away from the inlet, propagation and foam transport in both axes, dry-cell foam removal and sand drying/rewetting, extreme slope/amplitude settings, terrain reset, run-up, finite/nonnegative states, pause, reset and disable. Raster verification prewarms 24 seconds and checks water history at two target sizes. The FFT test compares all six channels to a double-precision direct DFT and checks analytic oblique waves in both directions. An inlet probe checks production world-coordinate wrapping, time interpolation and gain against CPU samples. Zero FFT power must generate no shoreline flow/foam. Existing optics and sky tests remain enabled. `cargo test --all-features` covers configuration compatibility and the existing CPU suites.
 
 The heightfield cannot overturn or produce airborne spray. First-order numerical diffusion and the coarse alongshore spacing limit small-scale hydrodynamic detail; the lace texture supplies visual detail. Refraction remains the existing optical path implementation. Performance depends on substep count, mesh resolution and GPU; no frame-rate guarantee is implied.
 
@@ -513,7 +563,7 @@ GPU 验证包含两种模式的静水保持、局部脉冲质量与输运、湿�
 
 ### 水面泡沫与沙滩残留颜色
 
-SWE 面板新增 **泡沫颜色**：**水上泡沫** 控制水面泡沫（含远海白沫），**沙地残留泡沫** 控制退水后的沙滩残留泡沫。默认水面近白，残留为较暗的冷灰蓝，便于区分。**默认区分色** 恢复这组配色，**恢复原配色** 恢复原来的近白配色。颜色即时生效、自动保存，不重置水体或残留历史；光照和水下吸收仍会影响最终显示色。CLI 对应 `--water-foam-color R,G,B` 和 `--stranded-foam-color R,G,B`，使用 0～1 线性 RGB，放在 `--beach` 后。
+SWE 面板的 **泡沫颜色 → 水上泡沫** 控制水面泡沫（含远海白沫）。**恢复默认泡沫颜色** 恢复近白配色。颜色即时生效、自动保存，不重置水体；光照和水下吸收仍影响最终显示色。CLI 使用 `--water-foam-color R,G,B`，范围为 0～1 线性 RGB，放在 `--beach` 后。
 
 
 残留可见性修正：沙滩残留现在以浓度调节透明度，纹理只调制斑驳程度，避免低浓度残留被纹理阈值整体抹掉。近岸水面覆盖改用采样的 SWE 水深，避免较粗的水面三角形横跨干格子遮住残留。**区分位置：水绿／沙红** 可用绿色标记水面泡沫、红色标记真正的沙滩残留，**默认区分色** 恢复正常配色。较宽的临水泡沫带通常仍属于水面泡沫；残留是靠陆一侧的细窄退水痕迹。
@@ -523,12 +573,12 @@ SWE 面板新增 **泡沫颜色**：**水上泡沫** 控制水面泡沫（含远
 
 在 **浅水模拟（SWE）** 面板点击 **密度调试：低绿／高红**，或在 **浅水调试视图** 选择 **泡沫密度（低绿／高红）**。CLI：`--beach --shore-view 6`。水面与沙滩残留使用同一色标：低密度绿色，中间黄色，达到参考值及以上红色；无泡沫保留背景。调试颜色不经过泡沫纹理、光照或远海白沫混合，低于 0.01 的极弱密度淡入背景。正常 Shaded 视图保留已有材质。
 
-- **背景生成速率（每秒）**：原有背景泡沫生成速率，受背景生成倍率缩放；前沿生成独立控制。两种生成都关闭后，可观察已有泡沫的输送与汇聚。
+- **背景生成速率（每秒）**：控制背景源，受背景生成倍率缩放；前沿生成独立控制。此速率和前沿速率都设为 0 后，可观察已有泡沫的输送与汇聚。
 - **水上泡沫衰减（每秒）**：每秒指数衰减系数，0 表示关闭水面泡沫衰减。
 - **汇聚增强阈值（每秒）**：生成模型中压缩增强项的阈值；不改变守恒输送本身的汇聚效果。
 - **密度颜色参考值**：红色对应的密度，默认 2；只调整显示映射，不裁剪模拟密度。
 
-这些参数即时生效；需要公平比较时使用 **重置浅水、泡沫和沙地** 或重启时间。退水残留由干格子剩余泡沫量沉积，沿用 10 秒衰减时间与再淹没洗除。此阶段不新增孔隙纹理模型。GPU 验证覆盖两种求解模式的泡沫总量守恒、平移、汇聚增密、扩散减密、指数衰减及干湿转换。
+这些参数即时生效；需要公平比较时使用 **重置浅水、泡沫和沙地** 或重启时间。退水后清除水上泡沫，不再沉积沙地残留。此阶段不新增孔隙纹理模型。GPU 验证覆盖两种求解模式的泡沫总量守恒、平移、汇聚增密、扩散减密、指数衰减及干湿转换。
 
 
 ### FFT 初始化与输入增益
@@ -540,7 +590,7 @@ SWE 面板新增 **泡沫颜色**：**水上泡沫** 控制水面泡沫（含远
 CLI 示例：`cargo run --release --features ocean --bin ocean -- --beach --swe-input-gain 1.5`。
 
 
-泡沫沉积水深可在 **浅水模拟（SWE） → 泡沫沉积水深（毫米）** 调整，范围 0～100 毫米，默认 3 毫米。水深不大于阈值时将剩余水面泡沫沉积到沙地；高于阈值时按原有速率洗除残留。参数即时生效、自动保存，不重置历史。调大可让沉积更早发生；0 需要水深降到零。此参数只改变泡沫输送/沉积/洗除的分界，水面几何裁剪、求解器干湿保护与湿沙判断保持各自的阈值。
+沙地残留泡沫的沉积、存储、衰减、渲染及对应颜色、沉积水深控件已删除，湿沙历史与干燥时间保留。水上泡沫在水深不超过 3 毫米时清除，不留下地面残留；水面几何裁剪和求解器干湿保护仍使用各自阈值。旧配置中的 `stranded_foam_color`、`foam_deposit_depth_mm` 被忽略；旧沙地泡沫视图 5 加载为正常着色，水上密度视图保留编号 6。CLI 已移除 `--stranded-foam-color` 和视图 5。
 
 
 近岸背景泡沫生成条件可在 **浅水模拟（SWE）** 调整：
@@ -550,55 +600,25 @@ CLI 示例：`cargo run --release --features ocean --bin ocean -- --beach --swe-
 两项参数即时生效、自动保存，不清空已有泡沫。静水在两项均为 0 时仍不产泡。它们只控制背景生成权重，不影响新增前沿源；实际泡沫量还受生成速率、背景倍率、压缩增强、水深、输送与衰减影响。老设置文件缺少这些字段时使用默认值。
 
 
-## 前沿泡沫生成模式
+## 前沿泡沫：有方向的压缩
 
-在 **浅水模拟（SWE） → 前沿泡沫 → 生成模式** 中切换三种判据。它们使用同一个水流场，独立于背景生成中的水位上涨门槛：
+前沿生成只保留**有方向的压缩**，不再提供检测方式切换。压缩强度为 `max(当前速度沿采样方向的分量 − 前方速度沿该方向的分量, 0) ÷ 实际采样距离`，单位每秒。同向追赶、迎面相遇可以触发，沿流向拉开和纯横向速度差不触发。
 
-| 模式 | 检测内容 |
-| --- | --- |
-| 水面落差（默认） | 沿流向比较实际水面高度，前方更低时生成；保留原有算法 |
-| 速度差绝对值 | 当前与前方的水流速度向量差的长度 ÷ 实际采样距离；挤压、拉开和横向速度差都能触发 |
-| 有方向的压缩 | `max(当前速度沿采样方向的分量 − 前方速度沿该方向的分量, 0) ÷ 实际采样距离`；允许同向追赶和迎面相遇，排除沿采样方向拉开及纯横向速度差 |
+沿当前水流方向在采样距离的 1/4、1/2、3/4、1 倍处取样，分别计算压缩强度后取最大值。使用同一求解阶段的水体速度，按世界距离计算，兼容非正方形网格。双线性插值只计有水角点；越界及完全干燥的点跳过。当前流速不超过 0.02 m/s 时关闭检测，0.02～0.1 m/s 平滑开启。
 
-三种模式沿当前水流方向在采样距离的 1/4、1/2、3/4、1 倍处取样。速度模式先分别除以每个点的实际世界距离，再取最大强度，单位为每秒；在相同线性速度场中，改变距离或网格间距不会改变此强度。速度读取使用同一求解阶段的水体速度，不使用带响应延迟的泡沫速度。双线性插值只计有水角点，干地的零速度不作为静止水流参与比较；越界及完全干燥的点跳过。沿流向检测在当前格子流速不超过 0.02 m/s 时关闭，0.02～0.1 m/s 平滑开启；静止格子自身不提供采样方向。
+在 **浅水模拟（SWE） → 前沿泡沫** 调整：
 
 | 参数 | 默认值 | 范围 / 含义 |
 | --- | --- | --- |
-| 前沿生成速率（每秒） | 8 | 0～30，三种模式共用，满权重时的生成速率；0 关闭 |
-| 前沿采样距离（米） | 1 | 0.05～10，三种模式共用 |
-| 前沿满强度水面落差（米） | 0.03 | 0.001～1，仅水面落差模式显示 |
-| 速度变化起始阈值（每秒） | 0.1 | 0～20，两个速度模式共用，超过后开始生成 |
-| 速度变化过渡范围（每秒） | 0.5 | 0～20，阈值到阈值加此范围内平滑升至满权重；0 为严格大于阈值的硬切换 |
-| 背景生成倍率 | 0.15 | 0～1，设为 0 可隔离前沿模式效果 |
+| 前沿生成速率（每秒） | 8 | 0～30，满权重时的生成速率；0 关闭 |
+| 前沿采样距离（米） | 1 | 0.05～10 |
+| 速度变化起始阈值（每秒） | 0.1 | 0～20，压缩强度超过后开始生成 |
+| 速度变化过渡范围（每秒） | 0.5 | 0～20，从阈值到阈值加此范围平滑升至满权重；0 为严格大于阈值的硬切换 |
+| 背景生成倍率 | 0.15 | 0～1，设为 0 可单独观察前沿源 |
 
-例如相距 0.5 米的两处水流，同向速度从后方 2 m/s 降到前方 0.5 m/s，两个速度模式的强度都为 3/s；从后方 0.5 m/s 增到前方 2 m/s，绝对值模式仍为 3/s，压缩模式为 0。强度经阈值映射后为 0～1 的生成权重，不直接作为累计泡沫密度。
+例如相距 0.5 米的水流，同向速度从后方 2 m/s 降到前方 0.5 m/s，压缩强度为 3/s；反过来则为 0。强度映射为 0～1 的生成权重，不直接限制累计泡沫密度。背景源与前沿源相加后应用 3～30 mm 薄水抑制和外海边界淡出，每个完整 SWE 子步只添加一次。
 
-切换模式和调参实时生效，不清空已生成泡沫，不重置或反作用于 SWE 水位与动量。现有密度输送、汇聚、衰减和沙地沉积继续工作。参数随会话和命名配置保存；旧配置缺少 `foam_front_mode` 时默认 0（水面落差），1 为速度差绝对值，2 为有方向的压缩；新阈值字段为 `foam_velocity_threshold`、`foam_velocity_transition`。两种速度模式共享参数，切换不会丢失水面落差参数。
-
-对比建议：背景生成倍率设为 0，使用“密度调试：低绿／高红”，保持相同生成速率、采样距离、衰减、FFT 和 SWE 阶数。每次从同一时间重启并观察同一模拟时刻，避免已有泡沫历史干扰判断。速度差只是浅水模型中产泡的近似信号，未解析实际空气卷入。
-
-### 水面落差模式细节
-
-参数面板的名称、选项、按钮、状态和悬停说明已中文化，继续使用内嵌 MiSans 字体与两列表格。
-在 **浅水模拟（SWE）** 中，新增独立的前沿泡沫源：沿当前水流的世界坐标方向，在采样距离的 1/4、1/2、3/4、1 倍处采样实际水面高度（地形高度＋水深），取最大的正水面落差。差值从 0 到“满强度水面落差”平滑映射为 0～1；前方水面没有降低则不生成。双线性插值仅使用有水的角点并按其权重归一化；完全干燥的采样点跳过，避免将裸地高度当成水面。采样使用同一求解阶段的数据，按 X/Z 网格间距分别换算，越界采样跳过。流速低于 0.02 m/s 时不生成，0.02～0.1 m/s 平滑开启，避免静水速度噪声。
-
-这里比较的是实际水面高度，地形坡度会被水深抵消：平水面即使朝岸流动、前方水深更浅，也不会因此触发。不要求前方接近干地、不要求水面上涨，也不额外判断冲岸或退水。退水时若前方水面确实更低，仍可能新增泡沫。此版本不保证只产生一条窄线，较宽的水面下降坡也可能满足条件。
-
-| 参数 | 默认值 | 作用 |
-| --- | --- | --- |
-| 前沿生成速率（每秒） | 8 | 独立前沿泡沫源，0 关闭 |
-| 前沿采样距离（米） | 1 | 距离越大通常覆盖越宽，默认横岸方向约 4 个网格 |
-| 前沿满强度水面落差（米） | 0.03 | 越小越敏感，达到该水面落差后权重为 1 |
-| 背景生成倍率 | 0.15 | 降低原有上涨／汇聚生成量，0 关闭背景生成 |
-
-最终源项为“背景倍率 × 原有生成源 + 前沿速率 × 前沿权重”，再乘原有 3～30 mm 水深权重及外海边界抑制。两项只在完成一个 SWE 子步后添加一次。原有保守输送、汇聚、指数衰减与沙地沉积不变；退水时已有泡沫继续输送，在速度不均匀时拉伸、摊薄，低于沉积水深后转为静止残留。新参数实时生效，不清空历史，并自动保存；旧配置保留原生成速率，缺失字段采用上述默认值。
-
-观察时选择 **密度调试：低绿／高红**。将背景生成倍率设为 0 可单独看前沿源；前沿速率设为 0、背景倍率设为 1 可恢复原生成算法。两项生成均设为 0 可只观察已有泡沫移动和衰减。孔隙纹理及高阶泡沫输送未在本次调整。
-
-兼容性：保存字段 `foam_front_depth_drop` 保留原名称以兼容已有配置，数值现表示实际水面落差，默认仍为 0.03 米。
-
-
-前沿权重直接由水面落差的 smoothstep 与流速门控相乘得到。达到或超过“满强度水面落差”后，落差权重保持为 1。四点增益曲线及其参数、预览已移除；不再对前沿权重额外进行起升／回落限制。旧配置中的 `foam_front_gain_points` 和 `foam_front_power` 会被忽略，其余参数正常加载。
+调参实时生效、自动保存，不清空已有泡沫，不改变水体方程。旧配置中的 `foam_front_mode`、`foam_front_depth_drop`、`foam_front_gain_points` 和 `foam_front_power` 被忽略，其余参数正常加载。可将背景倍率设为 0、使用密度调试，并固定时间、相机、FFT 和 SWE 阶数观察效果。压缩判据是浅水产泡的近似信号，未解析实际空气卷入。
 
 ## 泡沫动量、追赶与汇聚
 
@@ -606,7 +626,7 @@ CLI 示例：`cargo run --release --features ocean --bin ocean -- --beach --swe-
 
 | 参数 | 默认值 | 范围 | 含义 |
 | --- | --- | --- | --- |
-| 启用水流拖曳 | 开启 | 开／关 | 关闭后保留独立惯性，用于隔离验证；生成、衰减和沙地沉积仍有效 |
+| 启用水流拖曳 | 开启 | 开／关 | 关闭后保留独立惯性，用于隔离验证；生成、衰减和干格子清除仍有效 |
 | 水流跟随倍率 | 0.8 | 0～1 | 泡沫目标速度为水流速度乘此倍率 |
 | 速度响应时间（秒） | 0.35 | 0～20 | 速度向目标靠拢的时间常数，0 表示立即跟随 |
 | 新生泡沫速度倍率 | 1 | 0～1 | 新生速度为当地水流速度乘此倍率；只影响新增泡沫 |
@@ -621,11 +641,11 @@ SWE 历史第四块保存泡沫面动量和第一套纹理位移，第五块保�
 
 纹理追踪与渲染插值仅使用湿格子的位移，并重新归一化权重，避免干格子的零位移拉扯湿区纹理。完全没有湿采样时使用初始坐标。更新相位随实际 SWE 子步推进，暂停不更新，RK2 只在完成子步后更新一次；干格子仍保持同步相位。
 
-参数实时生效并自动保存，不重置历史。暂停保持动量和纹理历史；重置和禁用清空历史，干格子的泡沫仍沉积成静止残留并清除其动量。背景生成中的汇聚判据继续使用水流速度；前沿生成保留水面落差、速度差绝对值、有方向的压缩三种模式。薄水材质的 8 mm 裁剪和沙地沉积阈值此次未改。
+参数实时生效并自动保存，不重置历史。暂停保持动量和纹理历史；重置和禁用清空历史，干格子清除泡沫及其动量，不留下沙地残留。背景生成中的汇聚判据继续使用水流速度；前沿生成仅使用有方向的压缩。薄水材质的 8 mm 裁剪不变。
 
 泡沫速度使用深度平均水流作为目标；纹理位移的半拉格朗日输送仍有数值扩散，单次 2 秒内的强剪切仍可能产生拉伸。泡沫空间输送仍为一阶，切换二阶 SWE 会对它采用 RK2 时间推进，但不会消除泡沫的空间数值扩散。
 
-`--verify` 先用生产 GPU 管线验证前慢后快的两团泡沫：各长 2 m，相隔 1 m，后团密度 0.8、速度 1 m/s，前团密度 0.2、速度 0.2 m/s，静水中关闭生成、拖曳、衰减，推进 5 秒。检查总量与两方向总动量守恒、质心位移、汇聚密度增长和相对动能耗散，覆盖一阶／二阶 SWE。另以独立 f64 RK4 对照 WGSL 的新生动量、拖曳、衰减及时间步一致性，随后验证海岸传播、干湿沉积、暂停、参数修改与渲染。
+`--verify` 先用生产 GPU 管线验证前慢后快的两团泡沫：各长 2 m，相隔 1 m，后团密度 0.8、速度 1 m/s，前团密度 0.2、速度 0.2 m/s，静水中关闭生成、拖曳、衰减，推进 5 秒。检查总量与两方向总动量守恒、质心位移、汇聚密度增长和相对动能耗散，覆盖一阶／二阶 SWE。另以独立 f64 RK4 对照 WGSL 的新生动量、拖曳、衰减及时间步一致性，随后验证海岸传播、干湿清除、暂停、参数修改与渲染。
 
 本次 RTX 3070 / Vulkan 验证中，一阶／二阶的峰值密度分别为 1.0483／1.0441，总动量除以总量均约为 0.84 m/s；总量相对误差约百万分之一，动量误差约千万分之二。0.25 m 网格下，质心移动约 4.10 m，相比连续守恒方程的 4.20 m 有约 0.10 m 的一阶空间误差；总量和总动量守恒不等同于轨迹没有数值误差。
 
@@ -645,7 +665,7 @@ SWE 历史第四块保存泡沫面动量和第一套纹理位移，第五块保�
 
 [Callaghan 等，2024，实验与现场白浪泡沫演化比较](https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2023JC020193) 表明泡沫衰退同时受水下气泡逸出及表面活性物质稳定作用影响，寿命不能只由水流速度确定。本项目选择 0.3 /秒作为秒级衰退的校准起点，并不是把论文的可见面积寿命直接转换为本项目面密度衰减系数。
 
-本实现假设泡沫量正比于有效质量，使用无压力的单速度层；碰撞后的格内混合保持总动量，耗散相对动能。尚未模拟含液率变化、排液、泡径分布、膜破裂、压力、黏性、内聚力、风力或泡沫对水体的反作用。因此能表达“追赶—汇聚—衰退”，但不是完整的定量海水泡沫模型。前沿生成阈值、生成率和沙地沉积水深仍是模型／分辨率相关参数，缺少当地实测输入时不称为物理材料常数。
+本实现假设泡沫量正比于有效质量，使用无压力的单速度层；碰撞后的格内混合保持总动量，耗散相对动能。尚未模拟含液率变化、排液、泡径分布、膜破裂、压力、黏性、内聚力、风力或泡沫对水体的反作用。因此能表达“追赶—汇聚—衰退”，但不是完整的定量海水泡沫模型。前沿生成阈值和生成率仍是模型／分辨率相关参数，缺少当地实测输入时不称为物理材料常数。
 
 ## 泡沫高度：独立的外观偏移
 
@@ -667,9 +687,9 @@ SWE 历史第四块保存泡沫面动量和第一套纹理位移，第五块保�
 
 例如使用默认值：密度 0.1 时不抬高，密度 1.05 时抬高 0.025 米，密度达到 2.0 及以上时抬高 0.05 米。这里的密度是现有模拟量，不是以 kg/m³ 表示的泡沫材料密度；该映射用于表现厚度，没有引入含液率或体积求解。
 
-偏移只发生在渲染顶点中，不写回 FFT/SWE，不改变水位、水深、动量、泡沫输送、生成或沙地沉积。泡沫明暗使用抬高后表面的法线，水体光学和水体法线继续使用原水面数据。参数与水面振幅增益独立，实时生效、自动保存，暂停时也可调整，不清空历史；旧配置缺少这些字段时补上述默认值。
+偏移只发生在渲染顶点中，不写回 FFT/SWE，不改变水位、水深、动量、泡沫输送或生成。泡沫明暗使用抬高后表面的法线，水体光学和水体法线继续使用原水面数据。参数与水面振幅增益独立，实时生效、自动保存，暂停时也可调整，不清空历史；旧配置缺少这些字段时补上述默认值。
 
-目前只抬高近岸水上泡沫；远海 FFT 泡沫、沙地残留泡沫不受影响。按模拟水深在 8～20 毫米间平滑开启，8 毫米及以下为零，防止干地被顶起；关闭“显示泡沫”或 SWE 时同样关闭偏移。红绿密度调试视图可观察高度变化。仍复用现有水面网格，孔隙处没有另建泡沫壳层，细窄泡沫带的几何细节受渲染网格分辨率限制。
+目前只抬高近岸水上泡沫；远海 FFT 泡沫不受影响。按模拟水深在 8～20 毫米间平滑开启，8 毫米及以下为零，防止干地被顶起；关闭“显示泡沫”或 SWE 时同样关闭偏移。红绿密度调试视图可观察高度变化。仍复用现有水面网格，孔隙处没有另建泡沫壳层，细窄泡沫带的几何细节受渲染网格分辨率限制。
 
 `--verify` 调用实际顶点函数检查 smoothstep 数值节点、饱和高度、干湿边界、显示开关、颜色参考值和振幅独立性，以及抬高后泡沫法线与未抬高水面数据的分离。另验证一阶／二阶中只改变高度参数时全部模拟状态一致，并在固定海岸历史、相机、时间下验证实际渲染像素变化。
 
@@ -709,3 +729,39 @@ SWE 历史第四块保存泡沫面动量和第一套纹理位移，第五块保�
 模拟覆盖范围不变，X/Z 每格大小分别为区域宽度/格数、区域长度/格数，SWE 和碰撞体面板均显示实际网格间距。切换立即重建近岸缓存，并用当前 FFT 重新初始化水体，清空近岸泡沫与湿沙历史；FFT 时间和远海泡沫继续运行。碰撞体边缘预留的一格也随精度变化。
 
 每轴格数翻倍，单元数和主要状态显存约为原来的 4 倍，CFL 稳定步长通常减半，相同模拟时间的运算量可能约为 8 倍。三份状态缓存在 256/512/1024 时分别约为 15/60/240 MiB。可结合 SWE GPU 耗时与实际推进时间比较，默认每帧最多推进 128 个子步的限制仍生效。
+
+## NSH 泡沫纹理与材质
+
+在 **浅水模拟（SWE）→ 泡沫纹理与材质** 中选择原灰度效果、Shorewaves NSH、Crest Foam NSH 或 Crest Foam2 NSH。默认使用 Shorewaves NSH；旧配置缺少字段时补此默认值，其余已有参数正常加载。切换纹理、尺寸、微法线、薄层不透明度、厚层起始强度及粗糙度实时生效并保存，暂停时也可以比较，不重置模拟或纹理位移历史。
+
+三张 NSH 都由仓库内的源图离线烘焙，统一为 1024×1024：RG 为切线法线 XY，B 为 Soft，A 为相对 Height。它们作为线性 `Rgba8Unorm` 纹理数组上传，使用 Repeat 和完整 mip 链；法线按三维方向平均后归一化，Soft／Height 单独做线性过滤。Crest 源图按原导入设置解码 sRGB 后烘焙；源图、固定版本、SHA-256 和 MIT 许可见 [assets/foam/SOURCES.md](assets/foam/SOURCES.md)。Height 是为着色设计的形态，不是实测泡沫厚度。
+
+材质保留现有两套位移场与 2 秒交替重置。每套位移分别采样粗细两种尺度，细尺度为粗尺度的 1/10，权重 0.72／0.28。每个相位先根据密度和 Soft 得到覆盖，再结合密度门控与 Height 形成厚层；薄层为总覆盖减厚层，两者的有效权重之和不超过 1。分别完成光照后混合预乘颜色与覆盖量，避免先混原始图案再阈值导致孔洞跳变。微法线随流动坐标的局部旋转／剪切调整方向，叠在现有宏观泡沫厚度法线上。
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| 纹理尺寸 | 12 米 | 粗层每块纹理的世界长度，范围 0.25～64 米 |
+| 泡沫微法线强度 | 0.65 | 无量纲，范围 0～3；0 保留宏观法线，关闭纹理微法线 |
+| 薄泡沫不透明度 | 0.55 | 范围 0～1，只控制薄层露出多少水面 |
+| 厚泡沫起始强度 | 0.35 | 归一化显示强度，范围 0～0.9，不是模拟生成阈值 |
+| 泡沫粗糙度 | 0.85 | 范围 0.15～1，控制简化泡沫高光的宽度 |
+
+材质调试提供 Soft、Height、世界法线、薄绿／厚红覆盖四种视图。它只在浅水正常着色且开启泡沫显示时生效；现有红绿密度调试仍直接显示模拟密度。新材质只作用于近岸水上泡沫，远海 FFT 泡沫保持原有路径；材质参数本身不改变密度、动量、生成、衰减或湿沙状态。
+
+```powershell
+# 重建三张 NSH 与制作配方；预览写入被忽略的 target 目录。
+cargo run --features ocean --bin foam-bake
+# 查看自定义源图、颜色空间、曲线、模糊和法线参数。
+cargo run --features ocean --bin foam-bake -- --help
+
+# 固定默认种子、场景和时间，对比来源 0～3（输出路径需不存在）。
+cargo run --release --bin ocean -- --beach --no-settings --foam-texture 2 --time 6 --snapshot target/crest-foam.png
+# 调试 NSH Height。
+cargo run --release --bin ocean -- --beach --no-settings --foam-texture 2 --foam-material-view 2 --frames 600
+```
+
+烘焙流程及预览面板顺序见 [assets/foam/README.md](assets/foam/README.md)。输出图在编译时嵌入，重新烘焙后需要重新构建 ocean。当前工具从现成灰度图加工 NSH，尚未实现从随机种子生成泡径／网膜形态的生成器，也未改成三相位。
+
+`--verify` 增加生产 WGSL 的零密度、密度单调性、薄厚权重、法线方向与归一化验证，以及实际 GPU 三层纹理采样、Repeat 和 mip 标量平均检查。已有一阶／二阶对照同时检查材质参数不影响模拟状态。
+
+近岸泡沫保留背景与前沿生成，两者生成率相加后应用薄水抑制和入口淡出。流场融合生成及其参数面板、`--foam-source-mode` 参数已移除；旧配置中的相关字段会被忽略，其余参数正常加载。水上泡沫随水流输送、汇聚与拖曳不变。

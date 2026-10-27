@@ -28,7 +28,7 @@ fn sample_shore_extra(p: vec2<f32>) -> vec4<f32> {
 fn shore_sample(p: vec2<f32>, s: ShoreParams) -> ShoreSample {
     let extra=sample_shore_extra(p);
     var height=extra.z;
-    if s.collider_meta.x>0.5 && shore_active(s) {
+    if (s.collider_meta.x>0.5 || s.model.x>0.5) && shore_active(s) {
         // A dry obstacle's top is not a water surface. Do not interpolate that
         // elevation into neighboring wet vertices and manufacture a water mound.
         let grid=(p-s.domain.xy)/s.domain.zw*s.options.z-vec2(0.5);

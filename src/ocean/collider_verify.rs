@@ -129,6 +129,10 @@ fn simulate(
                     binding: 5,
                     resource: shore.previous.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: shore.terrain_bed.as_entire_binding(),
+                },
             ],
         }));
     }
@@ -313,7 +317,7 @@ fn verify_live_edits(gpu: &Gpu, ocean: &Ocean) -> Result<(), Error> {
             let u = if h > 0.005 { 0.3 } else { 0.0 };
             expected[i] = [foam, 0.6, h, u];
             expected[cells + i] = [h, h * u, -h * u, foam];
-            expected[2 * cells + i] = [0.2, foam, h + bottom, -u];
+            expected[2 * cells + i] = [0.0, 0.0, h + bottom, -u];
             expected[3 * cells + i] = [foam * 0.4, -foam * 0.2, 0.9, 0.8];
             expected[4 * cells + i] = [0.7, 0.6, 0.3, 0.0];
         }
@@ -390,7 +394,6 @@ fn verify_live_edits(gpu: &Gpu, ocean: &Ocean) -> Result<(), Error> {
                 expected[2 * cells + i][2] = h + bottom;
                 expected[2 * cells + i][3] = q[2] / h.max(0.005);
                 if h <= next.density[2] {
-                    expected[2 * cells + i][1] = 0.0;
                     expected[3 * cells + i] = [0.0; 4];
                     expected[4 * cells + i][..2].fill(0.0);
                 }

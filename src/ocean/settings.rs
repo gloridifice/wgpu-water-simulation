@@ -71,9 +71,13 @@ impl SavedSettings {
     /// Explicit CLI values override persisted values; all other settings survive.
     pub fn apply_cli(&mut self, ocean: OceanConfig, optics: OpticsConfig, flags: &[String]) {
         let old_length = self.ocean.length;
-        if flags.iter().any(|f| f == "--beach") {
+        if flags.iter().any(|f| f == "--beach" || f == "--model") {
             self.optics = optics;
-            self.camera = Camera::beach(old_length);
+            self.camera = if optics.model.enabled {
+                Camera::model(old_length)
+            } else {
+                Camera::beach(old_length)
+            };
         }
         for flag in flags {
             match flag.as_str() {
@@ -105,6 +109,16 @@ impl SavedSettings {
                     self.ocean.seed = ocean.seed;
                     self.draft.seed = ocean.seed;
                 }
+                "--model-position" => self.optics.model.position = optics.model.position,
+                "--model-scale" => self.optics.model.scale = optics.model.scale,
+                "--model-yaw" => self.optics.model.yaw_deg = optics.model.yaw_deg,
+                "--sea-level" => self.optics.model.sea_level = optics.model.sea_level,
+                "--swe-center" => self.optics.model.center = optics.model.center,
+                "--swe-size" => self.optics.model.size = optics.model.size,
+                "--swe-resolution" => self.optics.shore.resolution = optics.shore.resolution,
+                "--swe-sponge" => self.optics.model.sponge_width = optics.model.sponge_width,
+                "--swe-open-edges" => self.optics.model.open_edges = optics.model.open_edges,
+                "--hide-swe-box" => self.optics.model.show_bounds = false,
                 "--seabed-depth" => self.optics.depth = optics.depth,
                 "--sigma-t" => self.optics.sigma_t = optics.sigma_t,
                 "--source" => self.optics.source = optics.source,
@@ -115,6 +129,10 @@ impl SavedSettings {
                 "--no-skylight" | "--skylight" => self.optics.sky.enabled = optics.sky.enabled,
                 "--water-view" => self.optics.view = optics.view,
                 "--shore-view" => self.optics.shore.view = optics.shore.view,
+                "--foam-texture" => self.optics.shore.foam_texture = optics.shore.foam_texture,
+                "--foam-material-view" => {
+                    self.optics.shore.foam_material_view = optics.shore.foam_material_view
+                }
                 "--swe-filter-cutoff" => {
                     self.optics.shore.filter_cutoff = optics.shore.filter_cutoff
                 }
@@ -123,9 +141,6 @@ impl SavedSettings {
                 }
                 "--water-foam-color" => {
                     self.optics.shore.water_foam_color = optics.shore.water_foam_color
-                }
-                "--stranded-foam-color" => {
-                    self.optics.shore.stranded_foam_color = optics.shore.stranded_foam_color
                 }
                 "--swe-input-gain" => self.optics.shore.input_gain = optics.shore.input_gain,
                 "--swe-order" => self.optics.shore.order = optics.shore.order,
@@ -541,10 +556,21 @@ mod tests {
         s.optics.beach = true;
         s.optics.beach_slope = 0.23;
         s.optics.shore_x = -19.0;
+        s.optics.model = super::super::terrain::ModelConfig {
+            enabled: true,
+            position: [8.0, 12.0, -3.0],
+            scale: 0.75,
+            yaw_deg: 31.0,
+            sea_level: 1.3,
+            center: [5.0, 10.0, -9.0],
+            size: [160.0, 64.0, 96.0],
+            open_edges: [false, true, true, false],
+            sponge_width: 15.0,
+            extension_width: 8.0,
+            show_bounds: false,
+        };
         s.optics.shore.water_foam_color = [0.7, 0.8, 0.9];
-        s.optics.shore.stranded_foam_color = [0.6, 0.4, 0.2];
         s.optics.shore.order = 2;
-        s.optics.shore.foam_front_mode = 2;
         s.optics.shore.foam_velocity_threshold = 0.37;
         s.optics.shore.foam_velocity_transition = 1.25;
         s.optics.shore.foam_drag_enabled = false;
@@ -553,6 +579,13 @@ mod tests {
         s.optics.shore.foam_height_max = 0.12;
         s.optics.shore.foam_height_threshold = 0.3;
         s.optics.shore.foam_height_transition = 2.4;
+        s.optics.shore.foam_texture = 3;
+        s.optics.shore.foam_texture_size = 8.5;
+        s.optics.shore.foam_micro_normal = 1.2;
+        s.optics.shore.foam_soft_opacity = 0.4;
+        s.optics.shore.foam_thick_start = 0.6;
+        s.optics.shore.foam_roughness = 0.75;
+        s.optics.shore.foam_material_view = 4;
         s.optics.shore.colliders[3] = Some(super::super::collider::Collider {
             position: [-11.0, 3.0],
             height: 3.2,
@@ -899,5 +932,14 @@ mod tests {
         optics.shore.order = 2;
         s.apply_cli(ocean, optics, &["--swe-order".into()]);
         assert_eq!(s.optics.shore.order, 2);
+        s.optics.model.enabled = true;
+        s.optics.model.center = [11.0, 2.0, -7.0];
+        optics.model.size = [96.0, 48.0, 112.0];
+        s.apply_cli(ocean, optics, &["--swe-size".into()]);
+        assert!(s.optics.model.enabled);
+        assert_eq!(s.optics.model.center, [11.0, 2.0, -7.0]);
+        assert_eq!(s.optics.model.size, [96.0, 48.0, 112.0]);
+        s.apply_cli(ocean, OpticsConfig::beach_scene(), &["--beach".into()]);
+        assert!(!s.optics.model.enabled);
     }
 }

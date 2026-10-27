@@ -138,6 +138,10 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                         binding: 5,
                         resource: shore.previous.as_entire_binding(),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: shore.terrain_bed.as_entire_binding(),
+                    },
                 ],
             });
             stage_bindings.push(bind);

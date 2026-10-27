@@ -34,7 +34,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                     include_str!("shore.wgsl"),
                     include_str!("shore_read.wgsl"),
                     r#"
-@group(0) @binding(10) var<storage, read_write> result: array<vec4<f32>>;
+@group(0) @binding(12) var<storage, read_write> result: array<vec4<f32>>;
 @compute @workgroup_size(1) fn height_probe() {
     let vertex = water_vertex_data(40u, 4u);
     result[0] = vertex.position;
@@ -94,8 +94,12 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                 resource: shore.uniform.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-                binding: 10,
+                binding: 12,
                 resource: output.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 13,
+                resource: shore.terrain_bed.as_entire_binding(),
             },
         ],
     });
@@ -217,6 +221,13 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                 foam_height_max: 1.0,
                 foam_height_threshold: 2.0,
                 foam_height_transition: 0.01,
+                foam_texture: 3,
+                foam_texture_size: 3.5,
+                foam_micro_normal: 2.0,
+                foam_soft_opacity: 0.1,
+                foam_thick_start: 0.8,
+                foam_roughness: 0.3,
+                foam_material_view: 4,
                 ..a.shore
             },
             ..a
