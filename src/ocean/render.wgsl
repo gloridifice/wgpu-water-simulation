@@ -257,6 +257,12 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
             let u = shore_history.w;
             return vec4(mix(vec3(0.08), select(vec3(0.95, 0.32, 0.08), vec3(0.05, 0.65, 1.0), u < 0.0), clamp(abs(u) / 2.0, 0.0, 1.0)), 1.0);
         }
+        if shore.options.y > 6.5 {
+            let diagnostic=sample_shore_extra(input.world.xz).xy;
+            var value=diagnostic.y;
+            if shore.options.y<7.5 { value=diagnostic.x/max(shore.foam_front.x,0.000001); }
+            return vec4(vec3(clamp(value,0.0,1.0)),1.0);
+        }
         if shore.options.y > 2.5 && shore.options.y < 3.5 { return vec4(vec3(foam_density_level(shore_history.x,shore)), 1.0); }
         if shore.options.y > 3.5 && shore.options.y < 4.5 { return vec4(vec3(shore_history.y), 1.0); }
     }

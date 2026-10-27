@@ -1,9 +1,8 @@
 use super::{
     configuration_panel::ConfigurationPanel,
-    foam::{Foam, FoamConfig, FoamStep},
+    foam::{Foam, FoamStep},
     gpu::{CameraUniform, Error, Gpu, Ocean, Renderer},
     gui::Gui,
-    optics::OpticsConfig,
     performance::{FrameTimings, SweStatus},
     settings::{ConfigurationLibrary, SavedSettings, SettingsStore},
     spectrum::OceanConfig,
@@ -612,12 +611,14 @@ pub fn run(
 
 /// 和窗口共用相同的计算与渲染管线，方便无窗口验证和保存结果。
 pub async fn snapshot(
-    config: OceanConfig,
+    initial: &SavedSettings,
     time: f32,
     path: &std::path::Path,
-    foam_view: u32,
-    optics: OpticsConfig,
+    foam_view: Option<u32>,
+    emission_window: Option<[f32; 2]>,
 ) -> Result<(), Error> {
+    let config = initial.ocean;
+    let mut optics = initial.optics;
     let gpu = Gpu::new(&wgpu::Instance::default(), None).await?;
     eprintln!("GPU: {}", gpu.name);
     let ocean = Ocean::new(&gpu, config)?;
@@ -656,15 +657,13 @@ pub async fn snapshot(
         mapped_at_creation: false,
     });
     // Deterministic history warm-up: up to 60 s for wet sand, 8 s for open ocean.
-    let preset = if optics.model.enabled {
-        Camera::model(config.length)
-    } else if optics.beach {
-        Camera::beach(config.length)
-    } else {
-        Camera::new(config.length)
-    };
-    let mut camera = preset.uniform(config, width as f32 / height as f32);
-    camera.misc[2] = foam_view as f32;
+    let mut camera = initial.camera.uniform(config, width as f32 / height as f32);
+    if let Some(view) = foam_view {
+        camera.misc[2] = view as f32;
+    }
+    if emission_window.is_some() && !optics.swe_enabled() {
+        return Err("--foam-emission-window requires an active SWE scene".into());
+    }
     let duration = time.min(if optics.swe_enabled() { 60.0 } else { 8.0 });
     let steps = (duration * 60.0).ceil() as u32;
     if steps > 0 {
@@ -674,6 +673,8 @@ pub async fn snapshot(
             // Roundoff must not put the last warm-up step beyond the target:
             // the final render would otherwise look like a time rewind/reset.
             let step_time = (time - duration + i as f32 * dt).min(time);
+            optics.shore.foam_emission_enabled = initial.optics.shore.foam_emission_enabled
+                && emission_window.is_none_or(|[start, end]| step_time > start && step_time <= end);
             ocean.encode_filtered(&gpu, &mut encoder, step_time, &optics.shore);
             renderer.shore.encode(
                 &gpu,
@@ -692,7 +693,7 @@ pub async fn snapshot(
                     config.length,
                     camera.ocean[2] * camera.ocean[3],
                     dt,
-                    FoamConfig::default(),
+                    initial.foam,
                     false,
                 ),
             );
@@ -716,7 +717,7 @@ pub async fn snapshot(
             config.length,
             camera.ocean[2] * camera.ocean[3],
             0.0,
-            FoamConfig::default(),
+            initial.foam,
             false,
         ),
     );
@@ -778,6 +779,22 @@ pub async fn snapshot(
             .filter(|v| v[2] < 0.005 && v[1] > 0.1)
             .count();
         eprintln!("Shore: foam max={foam:.3}, exposed wet sand cells={wet}");
+        if optics.shore.foam_ridge_enabled || optics.shore.view >= 7 {
+            let bytes = gpu.read_buffer(&renderer.shore.field, renderer.shore.field.size())?;
+            let cells = renderer.shore.resolution.pow(2) as usize;
+            let extra: Vec<[f32; 4]> = bytes[2 * cells * 16..3 * cells * 16]
+                .as_chunks::<16>()
+                .0
+                .iter()
+                .map(|b| bytemuck::pod_read_unaligned(b))
+                .collect();
+            let emitting = extra.iter().filter(|q| q[0] > 0.001).count();
+            let source_max = extra.iter().map(|q| q[0]).fold(0.0_f32, f32::max);
+            let foam_cells = samples.iter().filter(|q| q[0] > 0.02).count();
+            eprintln!(
+                "Front: emitting cells={emitting}/{cells}, source max={source_max:.4}/s, transported foam cells (>0.02)={foam_cells}"
+            );
+        }
     }
     let pixels: Vec<u8> = mapped
         .chunks_exact(bytes_per_row as usize)

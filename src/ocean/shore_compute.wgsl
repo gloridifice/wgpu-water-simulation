@@ -1,6 +1,7 @@
 // Hydrostatic reconstruction + local Lax-Friedrichs flux on a rectangular grid.
 // State blocks: visible (surface foam density,wetness,h,u),
-// conservative (h,hu,hv,surface foam amount per area), surface (reserved,reserved,eta,v).
+// conservative (h,hu,hv,surface foam amount per area), surface (source rate,front weight,eta,v).
+// Diagnostic x/y are populated only for ridge mode or source/weight debug views.
 // Fourth block: foam area momentum X/Z and texture A displacement X/Z in meters.
 // Fifth block: texture B displacement X/Z, shared cycle phase, reserved.
 // Zero keeps uniform-driven diagnostic entries; production specializes the
@@ -390,16 +391,16 @@ fn foam_breaking_weight(rise_ratio: f32) -> f32 {
 }
 // Sample one immutable solver stage; never compare a newly updated center with
 // old neighbors. World-space direction accounts for unequal X/Z cell spacing.
-fn foam_flow_cell(c: vec2<i32>) -> vec3<f32> {
+fn foam_flow_cell(c: vec2<i32>, minimum_depth: f32) -> vec3<f32> {
     let q=state(c);
-    let wet=select(0.0,1.0,q.x>0.00001);
+    let wet=select(0.0,1.0,q.x>minimum_depth);
     return vec3(velocity(q)*wet,wet);
 }
-fn foam_flow_at(grid: vec2<f32>) -> vec3<f32> {
+fn foam_flow_at(grid: vec2<f32>, minimum_depth: f32) -> vec3<f32> {
     let c=vec2<i32>(floor(grid)); let f=fract(grid);
     // Normalize wet contributors: dry zero velocities must not fake a collision.
-    return mix(mix(foam_flow_cell(c),foam_flow_cell(c+vec2(1,0)),f.x),
-        mix(foam_flow_cell(c+vec2(0,1)),foam_flow_cell(c+vec2(1,1)),f.x),f.y);
+    return mix(mix(foam_flow_cell(c,minimum_depth),foam_flow_cell(c+vec2(1,0),minimum_depth),f.x),
+        mix(foam_flow_cell(c+vec2(0,1),minimum_depth),foam_flow_cell(c+vec2(1,1),minimum_depth),f.x),f.y);
 }
 fn foam_velocity_weight(strength: f32) -> f32 {
     let threshold=shore.foam_velocity.y;
@@ -421,7 +422,7 @@ fn foam_front_weight(c: vec2<i32>) -> f32 {
         let ahead=vec2<f32>(c)+offset*fraction;
         // Leaving the patch is not evidence of a collision.
         if any(ahead<vec2(0.0)) || any(ahead>vec2(shore.options.z-1.0)) { continue; }
-        let sampled=foam_flow_at(ahead);
+        let sampled=foam_flow_at(ahead,0.00001);
         if sampled.z<=0.000001 { continue; }
         let difference=flow-sampled.xy/sampled.z;
         // Only closing motion contributes, including same-direction catch-up.
@@ -430,6 +431,40 @@ fn foam_front_weight(c: vec2<i32>) -> f32 {
     }
     // Deliberately no dry-front, rising-water or shore-direction requirement.
     return foam_velocity_weight(velocity_strength)*smoothstep(0.02,0.1,speed);
+}
+// Local directional compression ridge, not a 2D point maximum or an FFT-J mask.
+// Five velocities from ONE immutable stage share the center direction. Sampling
+// crosses one grid cell along the dominant axis; all donors must be wet so a dry
+// wall/edge cannot masquerade as a velocity drop. No new water forcing is added.
+fn foam_ridge_weight(c: vec2<i32>) -> f32 {
+    let center=state(c); let flow=velocity(center); let speed=length(flow);
+    if center.x<=shore.density.z || speed<=0.02 { return 0.0; }
+    let direction=flow/speed;
+    let spacing=shore.domain.zw/shore.options.z;
+    let step=1.0/max(abs(direction.x)/spacing.x,abs(direction.y)/spacing.y);
+    let offset=direction*step/spacing;
+    var speeds: array<f32,5>;
+    for(var i=0;i<5;i++) {
+        let grid=vec2<f32>(c)+f32(i-2)*offset;
+        if any(grid<vec2(0.0)) || any(grid>vec2(shore.options.z-1.0)) { return 0.0; }
+        let sample=foam_flow_at(grid,shore.density.z);
+        if sample.z<0.99999 { return 0.0; }
+        speeds[i]=dot(sample.xy/sample.z,direction);
+    }
+    // Signed compression /s; expansion must not become a candidate peak.
+    let left=(speeds[0]-speeds[2])/(2.0*step);
+    let middle=(speeds[1]-speeds[3])/(2.0*step);
+    let right=(speeds[2]-speeds[4])/(2.0*step);
+    if middle<=shore.foam_velocity.y { return 0.0; }
+    let bend=2.0*middle-left-right;
+    if bend<=max(0.000001,shore.foam_ridge.z*middle) { return 0.0; }
+    // Quadratic peak position along the normal, in meters. Reject extrapolated
+    // maxima beyond the stencil. Flat compressive ramps intentionally emit none.
+    let peak=0.5*step*(right-left)/bend;
+    if abs(peak)>step { return 0.0; }
+    let half_width=0.5*clamp(shore.foam_ridge.y,step,2.0*step);
+    let band=1.0-smoothstep(max(0.0,half_width-0.5*step),half_width+0.5*step,abs(peak));
+    return band*foam_velocity_weight(middle)*smoothstep(0.02,0.1,speed);
 }
 @group(0) @binding(6) var<uniform> previous_bed: ShoreParams;
 
@@ -551,9 +586,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // compressive bore is a tunable proxy; shallow fast retreat alone emits none.
     let compression=smoothstep(shore.density.x,shore.density.x+0.5,max(0.0,-divergence));
     let background_source=shore.options.x*shore.foam_front.w*breaking*mix(0.25,1.0,max(bore,compression));
-    let front_source=shore.foam_front.x*foam_front_weight(c);
+    var front_weight=0.0;
+    var background=background_source;
+    if shore.foam_ridge.x>0.5 {
+        front_weight=foam_ridge_weight(c);
+        background=0.0; // Ridge mode is front-only even with a legacy background setting.
+    } else {
+        front_weight=foam_front_weight(c);
+    }
+    let front_source=shore.foam_front.x*front_weight;
     // Inject once per completed SWE substep; transport handles convergence.
-    let source=(background_source+front_source)*smoothstep(0.003,0.03,q.x)*(1.0-edge);
+    // Stopping emission never erases existing amount or momentum.
+    var source=(background+front_source)*smoothstep(0.003,0.03,q.x)*(1.0-edge);
+    if shore.foam_ridge.w<0.5 { source=0.0; }
     foam=foam_sources(vec3(q.w,foam.yz),velocity(q),source);
     q.w=foam.x;
     let old=initial_shore[index];
@@ -565,6 +610,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let wetness=select(old.y*exp(-dt/shore.timing.w),1.0,q.x>0.003);
     new_shore[index]=vec4(q.w,wetness,q.x,velocity(q).x);
     new_shore[cells+index]=q;
-    new_shore[2u*cells+index]=vec4(0.0,0.0,q.x+z,velocity(q).y);
+    // Diagnostic channels for experimental/debug mode; z/w remain water data.
+    let diagnostics=select(vec2(0.0),vec2(source,front_weight),(shore.foam_ridge.x>0.5 || shore.options.y>6.5) && q.x>shore.density.z);
+    new_shore[2u*cells+index]=vec4(diagnostics,q.x+z,velocity(q).y);
 }
 

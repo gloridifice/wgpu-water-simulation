@@ -19,6 +19,8 @@ mod foam_height_verify;
 mod foam_material_verify;
 #[path = "foam_momentum_verify.rs"]
 mod foam_momentum_verify;
+#[path = "foam_ridge_verify.rs"]
+mod foam_ridge_verify;
 
 pub const RESOLUTION: u32 = 256;
 pub const RESOLUTIONS: [u32; 5] = [64, 128, 256, 512, 1024];
@@ -35,13 +37,15 @@ pub const FOAM_MATERIAL_VIEWS: [&str; 5] = [
     "泡沫法线",
     "不透明度（黑透／白实）",
 ];
-pub const VIEWS: [(u32, &str); 6] = [
+pub const VIEWS: [(u32, &str); 8] = [
     (0, "正常着色"),
     (1, "水深"),
     (2, "水流方向"),
     (3, "近岸泡沫"),
     (4, "沙地湿度"),
     (6, "泡沫密度（低绿／高红）"),
+    (7, "前沿实际生成率（最近子步）"),
+    (8, "压缩脊线发射权重"),
 ];
 
 fn deserialize_view<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
@@ -75,6 +79,10 @@ pub struct ShoreConfig {
     pub foam_generation_transition: f32,
     pub foam_front_generation: f32,
     pub foam_front_distance: f32,
+    pub foam_ridge_enabled: bool,
+    pub foam_ridge_width: f32,
+    pub foam_ridge_prominence: f32,
+    pub foam_emission_enabled: bool,
     // Velocity differences divided by their world-space sampling distance (/s).
     pub foam_velocity_threshold: f32,
     pub foam_velocity_transition: f32,
@@ -120,6 +128,10 @@ impl Default for ShoreConfig {
             foam_generation_transition: 0.4,
             foam_front_generation: 8.0,
             foam_front_distance: 1.0,
+            foam_ridge_enabled: false,
+            foam_ridge_width: 1.0,
+            foam_ridge_prominence: 0.02,
+            foam_emission_enabled: true,
             foam_velocity_threshold: 0.1,
             foam_velocity_transition: 0.5,
             foam_background_multiplier: 0.15,
@@ -183,6 +195,18 @@ impl ShoreConfig {
                 self.foam_generation_transition,
                 0.0,
                 2.0,
+            ),
+            (
+                "ridge emission width (m)",
+                self.foam_ridge_width,
+                0.05,
+                10.0,
+            ),
+            (
+                "ridge relative prominence",
+                self.foam_ridge_prominence,
+                0.0,
+                1.0,
             ),
             ("shore foam decay", self.decay, 0.0, 4.0),
             ("foam follow multiplier", self.foam_follow, 0.0, 1.0),
@@ -288,6 +312,7 @@ pub struct ShoreUniform {
     pub density: [f32; 4],
     pub foam_generation: [f32; 4],
     pub foam_front: [f32; 4],
+    pub foam_ridge: [f32; 4],
     pub foam_velocity: [f32; 4],
     pub foam_motion: [f32; 4],
     pub foam_inertia: [f32; 4],
@@ -693,6 +718,12 @@ impl Shore {
                 c.foam_front_distance,
                 0.0,
                 c.foam_background_multiplier,
+            ],
+            foam_ridge: [
+                f32::from(c.foam_ridge_enabled),
+                c.foam_ridge_width,
+                c.foam_ridge_prominence,
+                f32::from(c.foam_emission_enabled),
             ],
             foam_velocity: [
                 0.0,
@@ -1395,6 +1426,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     collider_verify::verify(gpu)?;
     foam_height_verify::verify(gpu)?;
     foam_momentum_verify::verify(gpu)?;
+    foam_ridge_verify::verify(gpu)?;
     verify_inlet(gpu)?;
     verify_fft_initialization(gpu)?;
     verify_wave_accuracy(gpu)?;
@@ -2704,6 +2736,14 @@ mod tests {
                 ..Default::default()
             },
             ShoreConfig {
+                foam_ridge_width: f32::NAN,
+                ..Default::default()
+            },
+            ShoreConfig {
+                foam_ridge_prominence: f32::INFINITY,
+                ..Default::default()
+            },
+            ShoreConfig {
                 foam_background_multiplier: 1.01,
                 ..Default::default()
             },
@@ -2720,7 +2760,7 @@ mod tests {
                 ..Default::default()
             },
             ShoreConfig {
-                view: 7,
+                view: 9,
                 ..Default::default()
             },
         ] {

@@ -35,7 +35,7 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --swe-sponge M   Model-scene open-boundary relaxation width in meters
   --swe-open-edges A,B,C,D  -X,+X,-Z,+Z; each 0=wall or 1=FFT open
   --hide-swe-box   Hide model-scene domain wireframe
-  --shore-view N  0=shaded, 1=water depth, 2=flow, 3=shore foam, 4=sand wetness, 6=foam density (green/red)
+  --shore-view N  0=shaded, 1=depth, 2=flow, 3=foam, 4=wetness, 6=density, 7=source rate, 8=front weight
   --swe-filter-cutoff M    Reject inlet wavelengths <= M (0..512, default: 12)
   --swe-filter-transition M  Transition width in meters (0..512, default: 12)
   --water-foam-color R,G,B    Water foam linear RGB (each 0..1)
@@ -59,10 +59,18 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --foam-view N    Snapshot: 0=water, 1=Jacobian, 2=foam coverage
   --foam-texture N Nearshore: 0=legacy, 1=Shorewaves NSH, 2=Crest foam, 3=Crest Foam2
   --foam-transport-order N  Foam spatial flux: 1=baseline (default), 2=MUSCL (requires --swe-order 2)
+  --foam-ridges    Experimental SWE compression-ridge-only emission (default: off)
+  --no-foam-ridges Restore legacy source (for matched-input comparisons)
+  --no-foam-emission Stop new foam without clearing transported foam
+  --foam-emission-window A,B  Snapshot only: emit during simulation seconds (A,B]
+  --foam-ridge-width M  Candidate band width, clamped to 1..2 local cells (0.05..10 m)
+  --foam-ridge-prominence N Relative compression peak prominence (0..1)
   --foam-opacity-scale N  NSH density for 63% opacity at full coverage (0.01..20, default: 2)
   --foam-material-view N  0=shaded, 1=Soft, 2=Height, 3=normal, 4=opacity (black/white)
   --time S         Snapshot time, >=0 (default: 3)
-  --settings PATH  Local GUI settings file (default: LOCALAPPDATA/water-simulation/ocean-settings.json)
+  --config PATH    Strict read-only configuration for window OR snapshot; no autosave
+  --settings PATH  Writable GUI session (default: configs/ocean-settings.json if present,
+                   otherwise LOCALAPPDATA/water-simulation/ocean-settings.json)
   --no-settings    Disable loading/saving local GUI settings
   --frames N       Close window after N presented frames (smoke test)
   -h, --help       Show help
@@ -100,9 +108,11 @@ fn run() -> Result<(), Error> {
     let mut verify_terrain = false;
     let mut path: Option<PathBuf> = None;
     let mut time = 3.0_f32;
-    let mut foam_view = 0u32;
+    let mut foam_view: Option<u32> = None;
     let mut frames: Option<u32> = None;
+    let mut emission_window: Option<[f32; 2]> = None;
     let mut settings_path: Option<PathBuf> = None;
+    let mut config_path: Option<PathBuf> = None;
     let mut no_settings = false;
     let mut explicit = Vec::new();
     let mut args = env::args().skip(1);
@@ -168,7 +178,17 @@ fn run() -> Result<(), Error> {
             "--verify" => verify = true,
             "--verify-terrain" => verify_terrain = true,
             "--snapshot" => path = Some(value(&mut args, &arg)?),
-            "--foam-view" => foam_view = value(&mut args, &arg)?,
+            "--foam-view" => foam_view = Some(value(&mut args, &arg)?),
+            "--foam-ridges" => optics.shore.foam_ridge_enabled = true,
+            "--no-foam-ridges" => optics.shore.foam_ridge_enabled = false,
+            "--no-foam-emission" => optics.shore.foam_emission_enabled = false,
+            "--foam-emission-window" => {
+                let text: String = value(&mut args, &arg)?;
+                let pair = text.split(',').map(str::parse).collect::<Result<Vec<f32>, _>>()?;
+                emission_window = Some(pair.try_into().map_err(|_| "--foam-emission-window needs start,end")?);
+            }
+            "--foam-ridge-width" => optics.shore.foam_ridge_width = value(&mut args, &arg)?,
+            "--foam-ridge-prominence" => optics.shore.foam_ridge_prominence = value(&mut args, &arg)?,
             "--foam-texture" => optics.shore.foam_texture = value(&mut args, &arg)?,
             "--foam-transport-order" => optics.shore.foam_transport_order = value(&mut args, &arg)?,
             "--foam-opacity-scale" => optics.shore.foam_opacity_scale = value(&mut args, &arg)?,
@@ -176,17 +196,40 @@ fn run() -> Result<(), Error> {
             "--time" => time = value(&mut args, &arg)?,
             "--frames" => frames = Some(value(&mut args, &arg)?),
             "--settings" => settings_path = Some(value(&mut args, &arg)?),
+            "--config" => config_path = Some(value(&mut args, &arg)?),
             "--no-settings" => no_settings = true,
             _ => return Err(format!("unknown option: {arg}; use --help").into()),
         }
     }
     config.validate()?;
     optics.validate()?;
-    if foam_view > 2 || (foam_view != 0 && path.is_none()) {
+    if config_path.is_some() && (verify || verify_terrain) {
+        return Err("GPU verification does not load configurations; omit --config".into());
+    }
+    if config_path.is_some() && settings_path.is_some() {
+        return Err("--config (read-only) and --settings (writable) cannot be combined".into());
+    }
+    if path.is_some() && settings_path.is_some() {
+        return Err("snapshots use --config for a read-only configuration, not --settings".into());
+    }
+    if foam_view.is_some_and(|view| view > 2) || (foam_view.is_some() && path.is_none()) {
         return Err("--foam-view requires --snapshot and a value in 0..=2".into());
     }
     if !time.is_finite() || time < 0.0 {
         return Err("--time must be finite and nonnegative".into());
+    }
+    if let Some([start, end]) = emission_window
+        && (path.is_none()
+            || !start.is_finite()
+            || !end.is_finite()
+            || start < (time - 60.0).max(0.0)
+            || start >= end
+            || end > time)
+    {
+        return Err(
+            "--foam-emission-window requires --snapshot and max(0,time-60) <= start < end <= time"
+                .into(),
+        );
     }
     if frames == Some(0) {
         return Err("--frames must be positive".into());
@@ -209,9 +252,36 @@ fn run() -> Result<(), Error> {
     } else if verify {
         pollster::block_on(verify::run())
     } else if let Some(path) = path {
-        pollster::block_on(viewer::snapshot(config, time, &path, foam_view, optics))
+        let mut initial = if let Some(path) = &config_path {
+            settings::load_config(path)?
+        } else {
+            SavedSettings {
+                ocean: config,
+                draft: config,
+                optics,
+                camera: if optics.model.enabled {
+                    viewer::Camera::model(config.length)
+                } else if optics.beach {
+                    viewer::Camera::beach(config.length)
+                } else {
+                    viewer::Camera::new(config.length)
+                },
+                ..SavedSettings::default()
+            }
+        };
+        initial.apply_cli(config, optics, &explicit);
+        initial.validate()?;
+        pollster::block_on(viewer::snapshot(
+            &initial,
+            time,
+            &path,
+            foam_view,
+            emission_window,
+        ))
     } else {
-        let (mut initial, store) = if no_settings {
+        let (mut initial, store) = if let Some(path) = &config_path {
+            (settings::load_config(path)?, None)
+        } else if no_settings {
             (SavedSettings::default(), None)
         } else {
             let (initial, store) = SettingsStore::open(
@@ -221,6 +291,7 @@ fn run() -> Result<(), Error> {
             (initial, Some(store))
         };
         initial.apply_cli(config, optics, &explicit);
+        initial.validate()?;
         viewer::run(initial, frames, store)
     }
 }

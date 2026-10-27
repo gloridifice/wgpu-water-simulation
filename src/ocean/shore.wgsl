@@ -12,6 +12,7 @@ struct ShoreParams {
     density: vec4<f32>, // compression threshold /s, display reference (amount/area), minimum foam water depth (m), reserved
     foam_generation: vec4<f32>, // normalized rise threshold, transition width, reserved
     foam_front: vec4<f32>, // front rate /s, sample distance m, reserved, background multiplier
+    foam_ridge: vec4<f32>, // experimental ridge mode, width m, relative prominence, emission enabled
     foam_velocity: vec4<f32>, // reserved, threshold /s, transition /s, reserved
     foam_motion: vec4<f32>, // flow following multiplier, response time seconds, reserved
     foam_inertia: vec4<f32>, // drag enabled, newborn velocity multiplier, foam spatial order (1/2), reserved

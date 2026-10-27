@@ -709,12 +709,16 @@ parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui
 
                             ui.label(egui::RichText::new("前沿泡沫").strong());
                             parameter_table(ui, "front foam table", |ui| {
+                            parameter(ui, "启用泡沫发射", "启用／停发新生泡沫，默认启用。停发不清除已有密度、动量或湿沙；输送、拖曳和衰减继续。实时生效并保存，不重置模拟。", |ui| ui.checkbox(&mut shore.foam_emission_enabled, ""));
+                            parameter(ui, "压缩脊线实验", "默认关闭。开启后只在沿当前流向的局部压缩峰附近窄带发射，强制关闭背景源；沿波前切线不做点状极大值筛选。只改新生泡沫，不修改水动力。实时生效并保存，不清空已有泡沫；比较从重置后开始。", |ui| ui.checkbox(&mut shore.foam_ridge_enabled, ""));
+                            parameter(ui, "窄带宽度（米）", "0.05～10 米，默认 1。局部五点拟合的有效范围有限，实际宽度限制在沿流向的一至两格，不能生成亚格细线。只在脊线实验中生效；实时保存，不重置。", |ui| ui.add_enabled(shore.foam_ridge_enabled, egui::Slider::new(&mut shore.foam_ridge_width, 0.05..=10.0).logarithmic(true).max_decimals(2)));
+                            parameter(ui, "峰值相对显著度", "0～1，无量纲，默认 0.02。中心压缩比两侧凸起的二阶差需大于此比例；提高会拒绝平缓宽峰。均匀压缩斜坡不发射。只在脊线实验中生效，实时保存、不重置。", |ui| ui.add_enabled(shore.foam_ridge_enabled, egui::Slider::new(&mut shore.foam_ridge_prominence, 0.0..=1.0).max_decimals(3)));
                             parameter(ui, "前沿生成速率（每秒）", "有方向的压缩达到满权重时的泡沫生成速率，范围 0～30。0 关闭前沿生成；独立于背景上涨阈值。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_generation, 0.0..=30.0)));
-                            parameter(ui, "前沿采样距离（米）", "沿当前水流方向，在此距离内均匀采样 4 个位置，范围 0.05～10 米，默认 1 米。沿采样方向相互靠近的速度差除以实际距离，再取最大压缩强度；同向追赶也能触发，拉开和纯横向速度差不触发。按世界距离采样，兼容非正方形网格；干燥和越界点跳过。实时生效，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_distance, 0.05..=10.0).max_decimals(2)));
+                            parameter(ui, "前沿采样距离（米）", "仅旧前沿源生效，脊线实验固定读取相邻网格。沿当前水流方向，在此距离内均匀采样 4 个位置，范围 0.05～10 米，默认 1 米。沿采样方向相互靠近的速度差除以实际距离，再取最大压缩强度；同向追赶也能触发，拉开和纯横向速度差不触发。按世界距离采样，兼容非正方形网格；干燥和越界点跳过。实时生效，不清空历史。", |ui| ui.add_enabled(!shore.foam_ridge_enabled, egui::Slider::new(&mut shore.foam_front_distance, 0.05..=10.0).max_decimals(2)));
                             parameter(ui, "速度变化起始阈值（每秒）", "沿采样方向的压缩速度差除以实际采样距离后超过此值才开始产泡，范围 0～20，默认 0.1。比如 0.5 米内速度相差 1 米/秒，对应强度 2/秒。仅计入相互靠近的部分。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_threshold, 0.0..=20.0).max_decimals(3)));
                             parameter(ui, "速度变化过渡范围（每秒）", "范围 0～20，默认 0.5；强度从起始阈值到阈值加此范围，生成权重平滑升至 1。0 为严格大于阈值才生成，零速度差不产泡。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_transition, 0.0..=20.0).max_decimals(3)));
                             parameter(ui, "背景生成速率（每秒）", help("背景生成速率（每秒）"), |ui| ui.add(egui::Slider::new(&mut shore.generation,0.0..=15.0)));
-                            parameter(ui, "背景生成倍率", "范围 0～1，默认 0.15，只缩放上涨、流速与汇聚触发的背景源。单独观察前沿时设为 0。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_background_multiplier, 0.0..=1.0).max_decimals(2)));
+                            parameter(ui, "背景生成倍率", "范围 0～1，默认 0.15，只缩放上涨、流速与汇聚触发的背景源。单独观察旧前沿时设为 0；脊线实验中背景强制为零，不改写此保存值。实时生效并保存，不清空历史。", |ui| ui.add_enabled(!shore.foam_ridge_enabled, egui::Slider::new(&mut shore.foam_background_multiplier, 0.0..=1.0).max_decimals(2)));
                             });
                             ui.separator();
 

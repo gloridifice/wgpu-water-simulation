@@ -135,6 +135,16 @@ impl SavedSettings {
                     self.optics.spray.debug = optics.spray.debug;
                 }
                 "--foam-texture" => self.optics.shore.foam_texture = optics.shore.foam_texture,
+                "--foam-ridges" | "--no-foam-ridges" => {
+                    self.optics.shore.foam_ridge_enabled = optics.shore.foam_ridge_enabled
+                }
+                "--no-foam-emission" => self.optics.shore.foam_emission_enabled = false,
+                "--foam-ridge-width" => {
+                    self.optics.shore.foam_ridge_width = optics.shore.foam_ridge_width
+                }
+                "--foam-ridge-prominence" => {
+                    self.optics.shore.foam_ridge_prominence = optics.shore.foam_ridge_prominence
+                }
                 "--foam-transport-order" => {
                     self.optics.shore.foam_transport_order = optics.shore.foam_transport_order
                 }
@@ -167,12 +177,26 @@ impl SavedSettings {
     }
 }
 
+/// Repository sessions are deliberately versioned; launches outside the repo
+/// retain the previous per-user fallback. Explicit --settings always wins.
 pub fn default_path() -> PathBuf {
+    let repository = PathBuf::from("configs/ocean-settings.json");
+    if repository.is_file() {
+        return repository;
+    }
     let base = std::env::var_os("LOCALAPPDATA")
         .or_else(|| std::env::var_os("APPDATA"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("water-simulation").join("ocean-settings.json")
+}
+
+/// Strict, read-only load for reproducible previews and snapshots. Never backs
+/// up, rewrites, or silently substitutes defaults for a broken input.
+pub fn load_config(path: &Path) -> Result<SavedSettings, String> {
+    read_document(path)?
+        .map(|document| document.current)
+        .ok_or_else(|| format!("configuration does not exist: {}", path.display()))
 }
 
 pub const DEFAULT_CONFIGURATION_NAME: &str = "默认配置";
@@ -552,6 +576,31 @@ mod tests {
             let _ = fs::remove_dir(&self.0);
         }
     }
+    #[test]
+    fn read_only_config_is_strict_and_preserves_legacy_bytes() {
+        let dir = Directory::new();
+        assert!(load_config(&dir.file()).is_err());
+        let legacy = br#"{"version":1,"optics":{"shore":{"foam_front_generation":6.5}},"camera":{"gain":0.3}}"#;
+        fs::write(dir.file(), legacy).unwrap();
+        let settings = load_config(&dir.file()).unwrap();
+        assert_eq!(settings.optics.shore.foam_front_generation, 6.5);
+        assert_eq!(settings.camera.gain, 0.3);
+        assert!(!settings.optics.shore.foam_ridge_enabled);
+        assert!(settings.optics.shore.foam_emission_enabled);
+        assert_eq!(fs::read(dir.file()).unwrap(), legacy);
+        for invalid in [
+            r#"{"version":999}"#,
+            r#"{"optics":{"shore":{"foam_ridge_width":0}}}"#,
+            r#"{"optics":{"shore":{"foam_ridge_prominence":1.1}}}"#,
+            "{truncated",
+        ] {
+            fs::write(dir.file(), invalid).unwrap();
+            assert!(load_config(&dir.file()).is_err());
+            assert_eq!(fs::read_to_string(dir.file()).unwrap(), invalid);
+        }
+        assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 1);
+    }
+
     #[test]
     fn round_trip_keeps_drafts_camera_and_linear_hdr_rgb() {
         let dir = Directory::new();

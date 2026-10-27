@@ -15,6 +15,7 @@
 - `src/ocean/shore.rs::Shore` 与 `shore*.wgsl`：局部二维 SWE、一阶/二阶求解、水面泡沫输送和沙滩湿润历史。耦合方向为 FFT → SWE。
 - 近岸泡沫量与动量共用守恒 Rusanov 通量；`foam_transport_order` 默认 1，在二阶 SWE 下可启用受限 MUSCL 空间重构。密度与动量共享正性／速度约束，干湿、障碍物和域边缘局部退回一阶；不改变源项、拖曳或材质。`foam-lab` 独立选择空间／时间阶数并用相同 CFL 对照，设备支持时记录 GPU timestamp。
 - MUSCL 泡沫按轴复用五格邻域的水深、密度、动量和地形阻挡，中心斜率供两侧共用，不增加生产网格缓冲区或计算 pass。`Shore::solver_pipeline` 按水体／泡沫阶数惰性编译并缓存三个共享绑定布局的管线，用 WGSL override 去掉未启用的求解分支；首次使用可能有编译开销。诊断入口可保留 uniform 动态选择。
+- 近岸源项保留旧前沿／背景路径；默认关闭的 `foam_ridge_enabled` 实验在同一 SWE 阶段沿局部流向读取五点速度，只向局部压缩峰窄带发射，并禁用背景源。它不是 FFT/J 调制，也不改动水动力、输送、拖曳、衰减或材质。`foam_emission_enabled` 停发但不清空历史；状态第三块的 x/y 在实验或诊断视图下存最近子步实际源率／权重，z/w 保持水面高程／速度含义。`foam_ridge_verify.rs` 通过完整 GPU 求解调度验证窄带、切向连通、矩形网格／旋转、干湿保护、两阶注入和停发后的守恒输送。尚无自动波前追踪／滞回，不保证网状形态。
 - `Shore::encode` 按稳定步长拆分子步；二阶有预测与校正阶段。`simulated_dt` 是本次实际推进量，长帧可能被限制，不能直接用墙钟时间替代。
 - `src/ocean/foam.rs`、`foam.wgsl`：远海泡沫与当前位移雅可比，独立于近岸泡沫。
 - `src/ocean/spray.rs` 与 `spray*.wgsl`：近岸纹理浪花。Shore 持有 `SpraySource`，每完成 SWE 子步向独立网格 storage buffer 累积发射信号；Renderer 持有 `SprayParticles`，消费信号，维护 GPU 余量、双粒子列表和间接绘制参数。粒子不反作用水体或泡沫，运行时不回读信号/粒子计数。配置放在 `OpticsConfig::spray`，默认关闭。
@@ -26,7 +27,7 @@
 
 ## 界面、配置与验证
 
-- `gui.rs` 使用 egui_dock，`spray_panel.rs` 提供独立浪花页签；`settings.rs` 管理当前会话与命名配置。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定。
+- `gui.rs` 使用 egui_dock，`spray_panel.rs` 提供独立浪花页签；`settings.rs` 管理当前会话与命名配置。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
 - `verify.rs`、`*_verify.rs` 和各模块验证入口负责 GPU 行为检查。`gpu_timer.rs` 使用设备支持的 GPU timestamp；功能运行不能依赖同步回读。
 - 配置、特性边界、参数面板和资源许可约束见根目录 `AGENTS.md`；使用方式见 `README.md`、`README-ocean.md`、`README-shallow.md`。
 

@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "ocean": {
+    "resolution": 128,
+    "length": 128.0,
+    "phillips_length": 6.0,
+    "amplitude": 0.07,
+    "mesh_resolution": 128,
+    "wind_angle": -0.9599311,
+    "seed": 42
+  },
+  "draft": {
+    "resolution": 128,
+    "length": 128.0,
+    "phillips_length": 6.0,
+    "amplitude": 0.07,
+    "mesh_resolution": 128,
+    "wind_angle": -0.9599311,
+    "seed": 42
+  },
+  "foam": {
+    "threshold": 0.6,
+    "generation": 4.0,
+    "decay": 2.9
+  },
+  "optics": {
+    "model": {
+      "enabled": true,
+      "position": [
+        0.0,
+        13.0,
+        -8.7735
+      ],
+      "scale": 2.0,
+      "yaw_deg": 0.0,
+      "sea_level": 0.5,
+      "center": [
+        0.0,
+        4.0,
+        0.0
+      ],
+      "size": [
+        128.0,
+        64.0,
+        128.0
+      ],
+      "open_edges": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "sponge_width": 20.0,
+      "extension_width": 12.0,
+      "show_bounds": false
+    },
+    "shore": {
+      "colliders": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "enabled": true,
+      "resolution": 256,
+      "order": 2,
+      "input_gain": 1.0,
+      "filter_enabled": false,
+      "filter_cutoff": 12.0,
+      "filter_transition": 12.0,
+      "normal_strength": 1.0,
+      "water_foam_color": [
+        0.87,
+        0.92,
+        0.9
+      ],
+      "foam_texture": 1,
+      "foam_texture_size": 6.7,
+      "foam_micro_normal": 1.05,
+      "foam_opacity_scale": 3.5,
+      "foam_roughness": 0.73,
+      "foam_material_view": 0,
+      "breaking_depth": 2.0,
+      "generation": 4.0,
+      "foam_generation_threshold": 0.25,
+      "foam_generation_transition": 0.4,
+      "foam_front_generation": 8.0,
+      "foam_front_distance": 1.0,
+      "foam_velocity_threshold": 0.1,
+      "foam_velocity_transition": 0.5,
+      "foam_background_multiplier": 0.0,
+      "foam_follow": 0.8,
+      "foam_response_time": 0.35,
+      "foam_drag_enabled": true,
+      "foam_birth_speed": 1.0,
+      "foam_transport_order": 2,
+      "decay": 0.45,
+      "foam_compression_threshold": 0.1,
+      "foam_density_reference": 2.0,
+      "foam_height_max": 0.05,
+      "foam_height_threshold": 0.1,
+      "foam_height_transition": 1.9,
+      "drying_time": 18.0,
+      "view": 0,
+      "foam_ridge_enabled": true,
+      "foam_ridge_width": 1.0,
+      "foam_ridge_prominence": 0.02,
+      "foam_emission_enabled": true
+    },
+    "spray": {
+      "enabled": false,
+      "debug": false,
+      "rate": 150.0,
+      "slope": 1.2,
+      "rise": 0.25,
+      "depth": 0.02,
+      "upward": 2.6,
+      "forward": 0.5,
+      "lifetime": 2.0,
+      "size": 1.0,
+      "size_range": [
+        0.65,
+        1.35
+      ],
+      "drag": 0.5,
+      "softness": 0.15
+    },
+    "depth": 6.0,
+    "beach": true,
+    "beach_slope": 0.18,
+    "sand_tile_size": 4.0,
+    "sand_rotation_deg": 0.0,
+    "shore_x": -20.0,
+    "sigma_t": [
+      0.22,
+      0.075,
+      0.035
+    ],
+    "source": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "view": 0,
+    "path_range": 35.0,
+    "reflections": true,
+    "color_bands": false,
+    "checker_size": 4.0,
+    "sky": {
+      "enabled": true,
+      "albedo": [
+        0.25,
+        0.55,
+        0.75
+      ],
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "intensity": 1.0,
+      "steps": 32
+    }
+  },
+  "camera": {
+    "yaw": 1.4019997,
+    "pitch": 0.57799923,
+    "distance": 75.24388,
+    "target": [
+      0.0,
+      0.0
+    ],
+    "gain": 0.3,
+    "choppy": true,
+    "chop_amount": 0.65,
+    "foam_debug": 0,
+    "foam": true
+  },
+  "speed": 1.0,
+  "paused": false
+}

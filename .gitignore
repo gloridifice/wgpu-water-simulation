@@ -15,6 +15,9 @@
 /water-simulation/ocean-settings.json
 /water-simulation/ocean-settings.invalid-*.json
 /water-simulation/.ocean-settings-*.tmp
+# Versioned repository sessions keep recovery/atomic-write artifacts local.
+/configs/**/ocean-settings.invalid-*.json
+/configs/**/.ocean-settings-*.tmp
 
 # Local IDE state and editor temporary files
 /.idea/
