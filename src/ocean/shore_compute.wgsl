@@ -3,6 +3,19 @@
 // conservative (h,hu,hv,surface foam amount per area), surface (reserved,reserved,eta,v).
 // Fourth block: foam area momentum X/Z and texture A displacement X/Z in meters.
 // Fifth block: texture B displacement X/Z, shared cycle phase, reserved.
+// Zero keeps uniform-driven diagnostic entries; production specializes the
+// three supported combinations so inactive high-order paths cannot inflate
+// register pressure or retain terrain work in a cheaper solver variant.
+override SWE_ORDER: u32 = 0u;
+override FOAM_ORDER: u32 = 0u;
+fn second_order_swe() -> bool {
+    if SWE_ORDER != 0u { return SWE_ORDER == 2u; }
+    return shore.solver.x>1.5;
+}
+fn second_order_foam() -> bool {
+    if FOAM_ORDER != 0u { return FOAM_ORDER == 2u; }
+    return shore.foam_inertia.z>1.5;
+}
 @group(0) @binding(0) var<uniform> shore: ShoreParams;
 @group(0) @binding(1) var<storage, read> old_shore: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read_write> new_shore: array<vec4<f32>>;
@@ -131,14 +144,7 @@ fn advance_foam_motion(c: vec2<i32>, q: vec4<f32>, original: vec4<f32>, momentum
 // Conservative MUSCL states: one common slope scale keeps density positive
 // AND bounds momentum/density by neighboring velocities, including near vacuum.
 // The opposite faces average back to the cell state; never clip density to 1.
-fn foam_face_state(c: vec2<i32>, delta: vec2<i32>) -> vec3<f32> {
-    let q=foam_state(c);
-    let n=i32(shore.options.z);
-    if shore.foam_inertia.z<1.5 || q.x<=0.0
-        || any(c<=vec2(0)) || any(c>=vec2(n-1)) { return q; }
-    if min(state(c).x,min(state(c-delta).x,state(c+delta).x))<=max(0.02,shore.density.z)
-        || collider_blocks_face(c,c-delta) || collider_blocks_face(c,c+delta) { return q; }
-    let left=foam_state(c-delta); let right=foam_state(c+delta);
+fn limit_foam_slope(left: vec3<f32>, q: vec3<f32>, right: vec3<f32>) -> vec3<f32> {
     let a=q-left; let b=right-q;
     var slope=select(vec3(0.0),sign(a)*min(min(2.0*abs(a),2.0*abs(b)),0.5*abs(a+b)),a*b>vec3(0.0));
     let v=q.yz/q.x;
@@ -154,9 +160,76 @@ fn foam_face_state(c: vec2<i32>, delta: vec2<i32>) -> vec3<f32> {
     let lower_scale=2.0*lower/max(abs(slope.yz-lo*slope.x),vec2(1e-30));
     let upper_scale=2.0*upper/max(abs(hi*slope.x-slope.yz),vec2(1e-30));
     scale=min(scale,min(min(lower_scale.x,lower_scale.y),min(upper_scale.x,upper_scale.y)));
-    slope*=scale;
-    return q+0.5*slope;
+    return slope*scale;
 }
+// Reuse a five-cell stencil per axis rather than reconstructing both sides of
+// all four faces independently. Bed/collider queries are especially expensive
+// on uploaded terrain; each stencil cell's geometry is evaluated just once.
+struct FoamCell {
+    position: vec2<i32>,
+    water: vec4<f32>,
+    foam: vec3<f32>,
+    bottom: f32,
+    raised: bool,
+}
+fn foam_cell(c: vec2<i32>) -> FoamCell {
+    let n=i32(shore.options.z); let p=clamp(c,vec2(0),vec2(n-1));
+    let water=state(c);
+    var cell=FoamCell(c,water,vec3(water.w,old_shore[u32(3*n*n+p.y*n+p.x)].xy),0.0,false);
+    if all(c>=vec2(0)) && all(c<vec2(n)) && (shore.model.x>0.5 || shore.collider_meta.x>0.5) {
+        cell.bottom=bed(c);
+        cell.raised=shore.model.x>0.5 || cell.bottom>terrain_height(world(c),shore)+0.00001;
+    }
+    return cell;
+}
+fn foam_blocked(a: FoamCell, b: FoamCell) -> bool {
+    return (a.raised || b.raised) && max(a.bottom,b.bottom)>=max(a.bottom+a.water.x,b.bottom+b.water.x);
+}
+fn foam_slope(left: FoamCell, q: FoamCell, right: FoamCell, blocked_left: bool, blocked_right: bool) -> vec3<f32> {
+    let n=i32(shore.options.z);
+    if q.foam.x<=0.0 || any(q.position<=vec2(0)) || any(q.position>=vec2(n-1))
+        || min(q.water.x,min(left.water.x,right.water.x))<=max(0.02,shore.density.z)
+        || blocked_left || blocked_right { return vec3(0.0); }
+    return limit_foam_slope(left.foam,q.foam,right.foam);
+}
+// Globally positive-axis flux: one shared face value, including open outflow.
+fn foam_reconstructed_flux(a: FoamCell, b: FoamCell, qa: vec3<f32>, qb: vec3<f32>, blocked: bool, axis: u32) -> vec3<f32> {
+    let n=i32(shore.options.z);
+    if any(a.position<vec2(0)) {
+        if model_open_outside(a.position) {
+            let v=foam_response(foam_speed(b.foam.x,b.foam.yz,velocity(b.water)),velocity(b.water),shore.timing.y*0.5);
+            return min(0.0,v[axis])*b.foam;
+        }
+        return vec3(0.0);
+    }
+    if any(b.position>=vec2(n)) {
+        if model_open_outside(b.position) {
+            let v=foam_response(foam_speed(a.foam.x,a.foam.yz,velocity(a.water)),velocity(a.water),shore.timing.y*0.5);
+            return max(0.0,v[axis])*a.foam;
+        }
+        return vec3(0.0);
+    }
+    if blocked { return vec3(0.0); }
+    let av=foam_response(foam_speed(qa.x,qa.yz,velocity(a.water)),velocity(a.water),shore.timing.y*0.5)[axis];
+    let bv=foam_response(foam_speed(qb.x,qb.yz,velocity(b.water)),velocity(b.water),shore.timing.y*0.5)[axis];
+    let signal=max(abs(av),abs(bv));
+    let outgoing=select(0.0,0.5*(av+signal),a.water.x>shore.density.z);
+    let incoming=select(0.0,0.5*(bv-signal),b.water.x>shore.density.z);
+    return outgoing*qa+incoming*qb;
+}
+fn foam_axis_flux(center: FoamCell, axis: u32) -> vec3<f32> {
+    var d=vec2(0); d[axis]=1;
+    let a=foam_cell(center.position-d); let b=foam_cell(center.position+d);
+    let aa=foam_cell(center.position-2*d); let bb=foam_cell(center.position+2*d);
+    let left_block=foam_blocked(a,center); let right_block=foam_blocked(center,b);
+    let middle=foam_slope(a,center,b,left_block,right_block);
+    let left=foam_slope(aa,a,center,foam_blocked(aa,a),left_block);
+    let right=foam_slope(center,b,bb,right_block,foam_blocked(b,bb));
+    let positive=foam_reconstructed_flux(center,b,center.foam+0.5*middle,b.foam-0.5*right,right_block,axis);
+    let negative=foam_reconstructed_flux(a,center,a.foam+0.5*left,center.foam-0.5*middle,left_block,axis);
+    return positive-negative;
+}
+// Original first-order path stays available without the MUSCL stencil work.
 fn foam_flux(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec3<f32> {
     let b=c+delta; let n=i32(shore.options.z);
     if any(b<vec2(0)) || any(b>=vec2(n)) {
@@ -165,25 +238,30 @@ fn foam_flux(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec3<f32> {
     }
     if collider_blocks_face(c,b) { return vec3(0.0); }
     let normal=f32(delta[axis]);
-    let a=foam_face_state(c,delta); let neighbor=foam_face_state(b,-delta);
-    // Use the same physical velocity response as before, now on face states.
-    let a_speed=foam_response(foam_speed(a.x,a.yz,velocity(state(c))),velocity(state(c)),shore.timing.y*0.5)[axis]*normal;
-    let b_speed=foam_response(foam_speed(neighbor.x,neighbor.yz,velocity(state(b))),velocity(state(b)),shore.timing.y*0.5)[axis]*normal;
+    let a_speed=foam_transport_velocity(c)[axis]*normal;
+    let b_speed=foam_transport_velocity(b)[axis]*normal;
     let signal=max(abs(a_speed),abs(b_speed));
     let outflow=select(0.0,0.5*(a_speed+signal),state(c).x>shore.density.z);
     let inflow=select(0.0,0.5*(b_speed-signal),state(b).x>shore.density.z);
     // Local Rusanov flux: identical positive donor weights for amount and
     // momentum, antisymmetric across a shared face. Unlike cell-speed splitting,
     // this resolves dilution at stagnation points inside an expanding flow.
-    return outflow*a+inflow*neighbor;
+    return outflow*foam_state(c)+inflow*foam_state(b);
 }
 // Positivity: the cell is the mean of its four nonnegative face states.
 // dt * outward Rusanov donor weight / axis spacing must be <= 1/4 per face.
 // Production's 0.2 CFL with the 12 m/s bound satisfies this (also for RK stages).
 fn transport_foam(c: vec2<i32>) -> vec3<f32> {
     let spacing=shore.domain.zw/shore.options.z;
-    var foam=foam_state(c)-shore.timing.y*((foam_flux(c,vec2(1,0),0u)+foam_flux(c,vec2(-1,0),0u))/spacing.x
-        +(foam_flux(c,vec2(0,1),1u)+foam_flux(c,vec2(0,-1),1u))/spacing.y);
+    var change=vec3(0.0);
+    if second_order_foam() {
+        let center=foam_cell(c);
+        change=foam_axis_flux(center,0u)/spacing.x+foam_axis_flux(center,1u)/spacing.y;
+    } else {
+        change=(foam_flux(c,vec2(1,0),0u)+foam_flux(c,vec2(-1,0),0u))/spacing.x
+            +(foam_flux(c,vec2(0,1),1u)+foam_flux(c,vec2(0,-1),1u))/spacing.y;
+    }
+    var foam=foam_state(c)-shore.timing.y*change;
     if foam.x<=0.0 { foam=vec3(0.0); }
     return foam;
 }
@@ -247,7 +325,7 @@ fn reconstruct(c: vec2<i32>, axis: u32) -> Reconstruction {
     let n=i32(shore.options.z);
     let v=primitive(c); let z=bed(c);
     var r=Reconstruction(v,vec4(0.0),z,0.0);
-    if shore.solver.x<1.5 || any(c<=vec2(0)) || any(c>=vec2(n-1)) { return r; }
+    if !second_order_swe() || any(c<=vec2(0)) || any(c>=vec2(n-1)) { return r; }
     var d=vec2(0); d[axis]=1;
     if min(state(c).x,min(state(c-d).x,state(c+d).x))<0.02 { return r; }
     r.slope=limited(v-primitive(c-d),primitive(c+d)-v);
@@ -258,7 +336,7 @@ fn reconstruct(c: vec2<i32>, axis: u32) -> Reconstruction {
 }
 // Outward hydrostatic flux with the one-sided pressure correction.
 fn face(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec4<f32> {
-    if shore.solver.x<1.5 { return first_order_face(c,delta,axis); }
+    if !second_order_swe() { return first_order_face(c,delta,axis); }
     let a=reconstruct(c,axis); let b=reconstruct(c+delta,axis);
     let sign=f32(delta[axis]);
     let va=a.value+0.5*sign*a.slope; let vb=b.value-0.5*sign*b.slope;
@@ -274,7 +352,7 @@ fn face(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec4<f32> {
     return f;
 }
 fn bed_source(c: vec2<i32>, axis: u32) -> f32 {
-    if shore.solver.x<1.5 {return 0.0;}
+    if !second_order_swe() {return 0.0;}
     let r=reconstruct(c,axis);
     let hl=max(r.value.x-0.5*r.slope.x-r.bottom+0.5*r.bed_slope,0.0);
     let hr=max(r.value.x+0.5*r.slope.x-r.bottom-0.5*r.bed_slope,0.0);
@@ -431,7 +509,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let edge=select(smoothstep(0.80,1.0,(f32(id.x)+0.5)/f32(n)),model_edge_weight(p,shore),shore.model.x>0.5);
     let incoming=incident(p,max(-z,0.1));
     let imposed=vec4(max(incoming.x-z,0.0),incoming.yz,0.0);
-    if shore.solver.x>1.5 {
+    if second_order_swe() {
         q+=dt*edge*4.0*(imposed-previous);
         foam.y-=dt*edge*4.0*foam_state(c).y;
         foam.z-=dt*edge*4.0*foam_state(c).z;
@@ -444,7 +522,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if q.x<0.00001 { q=vec4(0.0,0.0,0.0,q.w); }
     let v=velocity(q);
     let friction=9.81*0.03*0.03*length(v)/pow(max(q.x,0.005),1.3333333);
-    if shore.solver.x>1.5 {
+    if second_order_swe() {
         let f=9.81*0.03*0.03*length(velocity(previous))/pow(max(previous.x,0.005),1.3333333);
         q.y-=min(dt*f,1.0)*previous.y; q.z-=min(dt*f,1.0)*previous.z;
         if shore.solver.y>1.5 {

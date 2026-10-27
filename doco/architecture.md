@@ -6,7 +6,7 @@
 
 - Rust 2024 项目，默认启用 `ocean` feature；`cargo run` 启动 GPU Ocean。
 - `src/bin/ocean.rs` 提供 GPU 海洋入口、验证与预览参数。
-- `src/bin/foam_lab.rs` 提供独立离线泡沫输送对照，诊断 WGSL 入口调用生产泡沫通量／源项／纹理运动函数，在固定解析水流下输出定时密度快照及误差指标；不运行完整 SWE 或读取个人配置，见 [../README-foam-lab.md](../README-foam-lab.md)。
+- `src/bin/foam_lab.rs` 提供独立离线泡沫输送对照：默认诊断入口调用生产泡沫通量／源项／纹理运动，在固定解析水流下输出密度快照及误差；`foam_lab/benchmark.rs` 的 `--benchmark` 模式则调用生产 SWE 管线，在固定稀疏／密集／模型地形／障碍物输入下预热并重复计时、导出单步状态。两者均不读写个人配置，见 [../README-foam-lab.md](../README-foam-lab.md)。
 - `src/main.rs`、`src/pic/`、`src/tui/` 保留 CPU 二维 PIC；`src/solver.rs`、`src/shallow_tui/` 提供一维浅水模式。不启用 `ocean` 时仍需可用。
 
 ## GPU 海洋
@@ -14,6 +14,7 @@
 - `src/ocean/spectrum.rs` 与 `gpu.rs::Ocean`：波谱初始化、GPU 演化、逆 FFT，以及向近岸提供过滤后的波浪输入。
 - `src/ocean/shore.rs::Shore` 与 `shore*.wgsl`：局部二维 SWE、一阶/二阶求解、水面泡沫输送和沙滩湿润历史。耦合方向为 FFT → SWE。
 - 近岸泡沫量与动量共用守恒 Rusanov 通量；`foam_transport_order` 默认 1，在二阶 SWE 下可启用受限 MUSCL 空间重构。密度与动量共享正性／速度约束，干湿、障碍物和域边缘局部退回一阶；不改变源项、拖曳或材质。`foam-lab` 独立选择空间／时间阶数并用相同 CFL 对照，设备支持时记录 GPU timestamp。
+- MUSCL 泡沫按轴复用五格邻域的水深、密度、动量和地形阻挡，中心斜率供两侧共用，不增加生产网格缓冲区或计算 pass。`Shore::solver_pipeline` 按水体／泡沫阶数惰性编译并缓存三个共享绑定布局的管线，用 WGSL override 去掉未启用的求解分支；首次使用可能有编译开销。诊断入口可保留 uniform 动态选择。
 - `Shore::encode` 按稳定步长拆分子步；二阶有预测与校正阶段。`simulated_dt` 是本次实际推进量，长帧可能被限制，不能直接用墙钟时间替代。
 - `src/ocean/foam.rs`、`foam.wgsl`：远海泡沫与当前位移雅可比，独立于近岸泡沫。
 - `src/ocean/spray.rs` 与 `spray*.wgsl`：近岸纹理浪花。Shore 持有 `SpraySource`，每完成 SWE 子步向独立网格 storage buffer 累积发射信号；Renderer 持有 `SprayParticles`，消费信号，维护 GPU 余量、双粒子列表和间接绘制参数。粒子不反作用水体或泡沫，运行时不回读信号/粒子计数。配置放在 `OpticsConfig::spray`，默认关闭。

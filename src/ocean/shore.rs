@@ -310,6 +310,8 @@ pub struct Shore {
     terrain_key: Option<(super::terrain::ModelConfig, f32)>,
     previous: wgpu::Buffer,
     pipeline: wgpu::ComputePipeline,
+    shader: wgpu::ShaderModule,
+    solver_pipelines: [Option<wgpu::ComputePipeline>; 3],
     collider_edit_pipeline: wgpu::ComputePipeline,
     bind: wgpu::BindGroup,
     predictor_bind: wgpu::BindGroup,
@@ -484,6 +486,8 @@ impl Shore {
             field,
             previous,
             pipeline,
+            shader,
+            solver_pipelines: [None, None, None],
             collider_edit_pipeline,
             bind,
             predictor_bind,
@@ -502,6 +506,45 @@ impl Shore {
             start_time: 0.0,
             last: None,
         }
+    }
+
+    /// The production and fixed-input benchmark share these lazy variants.
+    /// All variants use the same binding layout; changing one does not reset state.
+    pub fn solver_pipeline(
+        &mut self,
+        gpu: &Gpu,
+        order: u32,
+        foam_order: u32,
+    ) -> &wgpu::ComputePipeline {
+        assert!((1..=2).contains(&order) && (1..=2).contains(&foam_order));
+        let index = if order == 1 { 0 } else { foam_order as usize };
+        self.solver_pipelines[index].get_or_insert_with(|| {
+            let layout = gpu
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("shared SWE solver layout"),
+                    bind_group_layouts: &[&self.pipeline.get_bind_group_layout(0)],
+                    push_constant_ranges: &[],
+                });
+            gpu.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("specialized SWE/foam solver"),
+                    layout: Some(&layout),
+                    module: &self.shader,
+                    entry_point: Some("main"),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[
+                            ("SWE_ORDER", f64::from(order)),
+                            (
+                                "FOAM_ORDER",
+                                f64::from(if order == 1 { 1 } else { foam_order }),
+                            ),
+                        ],
+                        ..Default::default()
+                    },
+                    cache: None,
+                })
+        })
     }
 
     /// Regrid only on Apply/scene load/resolution changes, never per time step.
@@ -897,6 +940,9 @@ impl Shore {
         let timed = self.timer.as_ref().is_some_and(|t| t.ready())
             && elapsed > 0.0
             && step.options[3] == 0.0;
+        let pipeline = self
+            .solver_pipeline(gpu, optics.shore.order, step.foam_inertia[2] as u32)
+            .clone();
         for i in 0..count * stages {
             encoder.copy_buffer_to_buffer(&upload, i as u64 * stride, &self.uniform, 0, stride);
             {
@@ -922,7 +968,7 @@ impl Shore {
                             || t.end_of_pass_write_index.is_some()
                     }),
                 });
-                pass.set_pipeline(&self.pipeline);
+                pass.set_pipeline(&pipeline);
                 let bind = if stages == 1 {
                     &self.bind
                 } else if i % 2 == 0 {
@@ -2234,6 +2280,83 @@ fn motion_probe(@builtin(global_invocation_id) id: vec3<u32>) {
             }
         }
     }
+    // Open boundaries export density AND momentum, never import foam. The
+    // independent reference is uniform density * outward velocity * edge length
+    // * dt (divided by cell area here, since we sum cell densities).
+    // Closed-domain tests above cannot detect a sign error on a negative edge.
+    gpu.queue.write_buffer(
+        &shore.terrain_bed,
+        0,
+        bytemuck::cast_slice(&vec![[0.0_f32, 1.0]; cells]),
+    );
+    for space_order in [1, 2] {
+        for edge in 0..4 {
+            for (open, outward) in [(false, true), (true, true), (true, false)] {
+                let axis = edge / 2;
+                let mut speed = [0.25_f32; 2];
+                speed[axis] = if (edge % 2 == 0) == outward {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let mut seed = vec![[0.0_f32; 4]; 5 * cells];
+                for i in 0..cells {
+                    seed[cells + i] = [2.0, 0.0, 0.0, 0.5];
+                    seed[3 * cells + i] = [0.5 * speed[0], 0.5 * speed[1], 0.0, 0.0];
+                }
+                let mut p = shore.parameters(&OpticsConfig::beach_scene(), 0.0, false, 0.0);
+                p.domain = [0.0, 0.0, 64.0, 64.0];
+                p.model[0] = 1.0;
+                p.edges = [0.0; 4];
+                p.edges[edge] = f32::from(open);
+                p.foam_inertia = [0.0, 1.0, space_order as f32, 0.0];
+                p.timing[1] = 0.02;
+                p.timing[2] = 0.0;
+                gpu.queue
+                    .write_buffer(&shore.previous, 0, bytemuck::cast_slice(&seed));
+                gpu.queue
+                    .write_buffer(&shore.uniform, 0, bytemuck::bytes_of(&p));
+                let mut enc = gpu.device.create_command_encoder(&Default::default());
+                {
+                    let mut pass = enc.begin_compute_pass(&Default::default());
+                    pass.set_pipeline(&pipeline);
+                    pass.set_bind_group(0, &bind, &[]);
+                    pass.dispatch_workgroups(RESOLUTION / 8, RESOLUTION / 8, 1);
+                }
+                gpu.queue.submit([enc.finish()]);
+                let bytes = gpu.read_buffer(&shore.field, shore.field.size())?;
+                let data: Vec<[f32; 4]> = bytes
+                    .as_chunks::<16>()
+                    .0
+                    .iter()
+                    .map(|b| bytemuck::pod_read_unaligned(b))
+                    .collect();
+                let lost = if open && outward {
+                    0.5 * n as f64 * f64::from(p.timing[1]) / (64.0 / n as f64)
+                } else {
+                    0.0
+                };
+                let expected = 0.5 * cells as f64 - lost;
+                let amount: f64 = data[cells..2 * cells].iter().map(|q| f64::from(q[3])).sum();
+                let momentum: [f64; 2] = std::array::from_fn(|a| {
+                    data[3 * cells..4 * cells]
+                        .iter()
+                        .map(|m| f64::from(m[a]))
+                        .sum()
+                });
+                if data.iter().flatten().any(|v| !v.is_finite())
+                    || data[cells..2 * cells].iter().any(|q| q[3] < 0.0)
+                    || (amount - expected).abs() > 0.003
+                    || (0..2).any(|a| (momentum[a] - expected * f64::from(speed[a])).abs() > 0.003)
+                {
+                    return Err(format!("foam boundary space {space_order}, edge {edge}, open {open}, outward {outward}: amount {amount} vs {expected}, momentum {momentum:?}").into());
+                }
+            }
+        }
+    }
+    eprintln!(
+        "Foam boundaries: both spatial orders, four edges, closed conservation, outward amount/momentum flux and no inward injection OK"
+    );
     // A wet donor retains its coordinates next to dry/outside samples, rather
     // than interpolating toward cleared zero displacement. All-dry is finite.
     let mut seed = vec![[0.0_f32; 4]; 5 * cells];

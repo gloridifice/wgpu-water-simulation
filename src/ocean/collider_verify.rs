@@ -31,7 +31,7 @@ fn bed(x: f64, z: f64, collider: Option<ColliderUniform>) -> f64 {
 
 fn simulate(
     gpu: &Gpu,
-    shore: &Shore,
+    shore: &mut Shore,
     mut p: ShoreUniform,
     collider: Option<ColliderUniform>,
     pulse: bool,
@@ -85,6 +85,9 @@ fn simulate(
         mapped_at_creation: false,
     });
     let order = p.solver[0] as u32;
+    let pipeline = shore
+        .solver_pipeline(gpu, order, p.foam_inertia[2] as u32)
+        .clone();
     let mut bindings = Vec::new();
     for s in 0..order {
         p.solver[1] = if order == 2 { (s + 1) as f32 } else { 0.0 };
@@ -103,7 +106,7 @@ fn simulate(
         };
         bindings.push(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("collider production solver test"),
-            layout: &shore.pipeline.get_bind_group_layout(0),
+            layout: &pipeline.get_bind_group_layout(0),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -141,7 +144,7 @@ fn simulate(
         for _ in start..(start + 50).min(steps) {
             for bind in &bindings {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&shore.pipeline);
+                pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, bind, &[]);
                 pass.dispatch_workgroups(N as u32 / 8, N as u32 / 8, 1);
             }
@@ -175,7 +178,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             ..Default::default()
         },
     )?;
-    let shore = Shore::new(gpu, &ocean);
+    let mut shore = Shore::new(gpu, &ocean);
     let mut p = shore.parameters(&OpticsConfig::beach_scene(), 0.0, false, 0.0);
     for (order, space_order) in [(1, 1), (2, 1), (2, 2)] {
         p.solver[0] = order as f32;
@@ -191,7 +194,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                 }
                 .uniform(0.02, -50.0);
                 c.solid[1] = top;
-                let (seed, data) = simulate(gpu, &shore, p, Some(c), false, 200)?;
+                let (seed, data) = simulate(gpu, &mut shore, p, Some(c), false, 200)?;
                 let error = seed[CELLS..2 * CELLS]
                     .iter()
                     .zip(&data[CELLS..2 * CELLS])
@@ -213,7 +216,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
         }
         .uniform(0.02, -50.0);
         wall.solid[1] = 2.0;
-        let (seed, blocked) = simulate(gpu, &shore, p, Some(wall), true, 900)?;
+        let (seed, blocked) = simulate(gpu, &mut shore, p, Some(wall), true, 900)?;
         let mut reflected = 0.0;
         let mut leak = 0.0_f32;
         for i in 0..CELLS {
@@ -248,7 +251,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             ..Default::default()
         }
         .uniform(0.02, -50.0);
-        let (_, around) = simulate(gpu, &shore, p, Some(circle), true, 800)?;
+        let (_, around) = simulate(gpu, &mut shore, p, Some(circle), true, 800)?;
         let positive = around[CELLS..2 * CELLS]
             .iter()
             .map(|q| q[2])
@@ -261,7 +264,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             return Err(format!("no lateral flow around cylinder: {positive}/{negative}").into());
         }
         wall.solid[1] = 0.02;
-        let (_, over) = simulate(gpu, &shore, p, Some(wall), true, 600)?;
+        let (_, over) = simulate(gpu, &mut shore, p, Some(wall), true, 600)?;
         let overtopped = over[CELLS..2 * CELLS]
             .iter()
             .enumerate()

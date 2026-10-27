@@ -8,6 +8,9 @@ use water_simulation::ocean::{
 };
 use wgpu::util::DeviceExt;
 
+#[path = "foam_lab/benchmark.rs"]
+mod benchmark;
+
 const SIDE: f64 = 32.0;
 const SAMPLES: usize = 8;
 const IMAGE_SIZE: usize = 512;
@@ -17,6 +20,8 @@ const CFL: f64 = 0.2;
 const HELP: &str = "GPU foam shape laboratory (does not load or save personal settings)
 Usage: cargo run --release --bin foam-lab -- [options]
   --output PATH       New output directory (default: target/foam-lab)
+  --benchmark         Fixed-input full SWE GPU timings (sparse/dense/model/obstacles);
+                      uses --resolutions and --output, writes JSON and raw state binaries
   --scenario NAME     all, translation, shear, vortex (default: all)
   --resolutions LIST  Comma-separated: 64,128,256,512,1024 (default: 128,256,512)
   --orders LIST       Time integration: 1=Euler, 2=RK2 (default: 2)
@@ -114,6 +119,7 @@ struct Config {
     orders: Vec<u32>,
     space_orders: Vec<u32>,
     times: Vec<f64>,
+    benchmark: bool,
 }
 fn list<T: std::str::FromStr>(text: &str) -> Result<Vec<T>, Error> {
     text.split(',')
@@ -131,12 +137,17 @@ fn config() -> Result<Option<Config>, Error> {
         orders: vec![2],
         space_orders: vec![1, 2],
         times: vec![0.0, 2.0, 4.0, 8.0],
+        benchmark: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--help" || arg == "-h" {
             print!("{HELP}");
             return Ok(None);
+        }
+        if arg == "--benchmark" {
+            c.benchmark = true;
+            continue;
         }
         let value = args
             .next()
@@ -524,6 +535,9 @@ async fn run(c: Config) -> Result<(), Error> {
     fs::create_dir(&c.output)?;
     let gpu = Gpu::new(&wgpu::Instance::default(), None).await?;
     println!("GPU: {}", gpu.name);
+    if c.benchmark {
+        return benchmark::run(&gpu, &c.output, &c.resolutions);
+    }
     let pipeline = transport_pipeline(&gpu);
     fs::write(
         c.output.join("manifest.json"),

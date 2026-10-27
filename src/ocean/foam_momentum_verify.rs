@@ -49,7 +49,8 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
     // Repeat MUSCL near vacuum: density scaling must not erase momentum or
     // produce a different velocity because of a reconstruction denominator floor.
     for (order, space_order, amplitude) in [(1, 1, 1.0), (2, 1, 1.0), (2, 2, 1.0), (2, 2, 1e-7)] {
-        let shore = Shore::new(gpu, &ocean);
+        let mut shore = Shore::new(gpu, &ocean);
+        let pipeline = shore.solver_pipeline(gpu, order, space_order).clone();
         let stage_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("foam collision predictor"),
             size: shore.field.size(),
@@ -116,7 +117,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             };
             let bind = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("foam collision stage"),
-                layout: &shore.pipeline.get_bind_group_layout(0),
+                layout: &pipeline.get_bind_group_layout(0),
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -156,7 +157,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             for _ in 0..50 {
                 for bind in &stage_bindings {
                     let mut pass = enc.begin_compute_pass(&Default::default());
-                    pass.set_pipeline(&shore.pipeline);
+                    pass.set_pipeline(&pipeline);
                     pass.set_bind_group(0, bind, &[]);
                     pass.dispatch_workgroups(RESOLUTION / 8, RESOLUTION / 8, 1);
                 }
