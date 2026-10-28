@@ -28,13 +28,13 @@ impl GpuTimer {
             return None;
         }
         let queries = gpu.device.create_query_set(&wgpu::QuerySetDescriptor {
-            label: Some("SWE GPU timestamps"),
+            label: Some("GPU span timestamps"),
             ty: wgpu::QueryType::Timestamp,
             count: 2,
         });
         let buffer = |usage| {
             gpu.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("SWE timing readback"),
+                label: Some("GPU span readback"),
                 size: 256,
                 usage,
                 mapped_at_creation: false,
@@ -51,6 +51,17 @@ impl GpuTimer {
             latest: None,
             failed: false,
         })
+    }
+    /// Portable frame boundary without requiring TIMESTAMP_QUERY_INSIDE_ENCODERS.
+    pub fn mark(&self, encoder: &mut wgpu::CommandEncoder, index: u32) {
+        let _pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("GPU frame timing boundary"),
+            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                query_set: &self.queries,
+                beginning_of_pass_write_index: Some(index),
+                end_of_pass_write_index: None,
+            }),
+        });
     }
     pub fn ready(&self) -> bool {
         self.pending.is_none() && !self.failed

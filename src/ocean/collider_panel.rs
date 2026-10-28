@@ -101,9 +101,7 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
             parameter_table(ui, "collider parameters", |ui| {
                 parameter(ui, "启用", "开启或关闭；即时生效并保存，不重置 SWE，暂停时也会应用。", |ui| ui.checkbox(&mut c.enabled, ""));
                 parameter(ui, "形状", "圆柱或可旋转长方体，底部连接海底；即时生效并保存，不重置 SWE。", |ui| {
-                    egui::ComboBox::from_id_salt("collider shape").width(ui.available_width())
-                        .selected_text(if c.shape == Shape::Cylinder { "圆柱" } else { "长方体" })
-                        .show_ui(ui, |ui| { ui.selectable_value(&mut c.shape, Shape::Cylinder, "圆柱"); ui.selectable_value(&mut c.shape, Shape::Box, "长方体"); });
+                    super::gui::choices(ui, &mut c.shape, &[(Shape::Cylinder, "圆柱"), (Shape::Box, "长方体")]);
                 });
                 for (axis, label) in [(0, "位置 X（米）"), (1, "位置 Z（米）")] {
                     parameter(ui, label, "世界坐标，范围 ±1000 米。X 增大朝向外海，Z 沿岸；即时生效并保存，不重置 SWE。整个形状须在有效范围内。", |ui| ui.add(egui::DragValue::new(&mut c.position[axis]).speed(0.1).range(-1000.0..=1000.0)));

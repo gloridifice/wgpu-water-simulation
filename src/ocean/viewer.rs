@@ -3,7 +3,7 @@ use super::{
     foam::{Foam, FoamStep},
     gpu::{CameraUniform, Error, Gpu, Ocean, Renderer},
     gui::Gui,
-    performance::{FrameTimings, SweStatus},
+    performance::{FrameGpuStatus, FrameTimings, SweStatus},
     settings::{ConfigurationLibrary, SavedSettings, SettingsStore},
     spectrum::OceanConfig,
 };
@@ -131,11 +131,10 @@ struct State {
     paused: bool,
     render_size: [u32; 2],
     last: Instant,
-    title_time: Instant,
-    title_frames: u32,
     frames: u32,
     settings: Option<SettingsStore>,
     applied_model: super::terrain::ModelConfig,
+    frame_timer: Option<super::gpu_timer::GpuTimer>,
 }
 
 impl State {
@@ -162,7 +161,9 @@ impl State {
         );
         renderer.shore.timer = super::gpu_timer::GpuTimer::new(&gpu);
         let gui = Gui::new(&window, &gpu, config.format, ocean_config);
+        let frame_timer = super::gpu_timer::GpuTimer::new(&gpu);
         Ok(Self {
+            frame_timer,
             gui,
             window,
             surface,
@@ -177,8 +178,6 @@ impl State {
             paused: false,
             render_size: [0, 0],
             last: Instant::now(),
-            title_time: Instant::now(),
-            title_frames: 0,
             frames: 0,
             settings: None,
             applied_model: super::terrain::ModelConfig::default(),
@@ -199,6 +198,9 @@ impl State {
     }
 
     fn persist(&mut self, force: bool) {
+        if let Some(store) = &mut self.gui.workspace_store {
+            store.update(&self.gui.workspaces, Instant::now(), force);
+        }
         let current = self.saved_settings();
         if let Some(store) = &mut self.settings {
             let now = Instant::now();
@@ -284,6 +286,20 @@ impl State {
             (SweStatus::Unsupported, None)
         };
         self.gui.performance.record_gpu(status, sample);
+        let (status, sample) = if let Some(timer) = &mut self.frame_timer {
+            timer.poll(&self.gpu);
+            (
+                if timer.failed {
+                    FrameGpuStatus::Failed
+                } else {
+                    FrameGpuStatus::Sampling
+                },
+                timer.latest.take(),
+            )
+        } else {
+            (FrameGpuStatus::Unsupported, None)
+        };
+        self.gui.performance.record_frame_gpu(status, sample);
         self.gui.swe_domain = self
             .renderer
             .shore
@@ -351,6 +367,10 @@ impl State {
         self.renderer.update_optics(&self.gpu, &self.gui.optics);
         let simulation_start = Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
+        let timed_frame = self.frame_timer.as_ref().is_some_and(|t| t.ready());
+        if timed_frame {
+            self.frame_timer.as_ref().unwrap().mark(&mut encoder, 0);
+        }
         self.ocean
             .encode_filtered(&self.gpu, &mut encoder, self.time, &self.gui.optics.shore);
         let camera = self.camera.uniform(
@@ -393,6 +413,11 @@ impl State {
         let extra = self
             .gui
             .encode(&self.window, &self.gpu, &mut encoder, &view, gui_output);
+        if timed_frame {
+            let timer = self.frame_timer.as_mut().unwrap();
+            timer.mark(&mut encoder, 1);
+            timer.resolve(&mut encoder, 0, 1, dt);
+        }
         let render = render_start.elapsed().as_secs_f64() * 1000.0;
         let submit_start = Instant::now();
         self.gpu
@@ -413,14 +438,6 @@ impl State {
             },
         );
         self.frames += 1;
-        self.title_frames += 1;
-        let duration = now.duration_since(self.title_time).as_secs_f32();
-        if duration > 0.5 {
-            self.window.set_title(&format!("FFT Ocean | {:.0} FPS | t={:.1}s {} | amplitude {:.1}x | Drag: orbit / Wheel: zoom / Space: pause / C: choppy / F: foam / Up,Down: height / R: reset / Esc: exit",
-                self.title_frames as f32 / duration, self.time, if self.paused { "PAUSED" } else { "" }, self.camera.gain));
-            self.title_time = now;
-            self.title_frames = 0;
-        }
         Ok(true)
     }
 }
@@ -439,9 +456,13 @@ impl ApplicationHandler for App {
             return;
         }
         let result = (|| -> Result<State, Error> {
-            let window = Arc::new(event_loop.create_window(Window::default_attributes()
-                .with_title("FFT Ocean | Drag: orbit | Wheel: zoom | Space: pause | C: choppy | Esc: exit")
-                .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0)))?);
+            let window = Arc::new(
+                event_loop.create_window(
+                    Window::default_attributes()
+                        .with_title("Wgpu Water Simulation")
+                        .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0)),
+                )?,
+            );
             pollster::block_on(State::new(window, self.initial.ocean))
         })();
         match result {
@@ -476,6 +497,11 @@ impl ApplicationHandler for App {
                     state.gui.configuration_panel =
                         ConfigurationPanel::new(store.configurations().clone());
                     state.gui.settings_path = Some(store.path.clone());
+                    state.gui.workspace_store =
+                        Some(super::workspace_settings::WorkspaceStore::open(
+                            &store.path,
+                            &mut state.gui.workspaces,
+                        ));
                     state.gui.save_status = store.status.clone();
                     state.gui.save_failed = store.failed;
                     eprintln!("Local settings: {}", store.path.display());
@@ -525,7 +551,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.physical_key {
-                    PhysicalKey::Code(KeyCode::Escape | KeyCode::KeyQ) => event_loop.exit(),
+                    PhysicalKey::Code(KeyCode::KeyQ) => event_loop.exit(),
                     PhysicalKey::Code(KeyCode::Space) if !event.repeat => {
                         state.paused = !state.paused
                     }

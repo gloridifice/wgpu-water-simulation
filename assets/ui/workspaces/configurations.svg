@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" role="img" aria-labelledby="configurations-title">
+  <title id="configurations-title">配置：参数卡片</title>
+  <rect x="3.25" y="3.75" width="17.5" height="16.5" rx="2.75"/>
+  <path d="M6.75 8.75h6M16.25 8.75h1M6.75 15.25h1M11.25 15.25h6"/>
+  <circle cx="14.5" cy="8.75" r="1.75"/>
+  <circle cx="9.5" cy="15.25" r="1.75"/>
+</svg>

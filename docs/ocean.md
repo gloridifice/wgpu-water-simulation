@@ -28,7 +28,7 @@ cargo run --release --features ocean --bin ocean -- --resolution 256 --wind 18 -
 | F | 开关 Jacobian 泡沫显示 |
 | ↑ / ↓ | 增减位移幅度，0.1×～2× |
 | R | 相机、位移幅度、泡沫显示和时间重置；保留暂停状态 |
-| Esc / Q | 退出 |
+| Q | 退出（Esc 不退出程序） |
 
 WASD 在鼠标位于渲染视图内、窗口有焦点且未编辑参数时生效。按住连续移动，相机和观察目标一起平移，高度和俯仰角不变；斜向移动不加速。移动速度为当前相机到观察目标距离的 0.5 倍／秒，使用现实时间，不受暂停和播放倍率影响。平移位置随相机保存，旧配置从原点开始；R、重置相机和沙滩相机预设均恢复对应的初始位置。
 
@@ -58,7 +58,7 @@ egui 控件和 egui_dock 使用从 `wgpu_pbr` 移植的深色主题与 MiSans �
 
 ## 扫描海岸模型与可调 SWE 区域
 
-新增 **模型与区域** Dock 页签。模型场景使用 `assets/models/challaborough_pillbox.glb` 显示岩岸，使用预烘焙的 `.sweh` 高度场驱动 SWE；保留原沙滩／平面场景，不改变默认启动场景。资源来源、CC BY 4.0 署名、裁切面清理和磁盘格式见 [`assets/models/README.md`](assets/models/README.md)。
+新增 **模型与区域** Dock 页签。模型场景使用 `assets/models/challaborough_pillbox.glb` 显示岩岸，使用预烘焙的 `.sweh` 高度场驱动 SWE；保留原沙滩／平面场景，不改变默认启动场景。资源来源、CC BY 4.0 署名、裁切面清理和磁盘格式见 [`assets/models/README.md`](../assets/models/README.md)。
 
 ```powershell
 # 首次生成磁盘高度场；已有输出不会被覆盖。此步骤不需要 GPU。
@@ -142,7 +142,7 @@ cargo run --release --bin ocean -- --config configs/experiments/reef-front-ridge
 
 `--shore-view 7` 显示最近完成子步的实际源项（白色对应配置的前沿满生成率），`8` 显示发射权重，`6` 仍为输送后的密度。旧模式在选择 7／8 后需要推进一步才有诊断数据；暂停保留最后数据。实验支持 `--snapshot ... --foam-emission-window 8,9`，只在第 8～9 秒发射；按暖机帧切换，时间分辨率约 1/60 秒。
 
-这是源项筛选实验，不是已验证的网状泡沫模型：流向不一定是波前法线，停驻压缩峰仍会持续发射，尚无波前追踪或时间滞回。礁石对照中生成区域收窄、停止发射后泡沫仍保留，但没有证明会自然形成连通网状。复现命令、固定配置和实测边界见 [configs/README.md](configs/README.md)。
+这是源项筛选实验，不是已验证的网状泡沫模型：流向不一定是波前法线，停驻压缩峰仍会持续发射，尚无波前追踪或时间滞回。礁石对照中生成区域收窄、停止发射后泡沫仍保留，但没有证明会自然形成连通网状。复现命令、固定配置和实测边界见 [configs/README.md](../configs/README.md)。
 
 ## GPU 浪花粒子
 
@@ -176,7 +176,7 @@ cargo run --release --bin ocean -- --beach --spray-debug --no-settings --frames 
 
 粒子池最多 65,536 个，先保留存活粒子，再填充空余槽；满池直接丢弃新增请求，不欠账、不覆盖存活粒子。信号和余量合计约每个 SWE 单元 40 字节，双粒子列表约 6 MiB，另有少量参数及纹理。设备限制或分配失败会禁用浪花并显示错误，不改用 CPU 粒子路径。
 
-首版只覆盖纯 SWE 区域（FFT 混合权重不大于约 0.001），不在远海或 FFT 混合带喷射。纹理采用 Effekseer 官方 Pierre 样例中的 CC0 `Splash.png`，按原图 Alpha 拆成四种随机水片／碎滴，使用独立透明边和完整 mip 链避免串图及远处闪烁；原图、作者、许可和离线烘焙说明见 [assets/spray/README.md](assets/spray/README.md)。绘制使用预乘透明度、已保存的场景深度和软交界；没有透明粒子排序、OIT、风场或独立水雾层。高度场碰撞不表示任意三维模型表面的精确碰撞，也不能生成真实翻卷浪。
+首版只覆盖纯 SWE 区域（FFT 混合权重不大于约 0.001），不在远海或 FFT 混合带喷射。纹理采用 Effekseer 官方 Pierre 样例中的 CC0 `Splash.png`，按原图 Alpha 拆成四种随机水片／碎滴，使用独立透明边和完整 mip 链避免串图及远处闪烁；原图、作者、许可和离线烘焙说明见 [assets/spray/README.md](../assets/spray/README.md)。绘制使用预乘透明度、已保存的场景深度和软交界；没有透明粒子排序、OIT、风场或独立水雾层。高度场碰撞不表示任意三维模型表面的精确碰撞，也不能生成真实翻卷浪。
 
 完整 `--verify` 包含发射门控、世界坐标/速度的 GPU 信号布局、面积/时间积分、小数发射、容量饱和与复用、暂停/重置、落水，以及两种尺寸下的真实粒子深度遮挡和淡出检查。一阶／二阶开启浪花后，既有水体与泡沫状态仍保持一致。仅验证程序允许末尾读回检查结果。
 
@@ -507,7 +507,7 @@ cargo run --release --features ocean --bin ocean -- --snapshot manual-scattering
 
 首次升级时，原有本地配置会封存为只读 **默认配置**；没有已有配置时使用程序初始默认值。默认配置不能重命名、删除或覆盖，点击 **默认配置** 可恢复全部参数，再次点击当前配置也会重新载入。载入任意配置会恢复其中的已应用波谱和未应用草稿，并重置模拟时间、泡沫与浅水历史；草稿仍需 **应用更改** 后生效。`--no-settings` 下禁止新建、删除、保存和重命名，仍可恢复本次启动时的初始配置。
 
-使用 `--settings PATH` 指定可写会话；`--no-settings` 禁用隐式会话读取／保存。`--config PATH` 则严格只读加载指定文件的顶层当前会话，不自动保存，不回退默认值，也不写损坏备份；不能与 `--settings` 合用。明确传入的 CLI 参数覆盖对应保存值，其余字段继续恢复。`--snapshot` 默认不读个人配置，但支持显式 `--config`，不支持可写的 `--settings`；`--time` 是快照模拟时刻，不受配置中的暂停／播放倍率影响。`--verify` 始终不读取配置。仓库配置与礁石实验启动方法见 [configs/README.md](configs/README.md)。
+使用 `--settings PATH` 指定可写会话；`--no-settings` 禁用隐式会话读取／保存。`--config PATH` 则严格只读加载指定文件的顶层当前会话，不自动保存，不回退默认值，也不写损坏备份；不能与 `--settings` 合用。明确传入的 CLI 参数覆盖对应保存值，其余字段继续恢复。`--snapshot` 默认不读个人配置，但支持显式 `--config`，不支持可写的 `--settings`；`--time` 是快照模拟时刻，不受配置中的暂停／播放倍率影响。`--verify` 始终不读取配置。仓库配置与礁石实验启动方法见 [configs/README.md](../configs/README.md)。
 
 每次启动会恢复上次使用的配置选项，以及该配置下最后自动保存的工作状态（包括尚未手动保存到命名配置的调整）。配置选项在成功载入或新建后记录，重命名不影响恢复；删除当前配置后，下次启动使用默认配置。自动保存不会覆盖命名配置快照。旧文件没有记录选项或记录已失效时，选中默认配置并保留原有工作状态与命名配置。恢复个人参数时直接运行 `cargo run`，不要额外传入 `--beach` 等场景覆盖参数。
 
@@ -784,7 +784,7 @@ cargo run --release -- --beach --no-settings --swe-order 2 --foam-transport-orde
 
 ## 泡沫形态输送对照
 
-新增独立离线工具 `foam-lab`：固定平移、剪切、差速旋流，直接调用生产 GPU 泡沫输送，默认在相同 RK2 和 CFL=0.2 下对比 128／256／512 格的一阶与二阶空间输送，在 0、2、4、8 模拟秒输出密度快照、解析参考、误差指标及设备支持时的真实 GPU timestamp 耗时。默认保形实验不读取个人配置、不运行完整 SWE、不使用泡沫材质。另有 `--benchmark` 模式，调用完整生产 SWE 内核，以固定稀疏／密集／合成模型地形／8 障碍物输入比较三种阶数组合，预热后报告重复 GPU 子步计时并导出单步状态。该内核基准不包含正常帧的参数／状态拷贝及渲染，不代表界面 FPS。使用方式、参数与结果边界见 [README-foam-lab.md](README-foam-lab.md)。
+新增独立离线工具 `foam-lab`：固定平移、剪切、差速旋流，直接调用生产 GPU 泡沫输送，默认在相同 RK2 和 CFL=0.2 下对比 128／256／512 格的一阶与二阶空间输送，在 0、2、4、8 模拟秒输出密度快照、解析参考、误差指标及设备支持时的真实 GPU timestamp 耗时。默认保形实验不读取个人配置、不运行完整 SWE、不使用泡沫材质。另有 `--benchmark` 模式，调用完整生产 SWE 内核，以固定稀疏／密集／合成模型地形／8 障碍物输入比较三种阶数组合，预热后报告重复 GPU 子步计时并导出单步状态。该内核基准不包含正常帧的参数／状态拷贝及渲染，不代表界面 FPS。使用方式、参数与结果边界见 [泡沫诊断与基准测试](foam-lab.md)。
 
 ```powershell
 cargo run --release --features ocean --bin foam-lab -- --output target/foam-lab
@@ -858,7 +858,7 @@ cargo run --release --features ocean --bin foam-lab -- --output target/foam-lab
 
 在 **浅水模拟（SWE）→ 泡沫纹理与材质** 中选择原灰度效果、Shorewaves NSH、Crest Foam NSH 或 Crest Foam2 NSH。默认使用 Shorewaves NSH；旧配置缺少字段时补此默认值，其余已有参数正常加载。切换纹理、尺寸、微法线、不透明度密度尺度及粗糙度实时生效并保存，暂停时也可以比较，不重置模拟或纹理位移历史。旧配置中的 `foam_soft_opacity`、`foam_thick_start` 被忽略，新字段 `foam_opacity_scale` 缺失时使用默认值 2，其余参数正常加载。
 
-三张 NSH 都由仓库内的源图离线烘焙，统一为 1024×1024：RG 为切线法线 XY，B 为 Soft，A 为相对 Height。它们作为线性 `Rgba8Unorm` 纹理数组上传，使用 Repeat 和完整 mip 链；法线按三维方向平均后归一化，Soft／Height 单独做线性过滤。Crest 源图按原导入设置解码 sRGB 后烘焙；源图、固定版本、SHA-256 和 MIT 许可见 [assets/foam/SOURCES.md](assets/foam/SOURCES.md)。Height 是为着色设计的形态，不是实测泡沫厚度。
+三张 NSH 都由仓库内的源图离线烘焙，统一为 1024×1024：RG 为切线法线 XY，B 为 Soft，A 为相对 Height。它们作为线性 `Rgba8Unorm` 纹理数组上传，使用 Repeat 和完整 mip 链；法线按三维方向平均后归一化，Soft／Height 单独做线性过滤。Crest 源图按原导入设置解码 sRGB 后烘焙；源图、固定版本、SHA-256 和 MIT 许可见 [assets/foam/SOURCES.md](../assets/foam/SOURCES.md)。Height 是为着色设计的形态，不是实测泡沫厚度。
 
 材质保留现有两套位移场与 2 秒交替重置。每套位移分别采样粗细两种尺度，细尺度为粗尺度的 1/10，权重 0.72／0.28。每个相位保留原有密度和 Soft 决定的孔隙覆盖，但不再划分薄／厚两种着色；覆盖内使用连续密度响应：
 
@@ -893,7 +893,7 @@ cargo run --release --bin ocean -- --beach --no-settings --foam-texture 2 --foam
 cargo run --release --bin ocean -- --beach --no-settings --foam-opacity-scale 4 --foam-material-view 4 --frames 600
 ```
 
-烘焙流程及预览面板顺序见 [assets/foam/README.md](assets/foam/README.md)。输出图在编译时嵌入，重新烘焙后需要重新构建 ocean。当前工具从现成灰度图加工 NSH，尚未实现从随机种子生成泡径／网膜形态的生成器，也未改成三相位。
+烘焙流程及预览面板顺序见 [assets/foam/README.md](../assets/foam/README.md)。输出图在编译时嵌入，重新烘焙后需要重新构建 ocean。当前工具从现成灰度图加工 NSH，尚未实现从随机种子生成泡径／网膜形态的生成器，也未改成三相位。
 
 `--verify` 检查生产 WGSL 的零密度／干水边界、超出旧参考值后的指数不透明度、密度与尺度单调性、孔隙保持及法线方向与归一化，以及实际 GPU 三层纹理采样、Repeat 和 mip 标量平均。已有一阶／二阶对照同时检查材质参数不影响模拟状态。
 

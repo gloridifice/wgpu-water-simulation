@@ -1,74 +1,30 @@
-//! egui 参数面板与 GPU 合成；不参与流体计算。
+//! Fixed workspace navigation, docked editors and one shared GPU viewport.
+pub(crate) use super::gui_controls::{choices, group, parameter, parameter_table};
 use super::{
     color_editor::CoefficientEditor,
     configuration_panel::ConfigurationPanel,
     foam::FoamConfig,
     gpu::Gpu,
-    optics::{OpticsConfig, VIEW_NAMES},
+    optics::OpticsConfig,
     settings::{ConfigurationLibrary, SavedSettings},
     spectrum::OceanConfig,
     viewer::Camera,
+    workspace::{Panel, WorkspaceId, Workspaces},
+    workspace_settings::WorkspaceStore,
 };
 use winit::window::Window;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Panel {
-    View,
-    Ocean,
-    Configurations,
-    Foam,
-    Spray,
-    Performance,
-    Shore,
-    Colliders,
-    Model,
-    Optics,
-}
-
-fn default_dock() -> egui_dock::DockState<Panel> {
-    use egui_dock::{DockState, NodeIndex};
-    let mut dock = DockState::new(vec![Panel::View]);
-    let [center, left] = dock.main_surface_mut().split_left(
-        NodeIndex::root(),
-        0.23,
-        vec![Panel::Ocean, Panel::Configurations],
-    );
-    dock.main_surface_mut().split_below(
-        left,
-        0.72,
-        vec![Panel::Foam, Panel::Spray, Panel::Performance],
-    );
-    dock.main_surface_mut().split_right(
-        center,
-        0.68,
-        vec![Panel::Shore, Panel::Model, Panel::Colliders, Panel::Optics],
-    );
-    dock
-}
 
 struct PanelViewer<F>(F);
 impl<F: FnMut(Panel, &mut egui::Ui)> egui_dock::TabViewer for PanelViewer<F> {
     type Tab = Panel;
     fn title(&mut self, tab: &mut Panel) -> egui::WidgetText {
-        match tab {
-            Panel::View => "渲染视图",
-            Panel::Ocean => "海洋参数",
-            Panel::Configurations => "配置保存",
-            Panel::Foam => "远海泡沫",
-            Panel::Spray => "浪花粒子",
-            Panel::Performance => "性能",
-            Panel::Shore => "浅水模拟（SWE）",
-            Panel::Colliders => "碰撞体",
-            Panel::Model => "模型与区域",
-            Panel::Optics => "水体光学",
-        }
-        .into()
+        tab.name().into()
     }
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Panel) {
         (self.0)(*tab, ui);
     }
-    fn is_closeable(&self, _: &Panel) -> bool {
-        false
+    fn is_closeable(&self, tab: &Panel) -> bool {
+        *tab != Panel::View
     }
     fn allowed_in_windows(&self, _: &mut Panel) -> bool {
         false
@@ -117,189 +73,6 @@ fn ocean_view(
     requested_size
 }
 
-const PARAMETER_NAME_RATIO: f32 = 0.42;
-const PARAMETER_COLUMN_GAP: f32 = 8.0;
-
-/// All groups use the same ratio; widget minimum sizes cannot widen a column.
-pub(crate) fn parameter_table<R>(
-    ui: &mut egui::Ui,
-    id: &str,
-    rows: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
-    let usable = (ui.available_width() - PARAMETER_COLUMN_GAP).max(0.0);
-    let widths = [
-        usable * PARAMETER_NAME_RATIO,
-        usable * (1.0 - PARAMETER_NAME_RATIO),
-    ];
-    let key = egui::Id::new("parameter table column widths");
-    let previous = ui.data_mut(|data| {
-        let old = data.get_temp::<[f32; 2]>(key);
-        data.insert_temp(key, widths);
-        old
-    });
-    let result = ui
-        .scope(|ui| {
-            ui.spacing_mut().slider_width = (widths[1] - 55.0).max(0.0);
-            egui::Grid::new((id, widths[0].to_bits()))
-                .num_columns(2)
-                .min_col_width(widths[0])
-                .spacing(egui::vec2(PARAMETER_COLUMN_GAP, 6.0))
-                .striped(true)
-                .show(ui, rows)
-                .inner
-        })
-        .inner;
-    ui.data_mut(|data| {
-        if let Some(old) = previous {
-            data.insert_temp(key, old);
-        } else {
-            data.remove::<[f32; 2]>(key);
-        }
-    });
-    result
-}
-
-/// Reserve exactly the column width even if a control has a larger minimum size.
-fn parameter_cell<R>(
-    ui: &mut egui::Ui,
-    id: (&str, &str),
-    width: f32,
-    contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
-    let origin = ui.available_rect_before_wrap().min;
-    let bounds = egui::Rect::from_min_size(origin, egui::vec2(width, 100000.0));
-    let mut cell = ui.new_child(
-        egui::UiBuilder::new()
-            .id_salt(id)
-            .max_rect(bounds)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-    );
-    cell.set_clip_rect(ui.clip_rect().intersect(bounds));
-    cell.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-    let value = contents(&mut cell);
-    ui.allocate_space(egui::vec2(width, cell.min_size().y));
-    value
-}
-
-/// Append a name/control row to the enclosing parameter table.
-pub(crate) fn parameter<R>(
-    ui: &mut egui::Ui,
-    name: &str,
-    description: &str,
-    control: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
-    let widths = ui
-        .data(|data| data.get_temp::<[f32; 2]>(egui::Id::new("parameter table column widths")))
-        .expect("parameter rows must be inside a shared table");
-    parameter_cell(ui, (name, "name"), widths[0], |ui| {
-        ui.add(egui::Label::new(name).wrap())
-            .on_hover_text(description);
-    });
-    let value = parameter_cell(ui, (name, "control"), widths[1], control);
-    ui.end_row();
-    value
-}
-
-fn help(name: &str) -> &'static str {
-    match name {
-        "波谱强度 A" => "Phillips 波谱强度；波高与 A 的平方根成正比。点击应用后重建波谱。",
-        "波谱尺度 L（米）" => {
-            "Phillips 长度尺度，等于风速平方除以重力加速度。点击应用后生效。"
-        }
-        "风向（度）" => "风向单位向量的方向，不是波速。点击应用后重建波谱。",
-        "区块边长（米）" => "FFT 周期区块的边长；海面由 3×3 个区块构成。点击应用后生效。",
-        "FFT 分辨率" => "每轴 FFT 采样数；采样间距等于区块边长除以分辨率。点击应用后生效。",
-        "每轴网格数" => {
-            "每个区块每轴的几何网格数，顶点数为网格数加一。网格太粗会丢失短波形状。点击应用后生效。"
-        }
-        "暂停" => "冻结模拟、泡沫和纹理流动，仍可调整渲染参数。",
-        "时间倍率" => "模拟时间的速度倍率，0 表示停止演化。",
-        "波高增益" => "同时缩放 FFT 位移与 SWE 输入；修改后会重新初始化浅水和泡沫历史。",
-        "水平挤浪" | "挤浪强度" => {
-            "FFT 水平位移让浪峰更尖，并改变用于生成远海泡沫的雅可比值。"
-        }
-        "显示泡沫" => "只切换泡沫显示，不停止模拟。",
-        "雅可比阈值" => "水面形变的雅可比值低于此阈值时生成远海泡沫。实时生效。",
-        "生成速率（每秒）" => "每模拟秒的远海泡沫生成速率，实时生效。",
-        "衰减系数（每秒）" => "远海泡沫的指数衰减系数；越小存活越久，0 表示不自然衰减。",
-        "泡沫视图" => "选择正常水面、形变雅可比值或远海泡沫覆盖率。",
-        "倾斜沙滩" => "启用倾斜沙滩：负 X 为陆地，正 X 为深水。修改地形会重置浅水模拟。",
-        "启用浅水模拟" => "启用局部浅水模拟及泡沫、沙地历史。切换后重置 SWE。",
-        "SWE 求解器" => {
-            "一阶使用欧拉积分，二阶使用 MUSCL 与 RK2。切换会重置模拟；比较几何时可将法线细节设为 0。"
-        }
-        "水上泡沫" => "水上泡沫的线性 RGB 颜色，包含远海泡沫。只改变显示。",
-        "法线细节强度" => {
-            "来自 FFT 的短波法线细节；0 为关闭，1 为默认。薄水区域逐渐减弱，不重置模拟。开启反射更容易观察。"
-        }
-        "FFT → SWE 增益" => {
-            "同时缩放输入水位和动量：0 为无输入，1 为匹配，3 为三倍。修改后用当前 FFT 初始化整片浅水并清空历史。"
-        }
-        "过滤短波" => {
-            "对输入 SWE 的 FFT 水位与动量使用相同短波过滤，远海细节不变。修改后重新初始化浅水。"
-        }
-        "截止波长（米）" => "不大于此波长的波被过滤；从截止波长加过渡宽度开始完整传入。",
-        "过滤过渡宽度（米）" => {
-            "截止波长以上的平滑过滤范围，0 表示硬切换。修改后重新初始化浅水。"
-        }
-        "FFT 混合水深（米）" => {
-            "在此水深到其 2.5 倍之间，从 SWE 过渡到 FFT。修改后重置浅水。"
-        }
-        "背景生成速率（每秒）" => {
-            "范围 0～15，默认 4；单位为每模拟秒增加的泡沫面密度，另乘背景生成倍率。0 关闭背景源，前沿速率独立。实时生效并保存，不重置历史。"
-        }
-        "背景生成起始阈值" => {
-            "水深上涨速度除以浅水波速超过此值时开始生成背景泡沫。无量纲，越低越容易生成；默认 0.25。实时生效，不重置。"
-        }
-        "背景生成过渡范围" => {
-            "从起始阈值到完整生成权重的过渡宽度。默认 0.4，即 0.25 开始、0.65 达到完整权重。0 为硬阈值，不影响前沿生成。"
-        }
-        "水上泡沫衰减（每秒）" => {
-            "水上泡沫的指数衰减系数；越小存活越久，0 为无自然衰减。"
-        }
-        "汇聚增强阈值（每秒）" => {
-            "增强背景泡沫生成的水流汇聚阈值。已有泡沫仍会通过输送自然堆积，不受此阈值限制。"
-        }
-        "密度颜色参考值" => {
-            "模拟泡沫量／面积，范围 0.01～20，默认 2。达到此值时密度调试显示红色，也控制材质孔隙的填充范围；不限制模拟密度。NSH 浓淡另由不透明度密度尺度控制。实时生效并保存，不重置。"
-        }
-        "沙地干燥时间（秒）" => "湿沙的干燥时间常数，不控制泡沫寿命。",
-        "浅水调试视图" => {
-            "调试视图跳过普通着色。流向：蓝色冲岸、橙色退水。密度：低绿高红，不混合孔隙纹理。"
-        }
-        "沙地纹理旋转（度）" => {
-            "绕世界原点在沙坡平面内旋转纹理。范围 -180～180 度，默认 0 度；正角将纹理横轴从坡向 +X 转向沿岸 +Z。所有沙地贴图和法线方向同步旋转，实时生效并随配置保存，不重置模拟。"
-        }
-        "沙地纹理尺寸（米）" => {
-            "每块沙地纹理沿沙坡和沿岸覆盖的长度。范围 0.25～128 米；数值越大，沙纹越大、重复越少。颜色、法线、粗糙度和 AO 同步缩放，实时生效并随配置保存，不重置模拟。"
-        }
-        "沙滩坡度（高／宽）" | "岸线 X（米）" => {
-            "负 X 为陆地，正 X 为深水。修改后重新初始化浅水模拟。"
-        }
-        "海底深度（米）" => {
-            "单位米，0.25～100。平面场景控制海底；模型场景控制补充海床，修改即时重建并重置近岸历史；纯倾斜沙滩下禁用。"
-        }
-        "启用天空散射" => {
-            "基于平均海平面与直线光路的各向同性天空散射。手动光源解析积分，天空光源分段解析积分。"
-        }
-        "天空颜色（线性 RGB）" => "天空照明的线性 RGB 颜色，同时影响背景和反射。",
-        "天空强度" => "天空照明的辐亮度倍率。",
-        "散射反照率 RGB" => {
-            "散射系数 = 反照率 × 消光系数；吸收系数 =（1 − 反照率）× 消光系数。"
-        }
-        "天空积分步数" => "天空散射的积分分段数，越多越准确，GPU 开销也越高。",
-        "水体调试视图" => {
-            "光学调试跳过反射和泡沫。透射率按消光系数和光程指数衰减；吸收视图显示衰减后的背景，损失含散射出射。"
-        }
-        "光程白色参考值（米）" => "光程调试中显示为白色的距离。",
-        "天空反射与高光" => "启用水面的天空反射与太阳高光。",
-        "海底 RGB 测试色带" | "棋盘格尺寸（米）" => {
-            "用于比较不同颜色吸收与光程长度的海底标定图案。"
-        }
-        _ => "实时参数，修改后立即生效。",
-    }
-}
-
 pub struct Gui {
     pub context: egui::Context,
     pub input: egui_winit::State,
@@ -320,14 +93,16 @@ pub struct Gui {
     pub settings_path: Option<std::path::PathBuf>,
     pub configuration_panel: ConfigurationPanel,
     pub load_configuration: Option<SavedSettings>,
-    dock: egui_dock::DockState<Panel>,
+    pub workspaces: Workspaces,
+    pub workspace_store: Option<WorkspaceStore>,
+    icons: [egui::Image<'static>; 5],
     dock_style: egui_dock::Style,
     pub viewport_size: [u32; 2],
     pub viewport_view: wgpu::TextureView,
     viewport_texture: wgpu::Texture,
     viewport_id: egui::TextureId,
-    sigma_editor: CoefficientEditor,
-    source_editor: CoefficientEditor,
+    pub(super) sigma_editor: CoefficientEditor,
+    pub(super) source_editor: CoefficientEditor,
 }
 
 impl Gui {
@@ -339,6 +114,21 @@ impl Gui {
     ) -> Self {
         let context = egui::Context::default();
         let dock_style = super::theme::install(&context);
+        egui_extras::install_image_loaders(&context);
+        let sources = [
+            include_str!("../../assets/ui/workspaces/scene.svg"),
+            include_str!("../../assets/ui/workspaces/shallow.svg"),
+            include_str!("../../assets/ui/workspaces/offshore.svg"),
+            include_str!("../../assets/ui/workspaces/shading.svg"),
+            include_str!("../../assets/ui/workspaces/configurations.svg"),
+        ];
+        // Decode white once per requested raster size; tint follows the theme.
+        let icons = std::array::from_fn(|i| {
+            egui::Image::from_bytes(
+                format!("bytes://workspace-{}.svg", WorkspaceId::ALL[i].key()),
+                sources[i].replace("currentColor", "#ffffff").into_bytes(),
+            )
+        });
         let input = egui_winit::State::new(
             context.clone(),
             egui::ViewportId::ROOT,
@@ -350,7 +140,6 @@ impl Gui {
         let mut renderer = egui_wgpu::Renderer::new(&gpu.device, format, Default::default());
         let viewport_texture = Self::view_texture(gpu, format, [1, 1]);
         let viewport_view = viewport_texture.create_view(&Default::default());
-        // egui samples gamma-encoded bytes, so use a non-sRGB sampling view.
         let sampled_view = viewport_texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(format.remove_srgb_suffix()),
             ..Default::default()
@@ -358,12 +147,6 @@ impl Gui {
         let viewport_id =
             renderer.register_native_texture(&gpu.device, &sampled_view, wgpu::FilterMode::Linear);
         Self {
-            dock: default_dock(),
-            dock_style,
-            viewport_size: [1, 1],
-            viewport_texture,
-            viewport_view,
-            viewport_id,
             context,
             input,
             renderer,
@@ -385,12 +168,19 @@ impl Gui {
                 SavedSettings::default(),
             )),
             load_configuration: None,
+            workspaces: Workspaces::default(),
+            workspace_store: None,
+            icons,
+            dock_style,
+            viewport_size: [1, 1],
+            viewport_texture,
+            viewport_view,
+            viewport_id,
             sigma_editor: CoefficientEditor::new(OpticsConfig::default().sigma_t, 0.1),
             source_editor: CoefficientEditor::new(OpticsConfig::default().source, 0.01),
         }
     }
 
-    /// 参数先编辑后 Apply，避免拖动分辨率时连续重建 GPU 资源。
     pub fn frame(
         &mut self,
         window: &Window,
@@ -402,565 +192,276 @@ impl Gui {
         let input = self.input.take_egui_input(window);
         let context = self.context.clone();
         let mut apply = None;
-        let mut dock = std::mem::replace(&mut self.dock, egui_dock::DockState::new(Vec::new()));
-        let mut requested_size = self.viewport_size;
+        // Move just the UI layouts out during callbacks, not shared editor state.
+        let mut workspaces = std::mem::take(&mut self.workspaces);
         let output = context.run(input, |ctx| {
-            egui::TopBottomPanel::top("workspace toolbar").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("海洋模拟").on_hover_text("拖动标签停靠，拖动分隔线调整大小。在渲染视图内拖动旋转相机，滚轮缩放。");
-                    if ui.button("重置布局").clicked() { dock = default_dock(); }
-
-                });
-            });
-            egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
-                egui_dock::DockArea::new(&mut dock)
-                    .show_close_buttons(false)
-                    .show_leaf_close_all_buttons(false)
-                    .style(self.dock_style.clone())
-                    .show_inside(ui, &mut PanelViewer(|tab: Panel, ui: &mut egui::Ui| {
-                        let tab_id = &tab;
-                        match tab {
-                            Panel::View => {
-                                requested_size = ocean_view(ui, self.viewport_id, camera, current.length);
-                            },
-Panel::Configurations => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-                            let settings = SavedSettings {
-                                ocean: current,
-                                draft: self.draft,
-                                foam: self.foam_settings,
-                                optics: self.optics,
-                                camera: *camera,
-                                speed: self.speed,
-                                paused: *paused,
-                                ..Default::default()
-                            };
-                            if let Some(settings) = self.configuration_panel.ui(ui, settings, self.settings_path.is_some()) {
-                                self.load_configuration = Some(settings);
-                            }
-                            self.save_now |= std::mem::take(&mut self.configuration_panel.save_now);
-                            if self.save_failed {
-                                ui.colored_label(egui::Color32::LIGHT_RED, &self.save_status);
-                            }
-                        }); },
-Panel::Ocean => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-                            ui.label(egui::RichText::new("Phillips 波谱").strong());
-
-                            parameter_table(ui, "spectrum table", |ui| {
-parameter(ui, "波谱强度 A", help("波谱强度 A"), |ui| ui.add(
-                                egui::Slider::new(&mut self.draft.amplitude, 0.0..=0.1)
-                                    .logarithmic(true)
-                                    .clamping(egui::SliderClamping::Edits)
-                                    .smallest_positive(0.000001)
-                                    ,
-                            ));
-                            parameter(ui, "波谱尺度 L（米）", help("波谱尺度 L（米）"), |ui| ui.add(
-                                egui::Slider::new(&mut self.draft.phillips_length, 0.1..=500.0)
-                                    .logarithmic(true)
-                                    .clamping(egui::SliderClamping::Edits)
-                                    ,
-                            ));
-                            let mut angle = self.draft.wind_angle.to_degrees();
-                            if parameter(ui, "风向（度）", help("风向（度）"), |ui|
-                                ui.add(egui::Slider::new(&mut angle, -180.0..=180.0))).changed()
-                            {
-                                self.draft.wind_angle = angle.to_radians();
-                            }
-
-
-
-
-});
-                            ui.separator();
-                            ui.label(egui::RichText::new("范围与采样").strong());
-                            parameter_table(ui, "domain table", |ui| {
-parameter(ui, "区块边长（米）", help("区块边长（米）"), |ui| ui.add(
-                                egui::Slider::new(&mut self.draft.length, 8.0..=1024.0)
-                                    .logarithmic(true)
-                                    .clamping(egui::SliderClamping::Edits)
-                                    ,
-                            ));
-                            parameter(ui, "FFT 分辨率", help("FFT 分辨率"), |ui| egui::ComboBox::from_id_salt("FFT 分辨率")
-                                .width(ui.available_width()).selected_text(format!(
-                                    "{} × {}",
-                                    self.draft.resolution, self.draft.resolution
-                                ))
-                                .show_ui(ui, |ui| {
-                                    for n in [8, 16, 32, 64, 128, 256, 512] {
-                                        ui.selectable_value(
-                                            &mut self.draft.resolution,
-                                            n,
-                                            format!("{n} × {n}"),
-                                        );
-                                    }
-                                }));
-                            parameter(ui, "每轴网格数", help("每轴网格数"), |ui| ui.add(
-                                egui::Slider::new(&mut self.draft.mesh_resolution, 8..=512)
-                                    ,
-                            ));
-                            parameter(ui, "随机种子", "波谱随机种子，点击应用后重建海面。", |ui| ui.horizontal(|ui| {
-                                ui.add(egui::DragValue::new(&mut self.draft.seed));
-                                if ui.button("更换").clicked() {
-                                    self.draft.seed = self.draft.seed.wrapping_add(1);
+            egui::TopBottomPanel::top("workspace header")
+                .frame(egui::Frame::NONE)
+                .show(ctx, |ui| {
+                    egui::Frame::new().inner_margin(6.0).show(ui, |ui| {
+                        let toolbar_bounds = ui.available_rect_before_wrap();
+                        let controls = ui
+                            .horizontal_wrapped(|ui| {
+                                ui.strong(format!("{}工作区", workspaces.active.name()));
+                                ui.separator();
+                                if ui.button(if *paused { "继续" } else { "暂停" }).clicked() {
+                                    *paused = !*paused;
                                 }
-                            }));
-
-});
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .add_enabled(
-                                        self.draft != current,
-                                        egui::Button::new("应用更改"),
-                                    )
-                                    .clicked()
-                                {
-                                    match self.draft.validate() {
-                                        Ok(()) => {
-                                            apply = Some(self.draft);
-                                            self.error = None;
-                                        }
-                                        Err(error) => self.error = Some(error),
-                                    }
-                                }
-                                if ui.button("恢复默认").clicked() {
-                                    self.draft = OceanConfig::default();
-                                }
-                            });
-                            parameter_table(ui, "status table", |ui| {
-parameter(ui, "参数状态", "波谱参数需要点击应用后生效。", |ui| ui.label(if self.draft == current {
-                                "已应用"
-                            } else {
-                                "有更改，需点击应用"
-                            }));
-
-});
-                            if let Some(error) = &self.error {
-                                ui.colored_label(egui::Color32::LIGHT_RED, error);
-                            }
-                            ui.separator();
-                            ui.label(egui::RichText::new("播放与外观").strong());
-parameter_table(ui, "playback table", |ui| {
-                            {
-                                parameter(ui, "暂停", help("暂停"), |ui| ui.checkbox(paused, ""));
-                                parameter(ui, "模拟时间", "已经经过的模拟时间。", |ui| ui.label(format!("{time:.2} s")));
-                            }
-                            parameter(ui, "时间倍率", help("时间倍率"), |ui| ui.add(
-                                egui::Slider::new(&mut self.speed, 0.0..=3.0),
-                            ));
-                            parameter(ui, "波高增益", help("波高增益"), |ui| ui.add(
-                                egui::Slider::new(&mut camera.gain, 0.0..=3.0),
-                            ));
-                            parameter(ui, "水平挤浪", help("水平挤浪"), |ui| ui.checkbox(&mut camera.choppy, ""));
-                            parameter(ui, "挤浪强度", help("挤浪强度"), |ui| ui.add(
-                                egui::Slider::new(&mut camera.chop_amount, 0.0..=3.0)
-                                    ,
-                            ));
-
-});
-                                if ui.button("重新计时").clicked() {
-                                    *time = 0.0;
-                                    self.clear_foam = true;
-                                }
-                            if ui.button("重置相机").clicked() {
-                                *camera = Camera::new(current.length);
-                            }
-
-
-}); },
-Panel::Performance => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-    self.performance.ui(ui);
-}); },
-Panel::Spray => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false,false]).show(ui, |ui| {
-    super::spray_panel::show(ui, &mut self.optics.spray, self.spray_error.as_deref());
-}); },
-Panel::Model => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false,false]).show(ui, |ui| {
-    self.model_panel.show(ui, &mut self.optics, camera, current.length);
-}); },
-Panel::Colliders => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-    super::collider_panel::show(ui, &mut self.optics, self.swe_domain);
-}); },
-Panel::Foam => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-
-                            parameter_table(ui, "offshore foam table", |ui| {
-parameter(ui, "显示泡沫", help("显示泡沫"), |ui| ui.checkbox(&mut camera.foam, ""));
-                            parameter(ui, "雅可比阈值", help("雅可比阈值"), |ui| ui.add(
-                                egui::Slider::new(&mut self.foam_settings.threshold, -0.5..=1.0)
-                                    ,
-                            ));
-                            parameter(ui, "生成速率（每秒）", help("生成速率（每秒）"), |ui| ui.add(
-                                egui::Slider::new(&mut self.foam_settings.generation, 0.0..=20.0)
-                                    ,
-                            ));
-                            parameter(ui, "衰减系数（每秒）", help("衰减系数（每秒）"), |ui| ui.add(
-                                egui::Slider::new(&mut self.foam_settings.decay, 0.0..=5.0)
-                                    ,
-                            ));
-                            parameter(ui, "泡沫视图", help("泡沫视图"), |ui| egui::ComboBox::from_id_salt("泡沫视图")
-                                .width(ui.available_width()).selected_text(match camera.foam_debug {
-                                    1 => "雅可比值",
-                                    2 => "覆盖率",
-                                    _ => "正常着色",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut camera.foam_debug, 0, "正常着色");
-                                    ui.selectable_value(&mut camera.foam_debug, 1, "雅可比值");
-                                    ui.selectable_value(&mut camera.foam_debug, 2, "覆盖率");
-                                }));
-
-
-
-});
-                            if ui.button("清空泡沫历史").clicked() {
-                                self.clear_foam = true;
-                            }
-}); },
-Panel::Shore => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-
-                                if ui.button("沙滩场景").clicked() {
-                                    self.optics = OpticsConfig::beach_scene();
-                                    *camera = Camera::beach(current.length);
-                                }
-                            let shore = &mut self.optics.shore;
-                            parameter_table(ui, "solver table", |ui| {
-parameter(ui, "倾斜沙滩", help("倾斜沙滩"), |ui| ui.add_enabled(!self.optics.model.enabled,egui::Checkbox::new(&mut self.optics.beach, "")));
-                            parameter(ui, "启用浅水模拟", help("启用浅水模拟"), |ui| ui.checkbox(&mut shore.enabled, ""));
-                            parameter(ui, "每轴网格数", "SWE 模拟分辨率，64～1024，默认 256。覆盖范围不变；增大后网格更细，显存和计算耗时增加，稳定步长缩短。切换立即重建并重新初始化近岸水体、泡沫和湿沙历史；自动保存。", |ui| egui::ComboBox::from_id_salt("SWE resolution")
-                                .width(ui.available_width()).selected_text(format!("{} × {}", shore.resolution, shore.resolution))
-                                .show_ui(ui, |ui| {
-                                    for n in super::shore::RESOLUTIONS {
-                                        ui.selectable_value(&mut shore.resolution, n, format!("{n} × {n}"));
-                                    }
-                                }));
-                            parameter(ui, "网格间距 X/Z（米）", "当前模拟范围除以每轴网格数；X 朝岸，Z 沿岸。", |ui| ui.label(format!("{:.3} / {:.3}", self.swe_domain[2] / shore.resolution as f32, self.swe_domain[3] / shore.resolution as f32)));
-                            parameter(ui, "SWE 求解器", help("SWE 求解器"), |ui| egui::ComboBox::from_id_salt("SWE 求解器")
-                                .width(ui.available_width()).selected_text(if shore.order == 2 {"二阶（MUSCL + RK2）"} else {"一阶（欧拉）"})
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut shore.order, 1, "一阶（欧拉）");
-                                    ui.selectable_value(&mut shore.order, 2, "二阶（MUSCL + RK2）");
-                                }));
-
-
-
-
-});
-                            ui.separator();
-                            ui.label(egui::RichText::new("泡沫颜色").strong());
-                            parameter_table(ui, "foam colors table", |ui| {
-parameter(ui, "水上泡沫", help("水上泡沫"), |ui| ui.color_edit_button_rgb(&mut shore.water_foam_color));
-
-});
-                            if ui.button("恢复默认泡沫颜色").clicked() {
-                                shore.water_foam_color=[0.87,0.92,0.90];
-                            }
-
-
-                            ui.separator();
-                            ui.label(egui::RichText::new("新鲜白沫与水面残余").strong());
-                            parameter_table(ui, "foam lifetime table", |ui| {
-                                parameter(ui, "双浓度实验", "默认关闭。开启后新鲜 N 与残余 R 共用 SWE 水流做半拉格朗日输运，并共同压缩／稀释；不再使用惯性、拖曳或守恒泡沫通量。所有源只加入 N，R 仅在水面保留。启用专用白块／细丝外观，覆盖旧材质选择。切换会重置近岸水体、泡沫与湿沙，保存配置。", |ui| ui.checkbox(&mut shore.foam_dual_phase, ""));
-                                parameter(ui, "新鲜半衰期（秒）", "模拟秒，0.1～60，默认 1.4。N 的总退出半衰期，已包含转成 R 的减少，不重复衰减。双浓度模式下实时生效并保存，不清空历史。", |ui| ui.add_enabled(shore.foam_dual_phase, egui::Slider::new(&mut shore.foam_fresh_half_life, 0.1..=60.0).logarithmic(true)));
-                                parameter(ui, "残余半衰期（秒）", "模拟秒，0.1～120，默认 9。R 独立指数衰减，新转入的 R 也立即参与衰减。双浓度模式下实时生效并保存，不清空历史。", |ui| ui.add_enabled(shore.foam_dual_phase, egui::Slider::new(&mut shore.foam_residual_half_life, 0.1..=120.0).logarithmic(true)));
-                                parameter(ui, "退出转残余比例", "无量纲，0～1，默认 0.65。N 退出量的 65% 转为 R，其余直接消失；0 不转化，1 全转化。局部转化与衰减用联合解析解。双浓度模式下实时生效并保存，不清空历史。", |ui| ui.add_enabled(shore.foam_dual_phase, egui::Slider::new(&mut shore.foam_conversion, 0.0..=1.0)));
-                            });
-                            ui.separator();
-                            ui.label(egui::RichText::new("泡沫纹理与材质").strong());
-                            parameter_table(ui, "foam material table", |ui| {
-                                parameter(ui, "原型孔洞外观", "默认关闭。以输运坐标采样三尺度噪声，密度控制孔洞破裂；覆盖旧纹理选择，不改生成、输送、拖曳和衰减。固定空间尺度与 HTML 原型一致，无额外微法线。实时生效并保存，不重置。", |ui| ui.add_enabled(!shore.foam_dual_phase, egui::Checkbox::new(&mut shore.foam_prototype, "")));
-                                parameter(ui, "坐标重置周期（秒）", "模拟时间，默认 2 秒，可选 0 或 0.25～60 秒。越长保留越多拉伸；0 为持续形变、不重置，长期可能失真。只重置不可见的坐标层，不清除泡沫；实时保存，修改周期可能改变相位混合，严格比较请重置模拟。", |ui| ui.add(egui::Slider::new(&mut shore.foam_texture_period,0.0..=60.0).step_by(0.25)));
-                                parameter(ui, "纹理来源", "0 为原灰度效果；其余为线性 NSH：法线 XY、Soft、Height。三张图使用同一密度与双相位运动，可在暂停时比较。实时生效并保存，不重置模拟；只改变近岸水上泡沫。", |ui| {
-                                    let names=super::shore::FOAM_TEXTURE_NAMES;
-                                    ui.add_enabled_ui(!shore.foam_dual_phase, |ui| { egui::ComboBox::from_id_salt("foam texture source").width(ui.available_width()).selected_text(names[shore.foam_texture as usize]).show_ui(ui, |ui| {
-                                        for (index,name) in names.iter().enumerate() { ui.selectable_value(&mut shore.foam_texture,index as u32,*name); }
-                                    }); });
-                                });
-                                parameter(ui, "纹理尺寸（米）", "粗层每块覆盖的世界长度，0.25～64 米，默认 12 米；细层固定为其 1/10。只作用于 NSH 路径。实时生效并保存，不重置密度或位移历史。", |ui| ui.add_enabled(shore.foam_texture>0 && !shore.foam_prototype && !shore.foam_dual_phase,egui::Slider::new(&mut shore.foam_texture_size,0.25..=64.0).logarithmic(true)));
-                                parameter(ui, "泡沫微法线强度", "无量纲，0～3，默认 0.65；0 关闭 NSH 细法线，保留密度厚度法线。只改变泡沫光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0 && !shore.foam_prototype && !shore.foam_dual_phase,egui::Slider::new(&mut shore.foam_micro_normal,0.0..=3.0)));
-                                parameter(ui, "不透明度密度尺度", "模拟泡沫量／面积，非实测质量单位；范围 0.01～20，默认 2。NSH 不透明度 = 孔隙覆盖率 × (1 − exp(−原始密度／此值))。完整覆盖处，密度等于此值时约 63%，三倍时约 95%；越大越透水，不改变 NSH 孔隙阈值。双浓度模式分别用 N、R 的 1 − exp(−密度／此值) 控制白块与细丝覆盖；原型模式用同一响应控制噪声孔洞阈值；取 1/6 对应 HTML 的密度响应。实时生效并保存，不重置或改变模拟密度。", |ui| ui.add_enabled(shore.foam_texture>0 || shore.foam_prototype || shore.foam_dual_phase,egui::Slider::new(&mut shore.foam_opacity_scale,0.01..=20.0).logarithmic(true).max_decimals(3)));
-                                parameter(ui, "泡沫粗糙度", "无量纲，0.15～1，默认 0.85；越高高光越宽。仅作用于 NSH 泡沫的简化光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0 && !shore.foam_prototype && !shore.foam_dual_phase,egui::Slider::new(&mut shore.foam_roughness,0.15..=1.0)));
-                                parameter(ui, "材质调试", "显示图案、Height、法线、不透明度或 0.5 米输运坐标网格，含双相位混合。双浓度模式 Soft／Height 分别显示 N／R 噪声；原型模式 Soft 显示噪声，Height 为零；网格独立于泡沫密度便于观察形变。NSH／原型模式显示泡沫且浅水视图为正常着色时启用，不覆盖密度调试。实时生效并保存。", |ui| {
-                                    let names=super::shore::FOAM_MATERIAL_VIEWS;
-                                    ui.add_enabled_ui(shore.foam_texture>0 || shore.foam_prototype || shore.foam_dual_phase, |ui| {
-                                        egui::ComboBox::from_id_salt("foam material view").width(ui.available_width()).selected_text(names[shore.foam_material_view as usize]).show_ui(ui, |ui| {
-                                            for (index,name) in names.iter().enumerate() { ui.selectable_value(&mut shore.foam_material_view,index as u32,*name); }
-                                        });
-                                    });
-                                });
-                            });
-                            ui.separator();
-                            ui.label(egui::RichText::new("小波法线").strong());
-                            parameter_table(ui, "normal table", |ui| {
-parameter(ui, "法线细节强度", help("法线细节强度"), |ui| ui.add(egui::Slider::new(&mut shore.normal_strength, 0.0..=3.0)));
-
-
-
-});
-                            ui.separator();
-                            ui.label(egui::RichText::new("FFT 输入").strong());
-                            parameter_table(ui, "FFT input table", |ui| {
-parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui::Slider::new(&mut shore.input_gain, 0.0..=3.0)));
-
-
-
-                            parameter(ui, "过滤短波", help("过滤短波"), |ui| ui.checkbox(&mut shore.filter_enabled, ""));
-
-                                parameter(ui, "截止波长（米）", help("截止波长（米）"), |ui| ui.add_enabled(shore.filter_enabled,egui::Slider::new(&mut shore.filter_cutoff, 0.0..=128.0)
-                                    .clamping(egui::SliderClamping::Edits)));
-                                parameter(ui, "过滤过渡宽度（米）", help("过滤过渡宽度（米）"), |ui| ui.add_enabled(shore.filter_enabled,egui::Slider::new(&mut shore.filter_transition, 0.0..=128.0)
-                                    .clamping(egui::SliderClamping::Edits)));
-
-
-});
-                            ui.horizontal(|ui| {
-                                if ui.button("默认 12～24 米").clicked() { shore.filter_enabled=true; shore.filter_cutoff=12.0; shore.filter_transition=12.0; }
-                                if ui.button("3～6 米").clicked() { shore.filter_enabled=true; shore.filter_cutoff=3.0; shore.filter_transition=3.0; }
-                            });
-
-
-                            ui.separator();
-
-                            ui.label(egui::RichText::new("前沿泡沫").strong());
-                            parameter_table(ui, "front foam table", |ui| {
-                            parameter(ui, "启用泡沫发射", "启用／停发新生泡沫，默认启用。停发不清除已有密度、动量或湿沙；输送、拖曳和衰减继续。实时生效并保存，不重置模拟。", |ui| ui.checkbox(&mut shore.foam_emission_enabled, ""));
-                            parameter(ui, "压缩脊线实验", "默认关闭。开启后只在沿当前流向的局部压缩峰附近窄带发射，强制关闭背景源；沿波前切线不做点状极大值筛选。只改新生泡沫，不修改水动力。实时生效并保存，不清空已有泡沫；比较从重置后开始。", |ui| ui.checkbox(&mut shore.foam_ridge_enabled, ""));
-                            parameter(ui, "窄带宽度（米）", "0.05～10 米，默认 1。局部五点拟合的有效范围有限，实际宽度限制在沿流向的一至两格，不能生成亚格细线。只在脊线实验中生效；实时保存，不重置。", |ui| ui.add_enabled(shore.foam_ridge_enabled, egui::Slider::new(&mut shore.foam_ridge_width, 0.05..=10.0).logarithmic(true).max_decimals(2)));
-                            parameter(ui, "峰值相对显著度", "0～1，无量纲，默认 0.02。中心压缩比两侧凸起的二阶差需大于此比例；提高会拒绝平缓宽峰。均匀压缩斜坡不发射。只在脊线实验中生效，实时保存、不重置。", |ui| ui.add_enabled(shore.foam_ridge_enabled, egui::Slider::new(&mut shore.foam_ridge_prominence, 0.0..=1.0).max_decimals(3)));
-                            parameter(ui, "前沿生成速率（每秒）", "有方向的压缩达到满权重时的泡沫生成速率，范围 0～30。0 关闭前沿生成；独立于背景上涨阈值。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_front_generation, 0.0..=30.0)));
-                            parameter(ui, "前沿采样距离（米）", "仅旧前沿源生效，脊线实验固定读取相邻网格。沿当前水流方向，在此距离内均匀采样 4 个位置，范围 0.05～10 米，默认 1 米。沿采样方向相互靠近的速度差除以实际距离，再取最大压缩强度；同向追赶也能触发，拉开和纯横向速度差不触发。按世界距离采样，兼容非正方形网格；干燥和越界点跳过。实时生效，不清空历史。", |ui| ui.add_enabled(!shore.foam_ridge_enabled, egui::Slider::new(&mut shore.foam_front_distance, 0.05..=10.0).max_decimals(2)));
-                            parameter(ui, "速度变化起始阈值（每秒）", "沿采样方向的压缩速度差除以实际采样距离后超过此值才开始产泡，范围 0～20，默认 0.1。比如 0.5 米内速度相差 1 米/秒，对应强度 2/秒。仅计入相互靠近的部分。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_threshold, 0.0..=20.0).max_decimals(3)));
-                            parameter(ui, "速度变化过渡范围（每秒）", "范围 0～20，默认 0.5；强度从起始阈值到阈值加此范围，生成权重平滑升至 1。0 为严格大于阈值才生成，零速度差不产泡。实时生效并保存，不清空历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_velocity_transition, 0.0..=20.0).max_decimals(3)));
-                            parameter(ui, "背景生成速率（每秒）", help("背景生成速率（每秒）"), |ui| ui.add(egui::Slider::new(&mut shore.generation,0.0..=15.0)));
-                            parameter(ui, "背景生成倍率", "范围 0～1，默认 0.15，只缩放上涨、流速与汇聚触发的背景源。单独观察旧前沿时设为 0；脊线实验中背景强制为零，不改写此保存值。实时生效并保存，不清空历史。", |ui| ui.add_enabled(!shore.foam_ridge_enabled, egui::Slider::new(&mut shore.foam_background_multiplier, 0.0..=1.0).max_decimals(2)));
-                            });
-                            ui.separator();
-
-                            ui.label(egui::RichText::new("泡沫动量与水流拖曳").strong());
-                            ui.add_enabled_ui(!shore.foam_dual_phase, |ui| {
-                            parameter_table(ui, "foam motion table", |ui| {
-                                parameter(ui, "泡沫空间输送", "无单位，1 为原一阶通量（默认），2 为受限 MUSCL 重构，减少细丝和孔洞的数值扩散。密度和动量共同守恒输送，不限制密度到 1。仅 SWE 二阶（RK2）启用此选择；SWE 一阶始终使用原通量。改变选择实时生效并保存，不清空历史；不改生成、衰减或材质。", |ui| {
-                                    ui.add_enabled_ui(shore.order == 2, |ui| {
-                                        egui::ComboBox::from_id_salt("foam spatial order").width(ui.available_width())
-                                            .selected_text(if shore.foam_transport_order == 2 {"二阶（MUSCL）"} else {"一阶（基线）"})
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut shore.foam_transport_order, 1, "一阶（基线）");
-                                                ui.selectable_value(&mut shore.foam_transport_order, 2, "二阶（MUSCL）");
-                                            });
-                                    });
-                                });
-                                parameter(ui, "启用水流拖曳", "开启时水流逐渐改变泡沫动量；关闭后保留惯性输送，适合隔离观察追赶汇聚。生成仍注入动量，衰减仍移除动量，落到沙地后停止。实时生效并保存，不重置。", |ui| ui.checkbox(&mut shore.foam_drag_enabled, ""));
-                                parameter(ui, "水流跟随倍率", "拖曳目标速度 = 水流速度 × 此倍率，范围 0～1。仅在拖曳开启时有效。物理参考取 1；小于 1 是额外视觉阻滞。泡沫量与动量共同输送，合流速度按泡沫量加权，水体不受反作用。实时生效并保存。", |ui| ui.add_enabled(shore.foam_drag_enabled, egui::Slider::new(&mut shore.foam_follow, 0.0..=1.0).max_decimals(2)));
-                                parameter(ui, "速度响应时间（秒）", "范围 0～20；越大越保留惯性，0 为立即随流。约经过此时间完成 63% 的速度响应；只在拖曳开启时有效。物理参考起点 2 秒，属于模拟校准值。实时生效并保存，不清空历史。", |ui| ui.add_enabled(shore.foam_drag_enabled, egui::Slider::new(&mut shore.foam_response_time, 0.0..=20.0).max_decimals(2)));
-                                parameter(ui, "新生泡沫速度倍率", "新增泡沫的动量 = 新增量 × 当地水流速度 × 此倍率，范围 0～1，默认及物理参考值为 1。只影响新生泡沫，已有泡沫保留动量；关闭拖曳后仍有效。实时生效并保存，不重置。", |ui| ui.add(egui::Slider::new(&mut shore.foam_birth_speed, 0.0..=1.0).max_decimals(2)));
-                                parameter(ui, "物理参考起点", "应用：拖曳开启、跟随倍率 1、响应时间 2 秒、新生速度倍率 1、水上衰减 0.3/秒。基于线性拖曳模型与秒级泡沫衰退的校准起点，不是通用海水实测常数。不改生成、沙地或显示参数；实时生效并保存。", |ui| { if ui.button("应用推荐值").clicked() { shore.apply_foam_reference(); } });
-                            });
-                            ui.separator();
-
-                            });
-                            ui.label(egui::RichText::new("泡沫高度（仅外观）").strong());
-                            parameter_table(ui, "foam height table", |ui| {
-                                parameter(ui, "最大高度（米）", "范围 0～1 米，默认 0.05 米；0 关闭高度效果。只根据近岸水上泡沫密度向上移动渲染顶点，不增加水位、水深或动量。泡沫明暗使用抬高后的法线，水体仍使用原水面。实时生效并保存，不重置历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_height_max, 0.0..=1.0).max_decimals(3)));
-                                parameter(ui, "起始密度", "范围 0～20，默认 0.1。使用模拟中的泡沫量／面积，未截断为 0～1；小于等于此值时不抬高。不依赖密度颜色参考值，也不采样孔隙纹理。仅近岸水上泡沫生效，远海泡沫不抬高。实时生效并保存。", |ui| ui.add(egui::Slider::new(&mut shore.foam_height_threshold, 0.0..=20.0).max_decimals(3)));
-                                parameter(ui, "密度过渡范围", "范围 0.001～20，默认 1.9。密度从起始值增加到起始值加此范围时，smoothstep 将高度从 0 平滑增加到最大值；超过后保持最大值。浅于 20 毫米时平滑减弱，8 毫米及以下不抬高；关闭显示泡沫也关闭高度。实时生效并保存。", |ui| ui.add(egui::Slider::new(&mut shore.foam_height_transition, 0.001..=20.0).logarithmic(true).max_decimals(3)));
-                            });
-                            ui.separator();
-
-                            parameter_table(ui, "shore foam table", |ui| {
-parameter(ui, "FFT 混合水深（米）", help("FFT 混合水深（米）"), |ui| ui.add(
-                                egui::Slider::new(&mut shore.breaking_depth, 0.5..=5.0)
-                                    ,
-                            ));
-                            parameter(ui, "背景生成起始阈值", help("背景生成起始阈值"), |ui| ui.add(
-                                egui::Slider::new(&mut shore.foam_generation_threshold, 0.0..=2.0).max_decimals(3),
-                            ));
-                            parameter(ui, "背景生成过渡范围", help("背景生成过渡范围"), |ui| ui.add(
-                                egui::Slider::new(&mut shore.foam_generation_transition, 0.0..=2.0).max_decimals(3),
-                            ));
-                            parameter(ui, "水上泡沫衰减（每秒）", "仅旧单浓度路径使用，范围 0～4 /秒；双浓度模式改用两项半衰期，不叠加本衰减。实时生效并保存，不重置历史。", |ui| ui.add_enabled(!shore.foam_dual_phase,
-                                egui::Slider::new(&mut shore.decay, 0.0..=4.0)
-                                    ,
-                            ));
-                            parameter(ui, "汇聚增强阈值（每秒）", help("汇聚增强阈值（每秒）"), |ui| ui.add(
-                                egui::Slider::new(&mut shore.foam_compression_threshold, 0.0..=4.0)
-                                    ,
-                            ));
-                            parameter(ui, "密度颜色参考值", help("密度颜色参考值"), |ui| ui.add(
-                                egui::Slider::new(&mut shore.foam_density_reference, 0.01..=20.0)
-                                    .logarithmic(true),
-                            ));
-
-
-
-                            parameter(ui, "沙地干燥时间（秒）", help("沙地干燥时间（秒）"), |ui| ui.add(
-                                egui::Slider::new(&mut shore.drying_time, 1.0..=120.0)
-                                    ,
-                            ));
-                            parameter(ui, "浅水调试视图", help("浅水调试视图"), |ui| egui::ComboBox::from_id_salt("浅水调试视图")
-                                .width(ui.available_width()).selected_text(
-                                    super::shore::VIEWS.iter().find(|(id, _)| *id == shore.view).map_or("正常着色", |(_, name)| *name),
+                                ui.add(
+                                    egui::DragValue::new(&mut self.speed)
+                                        .range(0.0..=3.0)
+                                        .speed(0.01)
+                                        .prefix("倍率 "),
                                 )
-                                .show_ui(ui, |ui| {
-                                    for &(id, name) in &super::shore::VIEWS
+                                .on_hover_text("模拟时间倍率，0～3，实时生效；0 停止演化。");
+                                ui.menu_button("时间 / 相机", |ui| {
+                                    ui.label(format!("模拟时间 {time:.2} s"));
+                                    if ui.button("重新计时").clicked() {
+                                        *time = 0.0;
+                                        self.clear_foam = true;
+                                        ui.close();
+                                    }
+                                    if ui.button("重置相机").clicked() {
+                                        *camera = Camera::new(current.length);
+                                        ui.close();
+                                    }
+                                    if self.optics.beach && ui.button("沙滩相机").clicked() {
+                                        *camera = Camera::beach(current.length);
+                                        ui.close();
+                                    }
+                                    if self.optics.model.enabled && ui.button("模型相机").clicked()
                                     {
-                                        ui.selectable_value(
-                                            &mut shore.view,
-                                            id,
-                                            name,
-                                        );
+                                        *camera = Camera::model(current.length);
+                                        ui.close();
                                     }
-                                }));
-
-
-
-
-});
-                            if ui.button("密度调试：低绿／高红").clicked() {
-                                shore.view = 6;
-                            }
-                            if ui.button("重置浅水、泡沫和沙地").clicked() {
-                                self.clear_foam = true;
-                            }
-
-                            if self.optics.beach {
-                                parameter_table(ui, "beach table", |ui| {
-parameter(ui, "沙地纹理尺寸（米）", help("沙地纹理尺寸（米）"), |ui| ui.add(
-                                    egui::Slider::new(&mut self.optics.sand_tile_size, 0.25..=128.0)
-                                        .logarithmic(true),
-                                ));
-parameter(ui, "沙地纹理旋转（度）", help("沙地纹理旋转（度）"), |ui| ui.add(
-                                    egui::Slider::new(&mut self.optics.sand_rotation_deg, -180.0..=180.0),
-                                ));
-parameter(ui, "沙滩坡度（高／宽）", help("沙滩坡度（高／宽）"), |ui| ui.add_enabled(!self.optics.model.enabled,
-                                    egui::Slider::new(&mut self.optics.beach_slope, 0.01..=0.5)
-                                        .clamping(egui::SliderClamping::Edits)
-                                        ,
-                                ));
-                                parameter(ui, "岸线 X（米）", help("岸线 X（米）"), |ui| ui.add_enabled(!self.optics.model.enabled,
-                                    egui::Slider::new(
-                                        &mut self.optics.shore_x,
-                                        -current.length..=current.length,
-                                    )
-                                    .clamping(egui::SliderClamping::Edits)
-                                    ,
-                                ));
-
-
-});
-                                if ui.button("沙滩相机").clicked() {
-                                    *camera = Camera::beach(current.length);
+                                });
+                                ui.menu_button("面板", |ui| {
+                                    for panel in Panel::ALL
+                                        .into_iter()
+                                        .filter(|p| *p != Panel::View && p.available(&self.optics))
+                                    {
+                                        let present = workspaces.current().contains(panel);
+                                        if ui
+                                            .selectable_label(present, panel.name())
+                                            .on_hover_text(if present {
+                                                "定位已添加面板"
+                                            } else {
+                                                "添加到当前工作区"
+                                            })
+                                            .clicked()
+                                        {
+                                            workspaces.current().add(panel);
+                                            ui.close();
+                                        }
+                                    }
+                                    ui.separator();
+                                    if ui.button("重置当前布局").clicked() {
+                                        workspaces.reset_current();
+                                        if let Some(store) = &mut self.workspace_store {
+                                            store.allow_repair();
+                                        }
+                                        ui.close();
+                                    }
+                                    if let Some(store) = &mut self.workspace_store
+                                        && store.blocked
+                                        && ui.button("确认保存修复后的布局").clicked()
+                                    {
+                                        store.allow_repair();
+                                        ui.close();
+                                    }
+                                });
+                                let errors: Vec<_> = [
+                                    self.error.as_deref(),
+                                    self.spray_error.as_deref(),
+                                    self.model_panel.error.as_deref(),
+                                    self.save_failed.then_some(self.save_status.as_str()),
+                                    self.workspace_store
+                                        .as_ref()
+                                        .and_then(|s| s.error.as_deref()),
+                                ]
+                                .into_iter()
+                                .flatten()
+                                .collect();
+                                if !errors.is_empty() {
+                                    ui.menu_button(
+                                        egui::RichText::new("错误 / 状态")
+                                            .color(egui::Color32::LIGHT_RED),
+                                        |ui| {
+                                            for e in errors {
+                                                ui.label(e);
+                                            }
+                                        },
+                                    );
                                 }
-                            }
-}); },
-Panel::Optics => { egui::ScrollArea::vertical().id_salt(*tab_id).auto_shrink([false, false]).show(ui, |ui| {
-
-                            parameter_table(ui, "seabed table", |ui| {
-parameter(ui, "海底深度（米）", help("海底深度（米）"), |ui| ui.add_enabled(
-                                !self.optics.beach || self.optics.model.enabled,
-                                egui::Slider::new(&mut self.optics.depth, 0.25..=100.0)
-                                    .logarithmic(true)
-                                    .clamping(egui::SliderClamping::Edits)
-                                    ,
-                            ));
-
-});
-                            self.sigma_editor.ui(
-                                ui,
-                                "消光系数（每米）",
-                                &mut self.optics.sigma_t,
+                                ui.min_rect()
+                            })
+                            .inner;
+                        let summary = self.performance.summary_text(self.optics.swe_enabled());
+                        let font = egui::TextStyle::Body.resolve(ui.style());
+                        let size = ui
+                            .painter()
+                            .layout_no_wrap(summary.clone(), font, ui.visuals().text_color())
+                            .size();
+                        let label = egui::Label::new(summary).halign(egui::Align::Max);
+                        let response = if controls.right() + 16.0 + size.x <= toolbar_bounds.right()
+                        {
+                            let rect = egui::Rect::from_center_size(
+                                egui::pos2(
+                                    toolbar_bounds.right() - size.x * 0.5,
+                                    controls.center().y,
+                                ),
+                                size,
                             );
-                            self.source_editor.ui(
-                                ui,
-                                "手动散射源（辐亮度／米）",
-                                &mut self.optics.source,
-                            );
-                            ui.separator();
-                            ui.label(egui::RichText::new("天空散射").strong());
-                            parameter_table(ui, "sky table", |ui| {
-parameter(ui, "启用天空散射", help("启用天空散射"), |ui| ui.checkbox(&mut self.optics.sky.enabled, ""));
-                            parameter(ui, "天空颜色（线性 RGB）", help("天空颜色（线性 RGB）"), |ui| {
-                                let mut color = self.optics.sky.color;
-                                if ui.color_edit_button_rgb(&mut color).changed() {
-                                    self.optics.sky.color = color;
-                                }
-                            });
-                            parameter(ui, "天空强度", help("天空强度"), |ui| ui.add(
-                                egui::Slider::new(&mut self.optics.sky.intensity, 0.0..=20.0)
-                                    .logarithmic(true)
-                                    ,
-                            ));
-                            parameter(ui, "散射反照率 RGB", help("散射反照率 RGB"), |ui| {
-                                let mut albedo = self.optics.sky.albedo;
-                                if ui.color_edit_button_rgb(&mut albedo).changed() {
-                                    self.optics.sky.albedo = albedo;
-                                }
-                            });
-                            parameter(ui, "天空积分步数", help("天空积分步数"), |ui| egui::ComboBox::from_id_salt("天空积分步数")
-                                .width(ui.available_width()).selected_text(self.optics.sky.steps.to_string())
-                                .show_ui(ui, |ui| {
-                                    for n in [8, 16, 32] {
-                                        ui.selectable_value(
-                                            &mut self.optics.sky.steps,
-                                            n,
-                                            n.to_string(),
-                                        );
-                                    }
-                                }));
-
-});
-                            ui.collapsing("天空 RGB 精确值", |ui| {
-parameter_table(ui, "sky channels table", |ui| {
-                                for c in 0..3 {
-                                    parameter(ui, &format!("颜色 {}", ["R", "G", "B"][c]), "天空颜色的线性 RGB 分量。", |ui|
-                                        ui.add(egui::DragValue::new(&mut self.optics.sky.color[c]).range(0.0..=1.0).speed(0.001)));
-                                    parameter(ui, &format!("反照率 {}", ["R", "G", "B"][c]), "散射系数等于反照率乘以消光系数。", |ui|
-                                        ui.add(egui::DragValue::new(&mut self.optics.sky.albedo[c]).range(0.0..=1.0).speed(0.001)));
-                                }
-
-});
-                            });
-                            ui.collapsing("天空散射源随深度变化", |ui| {
-                                super::skylight::depth_graph(ui, &self.optics);
-                            });
-
-
-                            ui.separator();
-                            parameter_table(ui, "water optics table", |ui| {
-parameter(ui, "水体调试视图", help("水体调试视图"), |ui| egui::ComboBox::from_id_salt("水体调试视图")
-                                .width(ui.available_width()).selected_text(VIEW_NAMES[self.optics.view as usize])
-                                .show_ui(ui, |ui| {
-                                    for (i, name) in VIEW_NAMES.iter().enumerate() {
-                                        ui.selectable_value(&mut self.optics.view, i as u32, *name);
-                                    }
-                                }));
-                            parameter(ui, "光程白色参考值（米）", help("光程白色参考值（米）"), |ui| ui.add(
-                                egui::Slider::new(&mut self.optics.path_range, 1.0..=300.0)
-                                    .logarithmic(true)
-                                    .clamping(egui::SliderClamping::Edits)
-                                    ,
-                            ));
-                            parameter(ui, "天空反射与高光", help("天空反射与高光"), |ui| ui.checkbox(
-                                &mut self.optics.reflections,
-                                "",
-                            ));
-                            parameter(ui, "海底 RGB 测试色带", help("海底 RGB 测试色带"), |ui| ui.checkbox(&mut self.optics.color_bands, ""));
-                            parameter(ui, "棋盘格尺寸（米）", help("棋盘格尺寸（米）"), |ui| ui.add(
-                                egui::Slider::new(&mut self.optics.checker_size, 0.5..=20.0)
-                                    ,
-                            ));
-
-
-
-
-
-});
-                            if ui.button("重置光学参数").clicked() {
-                                self.optics = OpticsConfig::default();
+                            ui.put(rect, label)
+                        } else {
+                            ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                                ui.add(label.wrap())
+                            })
+                            .inner
+                        };
+                        response.on_hover_text(super::performance::SUMMARY_HELP);
+                    });
+                });
+            egui::SidePanel::left("workspace navigation")
+                .exact_width(54.0)
+                .resizable(false)
+                .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(8.0))
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 8.0;
+                        for id in WorkspaceId::ALL {
+                            if id == WorkspaceId::Configurations {
+                                ui.separator();
                             }
-}); },
+                            let selected = workspaces.active == id;
+                            let mut button =
+                                egui::Button::new("").selected(selected).corner_radius(8);
+                            if !selected {
+                                button = button
+                                    .fill(egui::Color32::TRANSPARENT)
+                                    .stroke(egui::Stroke::NONE);
+                            }
+                            let response =
+                                ui.add_sized([38.0, 38.0], button).on_hover_text(id.name());
+                            response.widget_info(|| {
+                                egui::WidgetInfo::selected(
+                                    egui::WidgetType::SelectableLabel,
+                                    true,
+                                    selected,
+                                    id.name(),
+                                )
+                            });
+                            let color = ui
+                                .style()
+                                .interact_selectable(&response, selected)
+                                .text_color();
+                            let icon_rect = egui::Rect::from_center_size(
+                                response.rect.center(),
+                                egui::vec2(24.0, 24.0),
+                            );
+                            self.icons[id.index()]
+                                .clone()
+                                .tint(color)
+                                .paint_at(ui, icon_rect);
+                            if response.clicked() {
+                                workspaces.active = id;
+                            }
                         }
-                    }));
-            });
+                    });
+                });
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ctx, |ui| {
+                    let active = workspaces.active;
+                    let workspace = workspaces.current();
+                    workspace.prepare(&self.optics);
+                    egui_dock::DockArea::new(&mut workspace.dock)
+                        .id(egui::Id::new(("workspace dock", active)))
+                        .show_close_buttons(true)
+                        .show_leaf_close_all_buttons(false)
+                        .style(self.dock_style.clone())
+                        .show_inside(
+                            ui,
+                            &mut PanelViewer(|panel, ui: &mut egui::Ui| {
+                                if panel == Panel::View {
+                                    self.viewport_size =
+                                        ocean_view(ui, self.viewport_id, camera, current.length);
+                                    return;
+                                }
+                                ui.push_id((active, panel), |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("parameters")
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| {
+                                            self.panel(
+                                                panel, ui, current, camera, *paused, &mut apply,
+                                            );
+                                        });
+                                });
+                            }),
+                        );
+                    workspace.capture();
+                });
         });
-        self.dock = dock;
-        self.viewport_size = requested_size;
+        self.workspaces = workspaces;
         (output, apply)
+    }
+
+    fn panel(
+        &mut self,
+        panel: Panel,
+        ui: &mut egui::Ui,
+        current: OceanConfig,
+        camera: &mut Camera,
+        paused: bool,
+        apply: &mut Option<OceanConfig>,
+    ) {
+        match panel {
+            Panel::Scene => self.scene_panel(ui, camera, current.length),
+            Panel::Model => self
+                .model_panel
+                .show(ui, &mut self.optics, camera, current.length),
+            Panel::Colliders => super::collider_panel::show(ui, &mut self.optics, self.swe_domain),
+            Panel::Shore => self.shore_panel(ui),
+            Panel::ShoreFoam => self.shore_foam_panel(ui),
+            Panel::Spray => {
+                super::spray_panel::show(ui, &mut self.optics.spray, self.spray_error.as_deref())
+            }
+            Panel::Ocean => {
+                if let Some(config) = self.ocean_panel(ui, current, camera) {
+                    *apply = Some(config);
+                }
+            }
+            Panel::OffshoreFoam => self.offshore_foam_panel(ui, camera),
+            Panel::Optics => self.optics_panel(ui),
+            Panel::FoamMaterial => self.foam_material_panel(ui, camera),
+            Panel::Surface => self.surface_panel(ui),
+            Panel::SprayAppearance => super::spray_panel::appearance(ui, &mut self.optics.spray),
+            Panel::Performance => self.performance.ui(ui),
+            Panel::Configurations => {
+                let settings = SavedSettings {
+                    ocean: current,
+                    draft: self.draft,
+                    foam: self.foam_settings,
+                    optics: self.optics,
+                    camera: *camera,
+                    speed: self.speed,
+                    paused,
+                    ..Default::default()
+                };
+                if let Some(settings) =
+                    self.configuration_panel
+                        .ui(ui, settings, self.settings_path.is_some())
+                {
+                    self.load_configuration = Some(settings);
+                }
+                self.save_now |= std::mem::take(&mut self.configuration_panel.save_now);
+                if self.save_failed {
+                    ui.colored_label(egui::Color32::LIGHT_RED, &self.save_status);
+                }
+            }
+            Panel::View | Panel::Unknown => {}
+        }
     }
 
     fn view_texture(gpu: &Gpu, format: wgpu::TextureFormat, size: [u32; 2]) -> wgpu::Texture {
@@ -979,7 +480,6 @@ parameter(ui, "水体调试视图", help("水体调试视图"), |ui| egui::Combo
             view_formats: &[format.remove_srgb_suffix()],
         })
     }
-
     pub fn resize_view(&mut self, gpu: &Gpu, format: wgpu::TextureFormat) {
         self.viewport_texture = Self::view_texture(gpu, format, self.viewport_size);
         self.viewport_view = self.viewport_texture.create_view(&Default::default());
@@ -996,7 +496,6 @@ parameter(ui, "水体调试视图", help("水体调试视图"), |ui| egui::Combo
             self.viewport_id,
         );
     }
-
     pub fn encode(
         &mut self,
         window: &Window,
@@ -1048,207 +547,5 @@ parameter(ui, "水体调试视图", help("水体调试视图"), |ui| egui::Combo
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parameter_groups_share_ratio_even_with_oversized_controls() {
-        let ctx = egui::Context::default();
-        for width in [240.0, 400.0] {
-            for _ in 0..2 {
-                let _ = ctx.run(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(width + 16.0, 800.0),
-                        )),
-                        ..Default::default()
-                    },
-                    |ctx| {
-                        egui::CentralPanel::default().show(ctx, |ui| {
-                            ui.set_width(width);
-                            let start = ui.cursor().left();
-                            let expected = start
-                                + (width - PARAMETER_COLUMN_GAP) * PARAMETER_NAME_RATIO
-                                + PARAMETER_COLUMN_GAP;
-                            let mut positions = Vec::new();
-                            for group in ["short group", "long group"] {
-                                parameter_table(ui, group, |ui| {
-                                    for name in ["A", "A much longer name which wraps"] {
-                                        parameter(ui, name, "Tooltip", |ui| {
-                                            positions.push(ui.cursor().left());
-                                            ui.allocate_space(egui::vec2(500.0, 20.0));
-                                        });
-                                    }
-                                });
-                            }
-                            for x in positions {
-                                assert!((x - expected).abs() < 1.0, "{x} != {expected}");
-                            }
-                        });
-                    },
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn dock_layout_keeps_view_between_controls_and_resizes() {
-        let ctx = egui::Context::default();
-        let dock_style = super::super::theme::install(&ctx);
-        let mut dock = default_dock();
-        let mut previous_width = 0.0;
-        for width in [1200.0, 1600.0] {
-            let mut rects = std::collections::HashMap::new();
-            let _ = ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(width, 800.0),
-                    )),
-                    ..Default::default()
-                },
-                |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        egui_dock::DockArea::new(&mut dock)
-                            .style(dock_style.clone())
-                            .show_inside(
-                                ui,
-                                &mut PanelViewer(|tab, ui: &mut egui::Ui| {
-                                    rects.insert(tab, ui.available_rect_before_wrap());
-                                }),
-                            );
-                    });
-                },
-            );
-            let view = rects[&Panel::View];
-            assert!(rects[&Panel::Ocean].right() <= view.left());
-            assert!(view.right() <= rects[&Panel::Shore].left());
-            assert!(rects[&Panel::Ocean].bottom() <= rects[&Panel::Foam].top());
-            assert!(view.width() > rects[&Panel::Ocean].width());
-            assert!(view.width() > rects[&Panel::Shore].width());
-            assert!(view.width() > previous_width);
-            previous_width = view.width();
-        }
-    }
-
-    #[test]
-    fn wasd_moves_only_in_focused_view_without_parameter_editing() {
-        let ctx = egui::Context::default();
-        let mut camera = Camera::default();
-        let mut text = String::new();
-        let mut time = 0.0;
-        let mut frame = |events, focused, editing| {
-            time += 0.05;
-            let _ = ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(1000.0, 600.0),
-                    )),
-                    time: Some(time),
-                    focused,
-                    events,
-                    ..Default::default()
-                },
-                |ctx| {
-                    egui::SidePanel::left("controls")
-                        .exact_width(200.0)
-                        .show(ctx, |ui| {
-                            let response = ui.text_edit_singleline(&mut text);
-                            if editing {
-                                response.request_focus();
-                            } else {
-                                response.surrender_focus();
-                            }
-                        });
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        ocean_view(ui, egui::TextureId::User(0), &mut camera, 128.0);
-                    });
-                },
-            );
-            camera.target
-        };
-        let key = |pressed| egui::Event::Key {
-            key: egui::Key::W,
-            physical_key: Some(egui::Key::W),
-            pressed,
-            repeat: false,
-            modifiers: egui::Modifiers::NONE,
-        };
-        let view = egui::Event::PointerMoved(egui::pos2(400.0, 150.0));
-        frame(vec![view.clone()], true, false);
-        let first = frame(vec![key(true)], true, false);
-        assert_ne!(first, [0.0; 2]);
-        let held = frame(vec![], true, false);
-        assert_ne!(held, first);
-        assert_eq!(frame(vec![key(false)], true, false), held);
-        assert_eq!(frame(vec![key(true)], true, true), held);
-        assert_eq!(frame(vec![], false, false), held);
-        assert_eq!(
-            frame(
-                vec![egui::Event::PointerMoved(egui::pos2(50.0, 150.0))],
-                true,
-                false
-            ),
-            held
-        );
-        assert_ne!(frame(vec![view, key(true)], true, false), held);
-    }
-
-    #[test]
-    fn orbit_is_owned_by_view_drag_not_sidebar_drag() {
-        let ctx = egui::Context::default();
-        let mut camera = Camera::new(128.0);
-        let initial = camera.yaw;
-        let mut frame = |events| {
-            let _ = ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(1000.0, 600.0),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ctx| {
-                    egui::SidePanel::left("controls")
-                        .exact_width(200.0)
-                        .show(ctx, |ui| {
-                            ui.label("Controls");
-                        });
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        let size = ocean_view(ui, egui::TextureId::User(0), &mut camera, 128.0);
-                        assert!(size[0] > 700 && size[0] < 800);
-                        assert!(size[1] > 500 && size[1] <= 600);
-                    });
-                },
-            );
-            camera.yaw
-        };
-        let button = |pos, pressed| egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        frame(vec![]);
-        frame(vec![
-            egui::Event::PointerMoved(egui::pos2(50.0, 150.0)),
-            button(egui::pos2(50.0, 150.0), true),
-        ]);
-        assert_eq!(
-            frame(vec![egui::Event::PointerMoved(egui::pos2(100.0, 180.0))]),
-            initial
-        );
-        frame(vec![button(egui::pos2(100.0, 180.0), false)]);
-        frame(vec![
-            egui::Event::PointerMoved(egui::pos2(400.0, 150.0)),
-            button(egui::pos2(400.0, 150.0), true),
-        ]);
-        assert_ne!(
-            frame(vec![egui::Event::PointerMoved(egui::pos2(460.0, 180.0))]),
-            initial
-        );
-    }
-}
+#[path = "gui_tests.rs"]
+mod tests;

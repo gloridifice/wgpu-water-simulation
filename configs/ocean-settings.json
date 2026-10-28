@@ -28,7 +28,7 @@
       "enabled": true,
       "position": [
         0.0,
-        8.0,
+        13.0,
         -8.7735
       ],
       "scale": 2.0,
@@ -67,8 +67,8 @@
       ],
       "enabled": true,
       "resolution": 256,
-      "order": 1,
-      "input_gain": 2.38,
+      "order": 2,
+      "input_gain": 1.6,
       "filter_enabled": false,
       "filter_cutoff": 12.0,
       "filter_transition": 12.0,
@@ -173,9 +173,9 @@
     }
   },
   "camera": {
-    "yaw": 26.87002,
-    "pitch": 0.5979998,
-    "distance": 88.29971,
+    "yaw": 25.854012,
+    "pitch": 0.5140001,
+    "distance": 75.24402,
     "target": [
       0.0,
       0.0
@@ -186,7 +186,7 @@
     "foam_debug": 0,
     "foam": true
   },
-  "speed": 1.1,
+  "speed": 1.15,
   "paused": false,
   "configurations": {
     "default": {

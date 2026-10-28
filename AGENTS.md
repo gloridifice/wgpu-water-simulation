@@ -8,7 +8,7 @@
 - `cargo run` 默认启动 GPU Ocean；另保留 CPU 二维 PIC 终端程序与一维浅水模式。
 - 默认启用的 `ocean` feature 提供 wgpu 三维海洋：远海 FFT、近岸局部二维 SWE、泡沫、沙滩与水体光学，以及 egui_dock 参数面板。
 - 修改 GPU 海洋时，保留不启用 `ocean` feature 的原有程序。
-- 使用说明见 `README.md`、`README-shallow.md`、`README-ocean.md`。修改用户可见行为、参数或启动方式时，同步相关说明。
+- 使用说明见 `README.md`、`docs/shallow.md`、`docs/ocean.md`。修改用户可见行为、参数或启动方式时，同步相关说明。
 
 ## 代码位置
 

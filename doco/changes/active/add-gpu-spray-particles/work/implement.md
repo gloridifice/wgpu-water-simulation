@@ -118,4 +118,4 @@ CPU 可以交换双缓冲引用和提交已知数量的 dispatch；不能读取�
 - 配置缺字段、往返保存、非有限/越界输入由配置层测试负责；不为纯面板布局增加复述实现的测试。
 - 固定条件的有界预览与窗口截图检查软交界、遮挡和 resize。`--snapshot` 只验证画面，不作为面板布局证据；预览使用 `--no-settings`。
 
-实现完成后更新 [README-ocean.md](../../../../../README-ocean.md) 的参数、限制与操作说明，更新 [doco/architecture.md](../../../../architecture.md) 的实际模块边界，并将已交付的 GPU 信号消费约束写入 [doco/specs/](../../../../specs/)。当前阶段不把计划写成现有 spec，不需要单独 ADR。具体命令与结果放在 [tasks.md](tasks.md)；未执行项不得标记完成。
+实现完成后更新 [docs/ocean.md](../../../../../docs/ocean.md) 的参数、限制与操作说明，更新 [doco/architecture.md](../../../../architecture.md) 的实际模块边界，并将已交付的 GPU 信号消费约束写入 [doco/specs/](../../../../specs/)。当前阶段不把计划写成现有 spec，不需要单独 ADR。具体命令与结果放在 [tasks.md](tasks.md)；未执行项不得标记完成。

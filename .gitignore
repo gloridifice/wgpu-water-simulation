@@ -19,6 +19,10 @@
 /configs/**/ocean-settings.invalid-*.json
 /configs/**/.ocean-settings-*.tmp
 
+# Personal Dock layouts and their atomic writes (not simulation presets).
+*.workspaces.json
+.ocean-workspaces-*.tmp
+
 # Local IDE state and editor temporary files
 /.idea/
 /.vs/

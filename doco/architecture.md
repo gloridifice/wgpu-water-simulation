@@ -6,7 +6,7 @@
 
 - Rust 2024 项目，默认启用 `ocean` feature；`cargo run` 启动 GPU Ocean。
 - `src/bin/ocean.rs` 提供 GPU 海洋入口、验证与预览参数。
-- `src/bin/foam_lab.rs` 提供独立离线泡沫输送对照：默认诊断入口调用生产泡沫通量／源项／纹理运动，在固定解析水流下输出密度快照及误差；`foam_lab/benchmark.rs` 的 `--benchmark` 模式则调用生产 SWE 管线，在固定稀疏／密集／模型地形／障碍物输入下预热并重复计时、导出单步状态。两者均不读写个人配置，见 [../README-foam-lab.md](../README-foam-lab.md)。
+- `src/bin/foam_lab.rs` 提供独立离线泡沫输送对照：默认诊断入口调用生产泡沫通量／源项／纹理运动，在固定解析水流下输出密度快照及误差；`foam_lab/benchmark.rs` 的 `--benchmark` 模式则调用生产 SWE 管线，在固定稀疏／密集／模型地形／障碍物输入下预热并重复计时、导出单步状态。两者均不读写个人配置，见 [../docs/foam-lab.md](../docs/foam-lab.md)。
 - `src/main.rs`、`src/pic/`、`src/tui/` 保留 CPU 二维 PIC；`src/solver.rs`、`src/shallow_tui/` 提供一维浅水模式。不启用 `ocean` 时仍需可用。
 
 ## GPU 海洋
@@ -23,7 +23,7 @@
 - `src/ocean/viewer.rs`：窗口、相机、配置应用和帧调度；正常帧先计算 FFT、远海泡沫和 SWE，再编码粒子更新，最后调用场景、浪花和 GUI 绘制。快照暖机同样推进粒子。
 - `gpu.rs::Renderer` 持有 `Shore`，组织天空、海底、模型与水面绘制。水面写入 `Depth32Float` 深度；主深度具有 `RENDER_ATTACHMENT | TEXTURE_BINDING` 用途，场景 pass 保存深度，后续浪花 pass 只采样，不把该深度同时挂为可写附件。
 - 近岸材质坐标跟随泡沫输运速度，双相位重置周期由 `foam_texture_period` 控制（默认 2 模拟秒，0 为持续输运）；只重置不可见的坐标层，不修改密度／动量。`foam_prototype` 默认关闭，开启后在输运坐标上使用三尺度 value noise 和密度阈值显示孔洞，沿用现有光学、颜色和密度尺度参数；不使用 NSH 微法线。材质调试 5 显示输运坐标网格。此阶段没有新增细波传播、撞岩源或高分辨率泡沫场。
-- 双浓度实验开启时，`render.wgsl` 使用共享输运坐标显示两尺度三角格梯度噪声的亮白 N 与多尺度窄带、稍暗的 R；N 的细噪声层旋转并错开坐标，减少稀疏白沫的方格排列，不改变密度响应或模拟，覆盖原 NSH／原型选择；仍使用同一水面几何，没有细尺度湍流或单气泡。密度调试 6／9／10 分别读取 N+R／N／R，不经过材质阈值；双坐标重置周期继续有效。参数及启用方式见 [../README-ocean.md](../README-ocean.md)。
+- 双浓度实验开启时，`render.wgsl` 使用共享输运坐标显示两尺度三角格梯度噪声的亮白 N 与多尺度窄带、稍暗的 R；N 的细噪声层旋转并错开坐标，减少稀疏白沫的方格排列，不改变密度响应或模拟，覆盖原 NSH／原型选择；仍使用同一水面几何，没有细尺度湍流或单气泡。密度调试 6／9／10 分别读取 N+R／N／R，不经过材质阈值；双坐标重置周期继续有效。参数及启用方式见 [../docs/ocean.md](../docs/ocean.md)。
 - `render.wgsl` 的近岸 NSH 泡沫保留双相位孔隙覆盖，使用原始面密度的指数响应控制连续不透明度；`ShoreConfig::foam_opacity_scale` 仅控制外观，不修改密度／动量或重置历史。原灰度和远海泡沫路径独立。
 - `optics*`、`seabed*`、`skylight*`、`render.wgsl`：光学参数、水底、天空照明与水面材质。`terrain*`、`collider*`、`model*` 提供地形、碰撞物与导入模型支持。
 - `sand.rs` 与 `color_mips.wgsl`：沙地和导入模型颜色贴图在 CPU 解码 JPEG、上传原始层后，通过 GPU render pass 在线性空间生成完整 sRGB mip 链，不同步等待 GPU；每级写回 8 位 sRGB。沙地法线／标量贴图保留 CPU 过滤。`sand::verify` 回读实际 GPU mip，检查线性光平均及矩形纹理边界。
@@ -32,6 +32,6 @@
 
 - `gui.rs` 使用 egui_dock，`spray_panel.rs` 提供独立浪花页签；`settings.rs` 管理当前会话与命名配置。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
 - `verify.rs`、`*_verify.rs` 和各模块验证入口负责 GPU 行为检查。`gpu_timer.rs` 使用设备支持的 GPU timestamp；功能运行不能依赖同步回读。
-- 配置、特性边界、参数面板和资源许可约束见根目录 `AGENTS.md`；使用方式见 `README.md`、`README-ocean.md`、`README-shallow.md`。
+- 配置、特性边界、参数面板和资源许可约束见根目录 `AGENTS.md`；使用方式见 `README.md`、`docs/ocean.md`、`docs/shallow.md`。
 
 浪花合约见 [specs/gpu-spray.md](specs/gpu-spray.md)。首版只在纯 SWE 区域发射；池满丢弃新增整数请求，不积欠。暂停保留最后信号供调试，但模拟步长为零、不重复消费。源计算包含在 SWE GPU 时间戳区间内，粒子更新/绘制不包含在该指标中。GPU 行为和软交界验证位于 `spray_verify.rs`；纹理来源见 `assets/spray/README.md`。

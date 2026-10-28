@@ -6,8 +6,13 @@ pub mod viewer;
 
 pub(crate) mod gpu_timer;
 mod gui;
+mod gui_controls;
+mod panel_help;
+mod parameter_panels;
 mod performance;
 mod theme;
+mod workspace;
+mod workspace_settings;
 
 pub mod collider;
 mod collider_panel;

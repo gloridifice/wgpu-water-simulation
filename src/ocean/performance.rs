@@ -4,12 +4,24 @@ use super::{
 };
 use std::time::{Duration, Instant};
 
+pub(super) const SUMMARY_HELP: &str = "最近 1 秒统计。FPS 包含垂直同步与事件等待；CPU 为绘制入口到 submit/present 返回的帧处理时间，含交换链等待。GPU 是主命令缓冲的真实时间戳，含模拟、场景和 GUI，不含 CPU 编码、呈现等待或额外回调缓冲。SWE 是其中的 GPU 子区间（含泡沫及浪花源，不含粒子更新/绘制），不应与总 GPU 相加；关闭 SWE 时隐藏，暂停无子步时显示空闲。";
+
+const FRAME_GPU_HELP: &str = "真实 GPU 时间戳异步采样，最近 1 秒样本平均。覆盖本帧主命令缓冲中的 FFT、泡沫、SWE、浪花、场景和 GUI；不含 CPU 编码/提交等待、呈现等待或额外 GUI 回调缓冲。SWE 已包含在该区间内。设备不支持时不以 CPU 耗时替代。";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SweStatus {
     Unsupported,
     Failed,
     Idle,
     Active(u32),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum FrameGpuStatus {
+    #[default]
+    Unsupported,
+    Failed,
+    Sampling,
 }
 
 #[derive(Default)]
@@ -49,6 +61,8 @@ struct Report {
     frame: [f64; 7],
     gpu: GpuTotals,
     status: SweStatus,
+    frame_gpu: GpuTotals,
+    frame_gpu_status: FrameGpuStatus,
 }
 
 pub(super) struct Performance {
@@ -57,6 +71,8 @@ pub(super) struct Performance {
     sums: [f64; 7],
     gpu: GpuTotals,
     status: SweStatus,
+    frame_gpu: GpuTotals,
+    frame_gpu_status: FrameGpuStatus,
     report: Option<Report>,
 }
 
@@ -74,6 +90,8 @@ impl Performance {
             sums: [0.0; 7],
             gpu: GpuTotals::default(),
             status: SweStatus::Unsupported,
+            frame_gpu: GpuTotals::default(),
+            frame_gpu_status: FrameGpuStatus::Unsupported,
             report: None,
         }
     }
@@ -91,6 +109,64 @@ impl Performance {
         }
     }
 
+    pub fn record_frame_gpu(&mut self, status: FrameGpuStatus, sample: Option<Sample>) {
+        if status != self.frame_gpu_status {
+            self.frame_gpu = GpuTotals::default();
+            self.frame_gpu_status = status;
+        }
+        if status == FrameGpuStatus::Sampling
+            && let Some(sample) = sample
+        {
+            self.frame_gpu.count += 1;
+            self.frame_gpu.ms += sample.ms;
+        }
+    }
+
+    fn frame_gpu_text(&self) -> String {
+        match self.frame_gpu_status {
+            FrameGpuStatus::Unsupported => "不支持".into(),
+            FrameGpuStatus::Failed => "读取失败".into(),
+            FrameGpuStatus::Sampling => self
+                .report
+                .as_ref()
+                .filter(|r| r.frame_gpu_status == self.frame_gpu_status && r.frame_gpu.count > 0)
+                .map_or_else(
+                    || "等待采样".into(),
+                    |r| format!("{:.2} ms", r.frame_gpu.ms / r.frame_gpu.count as f64),
+                ),
+        }
+    }
+
+    fn swe_text(&self) -> String {
+        match self.status {
+            SweStatus::Unsupported => "不支持".into(),
+            SweStatus::Failed => "读取失败".into(),
+            SweStatus::Idle => "空闲".into(),
+            SweStatus::Active(_) => self
+                .report
+                .as_ref()
+                .filter(|r| r.status == self.status && r.gpu.count > 0)
+                .map_or_else(
+                    || "等待采样".into(),
+                    |r| format!("{:.2} ms", r.gpu.ms / r.gpu.count as f64),
+                ),
+        }
+    }
+
+    pub fn summary_text(&self, swe_enabled: bool) -> String {
+        let frame = self.report.as_ref().map(|r| r.frame);
+        let fps = frame.map_or_else(
+            || "等待采样".into(),
+            |f| format!("{:.1}", 1000.0 / f[0].max(f64::EPSILON)),
+        );
+        let cpu = frame.map_or_else(|| "等待采样".into(), |f| format!("{:.2} ms", f[1]));
+        let mut text = format!("FPS {fps}   CPU {cpu}   GPU {}", self.frame_gpu_text());
+        if swe_enabled {
+            text.push_str(&format!("   SWE {}", self.swe_text()));
+        }
+        text
+    }
+
     pub fn record_frame(&mut self, now: Instant, timings: FrameTimings) {
         self.frames += 1;
         for (sum, value) in self.sums.iter_mut().zip(timings.values()) {
@@ -103,11 +179,14 @@ impl Performance {
             frame: self.sums.map(|sum| sum / self.frames as f64),
             gpu: self.gpu,
             status: self.status,
+            frame_gpu: self.frame_gpu,
+            frame_gpu_status: self.frame_gpu_status,
         });
         self.started = now;
         self.frames = 0;
         self.sums = [0.0; 7];
         self.gpu = GpuTotals::default();
+        self.frame_gpu = GpuTotals::default();
     }
 
     pub fn ui(&self, ui: &mut egui::Ui) {
@@ -172,6 +251,9 @@ impl Performance {
             ] {
                 parameter(ui, name, help, |ui| ui.label(ms(frame.map(|f| f[index]))));
             }
+            parameter(ui, "GPU 主帧", FRAME_GPU_HELP, |ui| {
+                ui.label(self.frame_gpu_text())
+            });
             let report = self.report.as_ref();
             let gpu = report
                 .filter(|r| matches!(r.status, SweStatus::Active(_)) && r.gpu.count > 0)
@@ -237,7 +319,7 @@ impl Performance {
             );
             parameter(
                 ui,
-                "GPU 采样数",
+                "SWE GPU 采样数",
                 "最近一秒内成功读回且匹配当前求解器的新 GPU 样本数；异步读取，可能少于绘制帧数。",
                 |ui| ui.label(report.map_or_else(|| "--".into(), |r| r.gpu.count.to_string())),
             );
@@ -281,6 +363,9 @@ mod tests {
             substeps: 2,
             simulated_dt: 0.01,
         };
+        performance.record_frame_gpu(FrameGpuStatus::Sampling, Some(sample(0, 2.0)));
+        performance.record_frame_gpu(FrameGpuStatus::Sampling, None);
+        performance.record_frame_gpu(FrameGpuStatus::Sampling, Some(sample(0, 6.0)));
         performance.record_gpu(SweStatus::Active(1), Some(sample(1, 20.0)));
         performance.record_gpu(SweStatus::Active(2), Some(sample(1, 30.0)));
         performance.record_gpu(SweStatus::Active(2), Some(sample(2, 2.0)));
@@ -288,14 +373,19 @@ mod tests {
         performance.record_gpu(SweStatus::Active(2), Some(sample(2, 4.0)));
         performance.record_frame(start + Duration::from_secs(1), FrameTimings::default());
         let report = performance.report.as_ref().unwrap();
+        assert_eq!(report.frame_gpu.count, 2);
+        assert_eq!(report.frame_gpu.ms / report.frame_gpu.count as f64, 4.0);
         assert_eq!(report.gpu.count, 2);
         assert_eq!(report.gpu.ms / report.gpu.count as f64, 3.0);
         assert_eq!(report.gpu.ms / report.gpu.substeps as f64, 1.5);
         performance.record_gpu(SweStatus::Active(2), Some(sample(2, 10.0)));
         performance.record_gpu(SweStatus::Idle, None);
+        performance.record_frame_gpu(FrameGpuStatus::Failed, None);
+        assert_eq!(performance.frame_gpu_text(), "读取失败");
         performance.record_frame(start + Duration::from_secs(2), FrameTimings::default());
         let report = performance.report.as_ref().unwrap();
         assert_eq!(report.status, SweStatus::Idle);
         assert_eq!(report.gpu.count, 0);
+        assert_eq!(report.frame_gpu.count, 0);
     }
 }
