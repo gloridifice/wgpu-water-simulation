@@ -28,7 +28,7 @@
       "enabled": true,
       "position": [
         0.0,
-        13.0,
+        8.0,
         -8.7735
       ],
       "scale": 2.0,
@@ -67,12 +67,12 @@
       ],
       "enabled": true,
       "resolution": 256,
-      "order": 2,
-      "input_gain": 1.15,
+      "order": 1,
+      "input_gain": 2.38,
       "filter_enabled": false,
       "filter_cutoff": 12.0,
       "filter_transition": 12.0,
-      "normal_strength": 1.0,
+      "normal_strength": 0.57,
       "water_foam_color": [
         0.87,
         0.92,
@@ -81,24 +81,34 @@
       "foam_texture": 1,
       "foam_texture_size": 6.7,
       "foam_micro_normal": 1.05,
-      "foam_opacity_scale": 5.5,
+      "foam_opacity_scale": 2.0,
       "foam_roughness": 0.73,
       "foam_material_view": 0,
+      "foam_prototype": true,
+      "foam_texture_period": 6.0,
+      "foam_dual_phase": true,
+      "foam_fresh_half_life": 1.1,
+      "foam_residual_half_life": 1.0,
+      "foam_conversion": 0.14,
       "breaking_depth": 2.0,
       "generation": 4.0,
       "foam_generation_threshold": 0.25,
       "foam_generation_transition": 0.4,
       "foam_front_generation": 8.0,
       "foam_front_distance": 1.0,
+      "foam_ridge_enabled": false,
+      "foam_ridge_width": 1.0,
+      "foam_ridge_prominence": 0.02,
+      "foam_emission_enabled": true,
       "foam_velocity_threshold": 0.1,
       "foam_velocity_transition": 0.5,
       "foam_background_multiplier": 0.15,
-      "foam_follow": 0.8,
-      "foam_response_time": 0.35,
+      "foam_follow": 0.39,
+      "foam_response_time": 2.0,
       "foam_drag_enabled": true,
       "foam_birth_speed": 1.0,
-      "foam_transport_order": 2,
-      "decay": 0.45,
+      "foam_transport_order": 1,
+      "decay": 0.5,
       "foam_compression_threshold": 0.1,
       "foam_density_reference": 2.0,
       "foam_height_max": 0.05,
@@ -110,7 +120,7 @@
     "spray": {
       "enabled": true,
       "debug": false,
-      "rate": 100.0,
+      "rate": 150.0,
       "slope": 1.2,
       "rise": 0.25,
       "depth": 0.02,
@@ -120,7 +130,7 @@
       "size": 1.0,
       "size_range": [
         0.65,
-        2.0
+        1.35
       ],
       "drag": 0.5,
       "softness": 0.15
@@ -163,9 +173,9 @@
     }
   },
   "camera": {
-    "yaw": 7.2699924,
-    "pitch": 1.3220006,
-    "distance": 95.65402,
+    "yaw": 26.87002,
+    "pitch": 0.5979998,
+    "distance": 88.29971,
     "target": [
       0.0,
       0.0
@@ -176,7 +186,7 @@
     "foam_debug": 0,
     "foam": true
   },
-  "speed": 1.0,
+  "speed": 1.1,
   "paused": false,
   "configurations": {
     "default": {
@@ -265,12 +275,22 @@
           "foam_opacity_scale": 2.0,
           "foam_roughness": 0.85,
           "foam_material_view": 0,
+          "foam_prototype": false,
+          "foam_texture_period": 2.0,
+          "foam_dual_phase": false,
+          "foam_fresh_half_life": 1.4,
+          "foam_residual_half_life": 9.0,
+          "foam_conversion": 0.65,
           "breaking_depth": 2.0,
           "generation": 4.0,
           "foam_generation_threshold": 0.1,
           "foam_generation_transition": 0.3,
           "foam_front_generation": 0.2,
           "foam_front_distance": 0.1,
+          "foam_ridge_enabled": false,
+          "foam_ridge_width": 1.0,
+          "foam_ridge_prominence": 0.02,
+          "foam_emission_enabled": true,
           "foam_velocity_threshold": 0.1,
           "foam_velocity_transition": 0.5,
           "foam_background_multiplier": 0.05,
@@ -390,13 +410,13 @@
           },
           "optics": {
             "model": {
-              "enabled": true,
+              "enabled": false,
               "position": [
                 0.0,
-                6.0,
+                13.0,
                 -8.7735
               ],
-              "scale": 2.0,
+              "scale": 1.0,
               "yaw_deg": 0.0,
               "sea_level": 0.5,
               "center": [
@@ -432,9 +452,9 @@
               ],
               "enabled": true,
               "resolution": 256,
-              "order": 1,
-              "input_gain": 1.2,
-              "filter_enabled": true,
+              "order": 2,
+              "input_gain": 1.0,
+              "filter_enabled": false,
               "filter_cutoff": 12.0,
               "filter_transition": 12.0,
               "normal_strength": 1.0,
@@ -449,21 +469,31 @@
               "foam_opacity_scale": 2.0,
               "foam_roughness": 0.85,
               "foam_material_view": 0,
-              "breaking_depth": 2.0,
-              "generation": 0.0,
+              "foam_prototype": false,
+              "foam_texture_period": 9.0,
+              "foam_dual_phase": true,
+              "foam_fresh_half_life": 0.8,
+              "foam_residual_half_life": 0.47,
+              "foam_conversion": 0.65,
+              "breaking_depth": 4.0,
+              "generation": 4.0,
               "foam_generation_threshold": 0.25,
               "foam_generation_transition": 0.4,
               "foam_front_generation": 8.0,
               "foam_front_distance": 1.0,
+              "foam_ridge_enabled": false,
+              "foam_ridge_width": 1.0,
+              "foam_ridge_prominence": 0.1,
+              "foam_emission_enabled": true,
               "foam_velocity_threshold": 0.1,
               "foam_velocity_transition": 0.5,
               "foam_background_multiplier": 0.15,
-              "foam_follow": 0.8,
-              "foam_response_time": 0.35,
+              "foam_follow": 1.0,
+              "foam_response_time": 2.0,
               "foam_drag_enabled": true,
               "foam_birth_speed": 1.0,
               "foam_transport_order": 1,
-              "decay": 0.45,
+              "decay": 0.3,
               "foam_compression_threshold": 0.1,
               "foam_density_reference": 2.0,
               "foam_height_max": 0.05,
@@ -473,11 +503,11 @@
               "view": 0
             },
             "spray": {
-              "enabled": false,
+              "enabled": true,
               "debug": false,
               "rate": 150.0,
-              "slope": 0.03,
-              "rise": 0.02,
+              "slope": 0.13,
+              "rise": 0.3,
               "depth": 0.02,
               "upward": 2.0,
               "forward": 0.5,
@@ -528,14 +558,14 @@
             }
           },
           "camera": {
-            "yaw": 9.025999,
-            "pitch": 0.5779997,
-            "distance": 121.6,
+            "yaw": 1.8679993,
+            "pitch": 0.52200055,
+            "distance": 112.250854,
             "target": [
               0.0,
               0.0
             ],
-            "gain": 0.22,
+            "gain": 0.32,
             "choppy": true,
             "chop_amount": 0.65,
             "foam_debug": 0,
@@ -617,11 +647,11 @@
               "enabled": true,
               "resolution": 256,
               "order": 2,
-              "input_gain": 1.0,
+              "input_gain": 1.4,
               "filter_enabled": false,
               "filter_cutoff": 12.0,
               "filter_transition": 12.0,
-              "normal_strength": 1.0,
+              "normal_strength": 0.57,
               "water_foam_color": [
                 0.87,
                 0.92,
@@ -630,24 +660,34 @@
               "foam_texture": 1,
               "foam_texture_size": 6.7,
               "foam_micro_normal": 1.05,
-              "foam_opacity_scale": 3.5,
+              "foam_opacity_scale": 2.0,
               "foam_roughness": 0.73,
               "foam_material_view": 0,
+              "foam_prototype": true,
+              "foam_texture_period": 8.0,
+              "foam_dual_phase": false,
+              "foam_fresh_half_life": 1.4,
+              "foam_residual_half_life": 9.0,
+              "foam_conversion": 0.65,
               "breaking_depth": 2.0,
               "generation": 4.0,
               "foam_generation_threshold": 0.25,
               "foam_generation_transition": 0.4,
               "foam_front_generation": 8.0,
               "foam_front_distance": 1.0,
+              "foam_ridge_enabled": false,
+              "foam_ridge_width": 1.0,
+              "foam_ridge_prominence": 0.02,
+              "foam_emission_enabled": true,
               "foam_velocity_threshold": 0.1,
               "foam_velocity_transition": 0.5,
               "foam_background_multiplier": 0.15,
-              "foam_follow": 0.8,
-              "foam_response_time": 0.35,
+              "foam_follow": 0.39,
+              "foam_response_time": 2.0,
               "foam_drag_enabled": true,
               "foam_birth_speed": 1.0,
-              "foam_transport_order": 2,
-              "decay": 0.45,
+              "foam_transport_order": 1,
+              "decay": 0.5,
               "foam_compression_threshold": 0.1,
               "foam_density_reference": 2.0,
               "foam_height_max": 0.05,
@@ -712,9 +752,9 @@
             }
           },
           "camera": {
-            "yaw": 1.4019997,
-            "pitch": 0.57799923,
-            "distance": 75.24388,
+            "yaw": 13.326006,
+            "pitch": 0.92199934,
+            "distance": 121.6,
             "target": [
               0.0,
               0.0
@@ -725,11 +765,205 @@
             "foam_debug": 0,
             "foam": true
           },
-          "speed": 1.0,
+          "speed": 1.15,
+          "paused": false
+        }
+      },
+      {
+        "name": "礁石新",
+        "settings": {
+          "version": 1,
+          "ocean": {
+            "resolution": 128,
+            "length": 128.0,
+            "phillips_length": 6.0,
+            "amplitude": 0.07,
+            "mesh_resolution": 128,
+            "wind_angle": -0.9599311,
+            "seed": 42
+          },
+          "draft": {
+            "resolution": 128,
+            "length": 128.0,
+            "phillips_length": 6.0,
+            "amplitude": 0.07,
+            "mesh_resolution": 128,
+            "wind_angle": -0.9599311,
+            "seed": 42
+          },
+          "foam": {
+            "threshold": 0.6,
+            "generation": 4.0,
+            "decay": 2.9
+          },
+          "optics": {
+            "model": {
+              "enabled": true,
+              "position": [
+                0.0,
+                13.0,
+                -8.7735
+              ],
+              "scale": 2.0,
+              "yaw_deg": 0.0,
+              "sea_level": 0.5,
+              "center": [
+                0.0,
+                4.0,
+                0.0
+              ],
+              "size": [
+                128.0,
+                64.0,
+                128.0
+              ],
+              "open_edges": [
+                true,
+                true,
+                true,
+                true
+              ],
+              "sponge_width": 20.0,
+              "extension_width": 12.0,
+              "show_bounds": true
+            },
+            "shore": {
+              "colliders": [
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+              ],
+              "enabled": true,
+              "resolution": 256,
+              "order": 2,
+              "input_gain": 1.6,
+              "filter_enabled": false,
+              "filter_cutoff": 12.0,
+              "filter_transition": 12.0,
+              "normal_strength": 0.57,
+              "water_foam_color": [
+                0.87,
+                0.92,
+                0.9
+              ],
+              "foam_texture": 1,
+              "foam_texture_size": 6.7,
+              "foam_micro_normal": 1.05,
+              "foam_opacity_scale": 2.0,
+              "foam_roughness": 0.73,
+              "foam_material_view": 0,
+              "foam_prototype": true,
+              "foam_texture_period": 6.0,
+              "foam_dual_phase": true,
+              "foam_fresh_half_life": 1.1,
+              "foam_residual_half_life": 1.0,
+              "foam_conversion": 0.14,
+              "breaking_depth": 2.0,
+              "generation": 4.0,
+              "foam_generation_threshold": 0.25,
+              "foam_generation_transition": 0.4,
+              "foam_front_generation": 8.0,
+              "foam_front_distance": 1.0,
+              "foam_ridge_enabled": false,
+              "foam_ridge_width": 1.0,
+              "foam_ridge_prominence": 0.02,
+              "foam_emission_enabled": true,
+              "foam_velocity_threshold": 0.1,
+              "foam_velocity_transition": 0.5,
+              "foam_background_multiplier": 0.15,
+              "foam_follow": 0.39,
+              "foam_response_time": 2.0,
+              "foam_drag_enabled": true,
+              "foam_birth_speed": 1.0,
+              "foam_transport_order": 1,
+              "decay": 0.5,
+              "foam_compression_threshold": 0.1,
+              "foam_density_reference": 2.0,
+              "foam_height_max": 0.05,
+              "foam_height_threshold": 0.1,
+              "foam_height_transition": 1.9,
+              "drying_time": 18.0,
+              "view": 0
+            },
+            "spray": {
+              "enabled": true,
+              "debug": false,
+              "rate": 150.0,
+              "slope": 1.2,
+              "rise": 0.25,
+              "depth": 0.02,
+              "upward": 2.6,
+              "forward": 0.5,
+              "lifetime": 2.0,
+              "size": 1.0,
+              "size_range": [
+                0.65,
+                1.35
+              ],
+              "drag": 0.5,
+              "softness": 0.15
+            },
+            "depth": 6.0,
+            "beach": true,
+            "beach_slope": 0.18,
+            "sand_tile_size": 4.0,
+            "sand_rotation_deg": 0.0,
+            "shore_x": -20.0,
+            "sigma_t": [
+              0.22,
+              0.075,
+              0.035
+            ],
+            "source": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "view": 0,
+            "path_range": 35.0,
+            "reflections": true,
+            "color_bands": false,
+            "checker_size": 4.0,
+            "sky": {
+              "enabled": true,
+              "albedo": [
+                0.25,
+                0.55,
+                0.75
+              ],
+              "color": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "intensity": 1.0,
+              "steps": 32
+            }
+          },
+          "camera": {
+            "yaw": 26.806013,
+            "pitch": 0.19000003,
+            "distance": 75.24402,
+            "target": [
+              0.0,
+              0.0
+            ],
+            "gain": 0.3,
+            "choppy": true,
+            "chop_amount": 0.65,
+            "foam_debug": 0,
+            "foam": true
+          },
+          "speed": 1.15,
           "paused": false
         }
       }
     ],
-    "active": 1
+    "active": 2
   }
 }

@@ -19,6 +19,7 @@ struct ShoreParams {
     water_foam_color: vec4<f32>, // linear RGB, render only
     foam_material: vec4<f32>, // source (0 legacy, 1..3 NSH), tile size m, micro normal, opacity density scale
     foam_shading: vec4<f32>, // prototype pores, roughness, material debug, coordinate reset period (s; 0=continuous)
+    foam_lifetime: vec4<f32>, // dual mode, fresh/residual exit rates /s, conversion fraction
     options: vec4<f32>, // foam generation /s, debug view, resolution, reset
     collider_meta: vec4<f32>, // packed active count, reserved
     model: vec4<f32>, // enabled, minimum bed, fallback bed, sponge width

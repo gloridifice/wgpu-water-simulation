@@ -40,7 +40,8 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
         let depth=array(0.0,0.01,1.0)[fixture/3u];
         let opacity=nsh_opacity(density,depth,f32(fixture%3u)*0.5,0.04,2.0,scale);
         let prototype=prototype_opacity(density,depth,f32(fixture%3u)*0.5,0.0,scale);
-        nsh_results[index]=vec4(opacity,prototype,0.0,0.0);
+        let residual=residual_opacity(density,depth,f32(fixture%3u)*0.5,0.0,scale);
+        nsh_results[index]=vec4(opacity,prototype,residual,0.0);
         return;
     }
     if index<1763u {
@@ -135,21 +136,29 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
     // noise values that would leak white at zero density without the gate.
     for scale in 0..3 {
         for fixture in 0..FIXTURES {
-            let mut previous = 0.0;
-            for density in 0..DENSITIES {
-                let opacity = values[(scale * FIXTURES + fixture) * DENSITIES + density][1];
-                if !(0.0..=1.0).contains(&opacity)
-                    || ((density == 0 || fixture < 3) && opacity != 0.0)
-                    || opacity + 1e-6 < previous
-                {
-                    return Err("prototype pore opacity lost zero/dry/monotone behavior".into());
+            for channel in [1, 2] {
+                let mut previous = 0.0;
+                for density in 0..DENSITIES {
+                    let opacity =
+                        values[(scale * FIXTURES + fixture) * DENSITIES + density][channel];
+                    if !(0.0..=1.0).contains(&opacity)
+                        || ((density == 0 || fixture < 3) && opacity != 0.0)
+                        || opacity + 1e-6 < previous
+                    {
+                        return Err("procedural foam lost zero/dry/monotone behavior".into());
+                    }
+                    previous = opacity;
                 }
-                previous = opacity;
             }
         }
     }
     let low_grain = values[(FIXTURES + 6) * DENSITIES + 8][1];
     let high_grain = values[(FIXTURES + 8) * DENSITIES + 8][1];
+    if values[(FIXTURES + 7) * DENSITIES + 8][2] < 0.99
+        || values[(FIXTURES + 6) * DENSITIES + 8][2] != 0.0
+    {
+        return Err("residual foam lost thin contour coverage and surrounding holes".into());
+    }
     if low_grain < 0.99 || high_grain != 0.0 {
         return Err("prototype material lost density-dependent holes".into());
     }

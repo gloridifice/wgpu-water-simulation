@@ -539,7 +539,7 @@ The independent **浅水模拟（SWE）** panel contains the SWE, foam, wet-sand
 
 `shore_compute.wgsl` advances a rectangular, world-space finite-volume grid (default 256²). It offers the original first-order hydrostatic Rusanov + Euler solver and a second-order MUSCL + SSP-RK2 solver. The latter reconstructs free surface, velocity and bed using a generalized minmod limiter (theta=1.3), with hydrostatic face corrections and a matching centered bed source. Reconstruction falls back to first order near dry cells and patch boundaries. Both retain wet/dry handling and the 12 m/s velocity safeguard; RK2 stages include boundary relaxation and bottom friction. Foam generation/decay and ground memory update once per completed substep and remain split first-order source updates. This is not a port of the reference project's KP07 solver.
 
-The stored variables are `(h, hu, hv, surface_foam_density)`. Foam is an effective amount per unit surface area in arbitrary units, not a depth-weighted concentration or physical mass density. A separate conservative upwind flux transports foam using shared face velocities: convergence concentrates it and divergence dilutes it, without creating foam. Both orders use first-order spatial foam transport; second-order SWE uses RK2 for its transport time integration. Foam is not divided by water depth or clipped at 1. The offshore sponge removes foam; cells at or below 3 mm water depth discard their remaining foam without leaving ground residue. Closed boundaries have zero foam flux.
+By default (dual-population experiment disabled), the stored variables are `(h, hu, hv, surface_foam_density)`. Foam is an effective amount per unit surface area in arbitrary units, not a depth-weighted concentration or physical mass density. A separate conservative upwind flux transports foam using shared face velocities: convergence concentrates it and divergence dilutes it, without creating foam. Both orders use first-order spatial foam transport; second-order SWE uses RK2 for its transport time integration. Foam is not divided by water depth or clipped at 1. The offshore sponge removes foam; cells at or below 3 mm water depth discard their remaining foam without leaving ground residue. Closed boundaries have zero foam flux.
 
 Generation combines the original rising-water source (scaled by the background multiplier, default 0.15) with a directional front source: sample free-surface elevation (bed height plus water depth) ahead of the flow and emit where the surface falls. The front source does not require rising water or nearby dry land. Both retain wet-depth and offshore-sponge gating. This is a visual proxy, not resolved air entrainment; the criterion follows surface slope, so retreat can also emit when its forward water surface is lower; dry samples are excluded. Generation and exponential decay are integrated analytically with a frozen source per completed substep. Density may exceed the color reference, retaining accumulated amount rather than clipping it.
 
@@ -675,6 +675,39 @@ CLI 示例：`cargo run --release --features ocean --bin ocean -- --beach --swe-
 两项参数即时生效、自动保存，不清空已有泡沫。静水在两项均为 0 时仍不产泡。它们只控制背景生成权重，不影响新增前沿源；实际泡沫量还受生成速率、背景倍率、压缩增强、水深、输送与衰减影响。老设置文件缺少这些字段时使用默认值。
 
 
+## 新鲜白沫 N / 水面残余 R 实验
+
+在 **浅水模拟（SWE）→ 新鲜白沫与水面残余 → 双浓度实验** 开启。默认关闭，旧配置缺字段时仍使用原来的单浓度守恒／惯性路径。切换模式会重置近岸水体、泡沫与湿沙，不重启 FFT；修改下面三个参数实时生效并保存，不清空历史。
+
+| 参数 | 默认 | 范围／单位 |
+| --- | --- | --- |
+| 新鲜半衰期 | 1.4 | 0.1～60 模拟秒 |
+| 残余半衰期 | 9 | 0.1～120 模拟秒 |
+| 退出转残余比例 | 0.65 | 0～1，无量纲 |
+
+新鲜浓度 **N** 的退出速率为 `a = ln(2) / 新鲜半衰期`，残余浓度 **R** 的衰减速率为 `b = ln(2) / 残余半衰期`，转化比例记为 `f`。局部关系为 `dN/dt = 新生成率 − aN`、`dR/dt = f·aN − bR`。所有现有前沿／背景源只直接注入 N，没有新增独立撞岩造泡器。半衰期已包含转化造成的退出，不能再叠加一次新鲜衰减。
+
+局部生成、转化、衰减联合使用解析积分，并处理两种半衰期相同或接近的情况；每个完整 SWE 子步更新一次，二阶预测阶段不重复更新。无源、无输运时，从 `N=1、R=0` 出发，1.4 秒后 `N=0.5、R≈0.306191`：累计进入过 R 的量是 0.325，但转入后也会衰减。
+
+开启后，N、R 和两套材质坐标使用同一个 SWE 粗水流速度回溯，浓度采用双线性半拉格朗日采样，并同时乘以局部压缩／膨胀响应。此模式不使用旧泡沫动量输送、拖曳、跟随倍率、新生速度倍率、空间通量阶数或“水上泡沫衰减”；这些设置保留供关闭实验后恢复。压缩响应只用于此半拉格朗日路径，不叠加到旧守恒通量。SWE 一阶／二阶仍可选择；整个泡沫过程并非严格守恒或帧率无关，仍有回溯插值、流场近似和算子分裂误差。
+
+- 两类浓度不限制到 0～1；露出的障碍物阻挡回溯，淹没后允许通过；外部不导入泡沫，FFT 松弛带消散两者。水深不超过 3 毫米时一起清除，R **不是沙地残留**。
+- 开启时自动覆盖旧 NSH／原型材质选择：N 使用两尺度三角格梯度噪声显示亮白块，细层旋转并错开坐标，避免稀疏前沿把方格插值噪声的格点排列显露出来；R 使用细尺度多层噪声的窄等值带，颜色为当前水上泡沫颜色的 72%，随浓度降低露出细丝和斑点。仍在同一水面上着色，没有新增几何层、细尺度湍流或单气泡模拟。
+- “不透明度密度尺度”分别控制 N、R 的覆盖响应；坐标重置周期仍有效，默认 2 秒。8 秒保留较长拉伸，0 持续输运、不重置。材质调试 1／2 分别看新鲜／残余噪声，4 看合成不透明度，5 看共享输运网格。
+- 密度调试 `--shore-view 6` 显示 N+R，`9` 显示 N，`10` 显示 R，均绕过噪声、光照和远海泡沫。关闭实验时视图 9 显示原单浓度，10 无残余。
+- 暂停冻结两者；重置、禁用和网格重建清空两者；暂停时编辑碰撞体也会清除新变干格子的 R，保留湿沙历史。远海 FFT 泡沫保持独立。
+
+```powershell
+# 不读写个人配置，有限帧试运行。
+cargo run --release -- --beach --no-settings --foam-dual-phase --frames 600
+# 从已保存场景开启实验；不额外加 --beach 覆盖场景。
+cargo run --release -- --foam-dual-phase
+# 固定礁石配置的只读对照。
+cargo run --release -- --config configs/experiments/reef-front-ridge.json --no-foam-ridges --foam-dual-phase --foam-texture-period 8
+```
+
+CLI 还支持 `--no-foam-dual-phase`、`--foam-fresh-half-life`、`--foam-residual-half-life`、`--foam-conversion`。配置字段为 `foam_dual_phase`、`foam_fresh_half_life`、`foam_residual_half_life`、`foam_conversion`；会话和命名配置均保存，运行中的浓度不保存。`--verify` 用独立 f64 ODE 积分核对 GPU 解析更新，检查步长拆分、相同速率、0／100% 转化，以及实际 SWE 两阶的共享输运、压缩／膨胀、仅向 N 生成、干湿／障碍物、暂停、重置和水动力独立性。固定礁石快照已观察到近岸白块与外围细纹；不据此宣称复现真实泡沫形态。
+
 ## 前沿泡沫：有方向的压缩
 
 前沿生成只保留**有方向的压缩**，不再提供检测方式切换。压缩强度为 `max(当前速度沿采样方向的分量 − 前方速度沿该方向的分量, 0) ÷ 实际采样距离`，单位每秒。同向追赶、迎面相遇可以触发，沿流向拉开和纯横向速度差不触发。
@@ -707,11 +740,11 @@ CLI 示例：`cargo run --release --features ocean --bin ocean -- --beach --swe-
 | 速度响应时间（秒） | 0.35 | 0～20 | 速度向目标靠拢的时间常数，0 表示立即跟随 |
 | 新生泡沫速度倍率 | 1 | 0～1 | 新生速度为当地水流速度乘此倍率；只影响新增泡沫 |
 
-每格保存“泡沫量／面积”和“泡沫量／面积 × 水平速度”。两者使用相同的迎风权重跨格输送；格内速度等于动量除以泡沫量。因此快泡沫追上慢泡沫时会积聚、增密，并按泡沫量加权混合速度。比如前团泡沫量 0.2、速度 0.2 m/s，后团泡沫量 0.8、速度 1 m/s，充分混合后总量为 1，总动量为 0.84，平均速度为 0.84 m/s。局部密度允许超过 1；汇聚不会额外制造泡沫。
+以下说明适用于默认单浓度模式；双浓度实验使用上文的 SWE 随流输运。默认每格保存“泡沫量／面积”和“泡沫量／面积 × 水平速度”。两者使用相同的迎风权重跨格输送；格内速度等于动量除以泡沫量。因此快泡沫追上慢泡沫时会积聚、增密，并按泡沫量加权混合速度。比如前团泡沫量 0.2、速度 0.2 m/s，后团泡沫量 0.8、速度 1 m/s，充分混合后总量为 1，总动量为 0.84，平均速度为 0.84 m/s。局部密度允许超过 1；汇聚不会额外制造泡沫。
 
 新生泡沫注入“新增量 × 新生速度”的动量，衰减按相同比例移除泡沫量与动量。拖曳加速度为“目标速度与泡沫速度之差／响应时间”。对每子步内固定的水流与生成率，生成、衰减、拖曳联合使用解析积分；仅有拖曳时，速度按指数靠拢目标。拖曳关闭后，跟随倍率与响应时间不影响惯性输送。跟随倍率为 0 且拖曳开启时才会逐渐停下。此模型不反作用于水体。
 
-SWE 历史第四块保存泡沫面动量和第一套纹理位移，第五块保存第二套纹理位移与更新相位，缓冲区大小不变。泡沫量与两个动量分量共用守恒通量，在 RK2 预测、校正中共同推进；生成和拖曳只在完成子步时积分一次。输送速度上限沿用 SWE 的 12 m/s 与 CFL 步长约束。两套纹理位移使用同一泡沫速度场反向追踪并累计，材质坐标为“世界位置 − 位移”。
+SWE 历史第四块保存泡沫面动量和第一套纹理位移，第五块保存第二套纹理位移与更新相位；第五块 w 在双浓度模式下保存水面 R，原密度槽保存 N+R，默认单浓度模式的 R 为零。缓冲区仍为五块，大小不变。泡沫量与两个动量分量共用守恒通量，在 RK2 预测、校正中共同推进；生成和拖曳只在完成子步时积分一次。输送速度上限沿用 SWE 的 12 m/s 与 CFL 步长约束。两套纹理位移使用同一泡沫速度场反向追踪并累计，材质坐标为“世界位置 − 位移”。
 
 为避免无限累计造成拉丝，每套纹理只保留最多 **2 秒模拟时间**的形变，两套错开 **1 秒**更新。更新时该套纹理的显示权重为零，两套覆盖率平滑交替；不混合坐标，也不直接把两张噪声平均后再做阈值。每套纹理在显示期间仍随水流移动、拉伸，但具体孔隙会逐渐更新，不能永久追踪同一个孔隙。泡沫密度与速度不会随纹理更新清空。
 

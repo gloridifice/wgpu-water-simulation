@@ -135,6 +135,18 @@ impl SavedSettings {
                     self.optics.spray.debug = optics.spray.debug;
                 }
                 "--foam-texture" => self.optics.shore.foam_texture = optics.shore.foam_texture,
+                "--foam-dual-phase" | "--no-foam-dual-phase" => {
+                    self.optics.shore.foam_dual_phase = optics.shore.foam_dual_phase
+                }
+                "--foam-fresh-half-life" => {
+                    self.optics.shore.foam_fresh_half_life = optics.shore.foam_fresh_half_life
+                }
+                "--foam-residual-half-life" => {
+                    self.optics.shore.foam_residual_half_life = optics.shore.foam_residual_half_life
+                }
+                "--foam-conversion" => {
+                    self.optics.shore.foam_conversion = optics.shore.foam_conversion
+                }
                 "--foam-prototype" | "--no-foam-prototype" => {
                     self.optics.shore.foam_prototype = optics.shore.foam_prototype
                 }
@@ -593,11 +605,18 @@ mod tests {
         assert_eq!(settings.camera.gain, 0.3);
         assert!(!settings.optics.shore.foam_ridge_enabled);
         assert!(settings.optics.shore.foam_emission_enabled);
+        assert!(!settings.optics.shore.foam_dual_phase);
+        assert_eq!(settings.optics.shore.foam_fresh_half_life, 1.4);
+        assert_eq!(settings.optics.shore.foam_residual_half_life, 9.0);
+        assert_eq!(settings.optics.shore.foam_conversion, 0.65);
         assert_eq!(fs::read(dir.file()).unwrap(), legacy);
         for invalid in [
             r#"{"version":999}"#,
             r#"{"optics":{"shore":{"foam_ridge_width":0}}}"#,
             r#"{"optics":{"shore":{"foam_ridge_prominence":1.1}}}"#,
+            r#"{"optics":{"shore":{"foam_fresh_half_life":0}}}"#,
+            r#"{"optics":{"shore":{"foam_residual_half_life":121}}}"#,
+            r#"{"optics":{"shore":{"foam_conversion":1.1}}}"#,
             "{truncated",
         ] {
             fs::write(dir.file(), invalid).unwrap();
@@ -651,6 +670,10 @@ mod tests {
         s.optics.shore.foam_opacity_scale = 6.5;
         s.optics.shore.foam_roughness = 0.75;
         s.optics.shore.foam_material_view = 4;
+        s.optics.shore.foam_dual_phase = true;
+        s.optics.shore.foam_fresh_half_life = 2.5;
+        s.optics.shore.foam_residual_half_life = 18.0;
+        s.optics.shore.foam_conversion = 0.4;
         s.optics.shore.colliders[3] = Some(super::super::collider::Collider {
             position: [-11.0, 3.0],
             height: 3.2,
@@ -1023,6 +1046,29 @@ mod tests {
         s.apply_cli(ocean, optics, &["--spray-debug".into()]);
         assert!(s.optics.spray.debug);
         assert_eq!(s.optics.spray.rate, 321.0);
+        optics.shore.foam_dual_phase = true;
+        optics.shore.foam_fresh_half_life = 2.5;
+        optics.shore.foam_residual_half_life = 18.0;
+        optics.shore.foam_conversion = 0.4;
+        s.apply_cli(ocean, optics, &["--foam-dual-phase".into()]);
+        assert!(s.optics.shore.foam_dual_phase);
+        assert_eq!(s.optics.shore.foam_fresh_half_life, 1.4);
+        s.apply_cli(
+            ocean,
+            optics,
+            &[
+                "--foam-fresh-half-life".into(),
+                "--foam-residual-half-life".into(),
+                "--foam-conversion".into(),
+            ],
+        );
+        assert_eq!(s.optics.shore.foam_fresh_half_life, 2.5);
+        assert_eq!(s.optics.shore.foam_residual_half_life, 18.0);
+        assert_eq!(s.optics.shore.foam_conversion, 0.4);
+        optics.shore.foam_dual_phase = false;
+        s.apply_cli(ocean, optics, &["--no-foam-dual-phase".into()]);
+        assert!(!s.optics.shore.foam_dual_phase);
+        assert_eq!(s.optics.shore.foam_conversion, 0.4);
         s.apply_cli(ocean, OpticsConfig::beach_scene(), &["--beach".into()]);
         assert!(!s.optics.model.enabled);
     }

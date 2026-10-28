@@ -3,7 +3,9 @@
 // conservative (h,hu,hv,surface foam amount per area), surface (source rate,front weight,eta,v).
 // Diagnostic x/y are populated only for ridge mode or source/weight debug views.
 // Fourth block: foam area momentum X/Z and texture A displacement X/Z in meters.
-// Fifth block: texture B displacement X/Z, shared cycle phase, reserved.
+// Fifth block: texture B displacement X/Z, shared cycle phase, waterborne R.
+// In dual mode q.w is N+R (for shared height/debug consumers); N=q.w-R.
+// Legacy mode keeps R=0. Neither concentration is clipped to 1.
 // Zero keeps uniform-driven diagnostic entries; production specializes the
 // three supported combinations so inactive high-order paths cannot inflate
 // register pressure or retain terrain work in a cheaper solver variant.
@@ -92,6 +94,7 @@ fn foam_state(c: vec2<i32>) -> vec3<f32> {
     return vec3(q.w,old_shore[u32(3*n*n+p.y*n+p.x)].xy);
 }
 fn foam_transport_velocity(c: vec2<i32>) -> vec2<f32> {
+    if shore.foam_lifetime.x>0.5 { return velocity(state(c)); }
     let foam=foam_state(c); let water=velocity(state(c));
     // Midpoint response drives both conservative density flux and texture motion.
     return foam_response(foam_speed(foam.x,foam.yz,water),water,shore.timing.y*0.5);
@@ -126,7 +129,12 @@ fn advance_foam_motion(c: vec2<i32>, q: vec4<f32>, original: vec4<f32>, momentum
         let initial_speed=foam_speed(original.w,initial_motion_at(c).xy,velocity(original));
         transport=0.5*(transport+foam_response(initial_speed,velocity(original),dt*0.5));
     }
-    let grid=vec2<f32>(c)-transport*dt/spacing;
+    var grid=vec2<f32>(c)-transport*dt/spacing;
+    if shore.foam_lifetime.x>0.5 {
+        transport=dual_transport_velocity(c);
+        grid=dual_backtrace(c,transport);
+        transport=(vec2<f32>(c)-grid)*spacing/dt;
+    }
     let coords=sample_initial_texture(grid);
     let n=i32(shore.options.z);
     // Advance with actual simulation dt, not wall time (pause/stalls/RK2).
@@ -275,6 +283,66 @@ fn source_duration(rate: f32, dt: f32) -> f32 {
     let x=rate*dt;
     if x<0.001 { return dt*(1.0-0.5*x+x*x/6.0); }
     return (1.0-exp(-x))/rate;
+}
+// Exact local N'=source-a*N, R'=fraction*a*N-b*R. The fresh half-life
+// includes conversion. This is applied ONCE after a completed SWE substep.
+fn dual_foam_sources(amount: vec2<f32>, source: f32, dt: f32, rates: vec3<f32>) -> vec2<f32> {
+    let a=rates.x; let b=rates.y; let fraction=rates.z;
+    let ea=exp(-a*dt); let eb=exp(-b*dt);
+    // Stable divided difference, including equal/near-equal exit rates.
+    let transfer=exp(-min(a,b)*dt)*source_duration(abs(a-b),dt);
+    var source_transfer=source_duration(b,dt)-transfer;
+    if max(a,b)*dt<0.05 {
+        let x=a*dt; let y=b*dt;
+        source_transfer=dt*x*(0.5-(x+y)/6.0+(x*x+x*y+y*y)/24.0
+            -(x*x*x+x*x*y+x*y*y+y*y*y)/120.0);
+    }
+    return max(vec2(0.0),vec2(amount.x*ea+source*source_duration(a,dt),
+        amount.y*eb+fraction*(a*amount.x*transfer+source*source_transfer)));
+}
+fn dual_transport_velocity(c: vec2<i32>) -> vec2<f32> {
+    var speed=velocity(state(c));
+    if shore.solver.y>1.5 {
+        let n=i32(shore.options.z);
+        speed=0.5*(speed+velocity(initial_shore[u32(n*n+c.y*n+c.x)]));
+    }
+    return speed;
+}
+fn dual_closed_face(c: vec2<i32>, donor: vec2<i32>) -> bool {
+    let n=i32(shore.options.z);
+    if any(donor<vec2(0)) || any(donor>=vec2(n)) { return !model_open_outside(donor); }
+    return collider_blocks_face(c,donor);
+}
+fn dual_backtrace(c: vec2<i32>, speed: vec2<f32>) -> vec2<f32> {
+    var offset=speed*shore.timing.y/(shore.domain.zw/shore.options.z);
+    // Production CFL keeps each displacement below one cell. Stop the normal
+    // component at a closed face; do not interpolate through emergent solids.
+    let step=vec2<i32>(sign(-offset));
+    if dual_closed_face(c,c+vec2(step.x,0)) { offset.x=0.0; }
+    if dual_closed_face(c,c+vec2(0,step.y)) { offset.y=0.0; }
+    return vec2<f32>(c)-offset;
+}
+fn transport_dual_foam(c: vec2<i32>, divergence: f32) -> vec2<f32> {
+    let grid=dual_backtrace(c,dual_transport_velocity(c));
+    let base=vec2<i32>(floor(grid)); let f=fract(grid);
+    let n=i32(shore.options.z); let cells=u32(n*n);
+    var amounts=vec2(0.0);
+    for(var y=0;y<2;y++) { for(var x=0;x<2;x++) {
+        let donor=base+vec2(x,y);
+        if any(donor<vec2(0)) || any(donor>=vec2(n)) { continue; }
+        let i=u32(donor.y*n+donor.x);
+        let water=initial_shore[cells+i];
+        if water.x<=shore.density.z { continue; }
+        // Both legs of a diagonal must be open; no corner-cutting through rock.
+        if dual_closed_face(c,vec2(donor.x,c.y)) || dual_closed_face(c,vec2(c.x,donor.y))
+            || dual_closed_face(vec2(donor.x,c.y),donor) || dual_closed_face(vec2(c.x,donor.y),donor) { continue; }
+        let residual=clamp(initial_shore[4u*cells+i].w,0.0,water.w);
+        let w=select(1.0-f.x,f.x,x==1)*select(1.0-f.y,f.y,y==1);
+        amounts+=w*vec2(max(0.0,water.w-residual),residual);
+    }}
+    // SL interpolation alone transports a scalar, not an area density. Apply
+    // compression/dilation once, to BOTH species; never on the conservative path.
+    return amounts*exp(-divergence*shore.timing.y);
 }
 fn foam_sources(foam: vec3<f32>, water: vec2<f32>, source: f32) -> vec3<f32> {
     let dt=shore.timing.y; let decay=shore.timing.z;
@@ -496,7 +564,7 @@ fn edit_colliders(@builtin(global_invocation_id) id: vec3<u32>) {
         // Clear foam momentum/texture in newly dry cells; preserve wetness.
         q.w=0.0;
         new_shore[3u*cells+i]=vec4(0.0);
-        new_shore[4u*cells+i]=vec4(0.0,0.0,old_shore[4u*cells+i].zw);
+        new_shore[4u*cells+i]=vec4(0.0,0.0,old_shore[4u*cells+i].z,0.0);
     }
     let v=velocity(q);
     new_shore[i]=vec4(q.w,old_shore[i].y,q.x,v.x);
@@ -541,7 +609,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         +(face(c,vec2(0,1),1u)+face(c,vec2(0,-1),1u))/spacing.y);
     // Amount and momentum share one conservative flux, with no extra growth
     // term for convergence. The 12 m/s speed bound is included in the SWE CFL.
-    var foam=transport_foam(c);
+    var foam=vec3(previous.w,0.0,0.0);
+    if shore.foam_lifetime.x<0.5 { foam=transport_foam(c); }
     q.w=foam.x;
     q.y+=dt*bed_source(c,0u)/spacing.x; q.z+=dt*bed_source(c,1u)/spacing.y;
     // One-way FFT boundary relaxation; outgoing SWE disturbances are damped here.
@@ -603,12 +672,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // Stopping emission never erases existing amount or momentum.
     var source=(background+front_source)*smoothstep(0.003,0.03,q.x)*(1.0-edge);
     if shore.foam_ridge.w<0.5 { source=0.0; }
-    foam=foam_sources(vec3(q.w,foam.yz),velocity(q),source);
+    var residual=0.0;
+    if shore.foam_lifetime.x>0.5 {
+        let transported=transport_dual_foam(c,divergence)*exp(-dt*edge*4.0);
+        let amounts=dual_foam_sources(transported,source,dt,shore.foam_lifetime.yzw);
+        residual=amounts.y;
+        foam=vec3(amounts.x+amounts.y,(amounts.x+amounts.y)*velocity(q));
+    } else {
+        foam=foam_sources(vec3(q.w,foam.yz),velocity(q),source);
+    }
     q.w=foam.x;
     let old=initial_shore[index];
     // Foam exists only on water; drying removes it without leaving sand residue.
-    if q.x<=shore.density.z { q.w=0.0; foam.y=0.0; foam.z=0.0; }
-    let motion=advance_foam_motion(c,q,original,foam.yz);
+    if q.x<=shore.density.z { q.w=0.0; foam.y=0.0; foam.z=0.0; residual=0.0; }
+    var motion=advance_foam_motion(c,q,original,foam.yz);
+    motion.texture.w=residual;
     new_shore[3u*cells+index]=motion.motion;
     new_shore[4u*cells+index]=motion.texture;
     let wetness=select(old.y*exp(-dt/shore.timing.w),1.0,q.x>0.003);

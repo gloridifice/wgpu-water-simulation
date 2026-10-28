@@ -13,6 +13,22 @@ fn sample_shore_history(p: vec2<f32>) -> vec4<f32> {
         mix(shore_field_at(q + vec2(0, 1)), shore_field_at(q + vec2(1, 1)), f.x), f.y);
 }
 
+// Read N/R without changing the total-density contract of existing consumers.
+fn shore_species_at(p: vec2<i32>) -> vec2<f32> {
+    let n=i32(shore.options.z);
+    if any(p<vec2(0)) || any(p>=vec2(n)) { return vec2(0.0); }
+    let i=u32(p.y*n+p.x);
+    let total=max(0.0,shore_field[i].x);
+    let residual=select(0.0,clamp(shore_field[u32(4*n*n)+i].w,0.0,total),shore.foam_lifetime.x>0.5);
+    return vec2(total-residual,residual);
+}
+fn sample_shore_species(p: vec2<f32>) -> vec2<f32> {
+    if !shore_active(shore) { return vec2(0.0); }
+    let grid=(p-shore.domain.xy)/shore.domain.zw*shore.options.z-vec2(0.5);
+    let q=vec2<i32>(floor(grid)); let f=fract(grid);
+    return mix(mix(shore_species_at(q),shore_species_at(q+vec2(1,0)),f.x),
+        mix(shore_species_at(q+vec2(0,1)),shore_species_at(q+vec2(1,1)),f.x),f.y);
+}
 fn shore_extra_at(p: vec2<i32>) -> vec4<f32> {
     let n=i32(shore.options.z);
     if any(p<vec2(0)) || any(p>=vec2(n)) { return vec4(0.0); }

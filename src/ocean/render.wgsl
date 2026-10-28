@@ -210,10 +210,50 @@ fn prototype_noise(p: vec2<f32>) -> f32 {
     let footprint=max(length(dpdx(p)),length(dpdy(p)));
     return mix(shore_noise(p),0.5,smoothstep(0.5,2.0,footprint));
 }
+// Fresh white patches must not reveal the square value-noise lattice when
+// sparse. Use compact gradient kernels on a skewed triangular lattice instead;
+// unlike interpolated random corner values, extrema are not pinned to grid nodes.
+fn fresh_gradient(cell: vec2<i32>) -> vec2<f32> {
+    let q=bitcast<vec2<u32>>(cell);
+    var hash=q.x*1597334677u ^ q.y*3812015801u;
+    hash=(hash ^ (hash>>16u))*2246822519u;
+    hash=hash ^ (hash>>13u);
+    let angle=f32(hash & 65535u)*(6.28318530718/65536.0);
+    return vec2(cos(angle),sin(angle));
+}
+fn fresh_kernel(cell: vec2<i32>, offset: vec2<f32>) -> f32 {
+    let support=max(0.5-dot(offset,offset),0.0);
+    let squared=support*support;
+    return squared*squared*dot(fresh_gradient(cell),offset);
+}
+fn fresh_noise(p: vec2<f32>) -> f32 {
+    let skew=0.36602540378; let unskew=0.21132486541;
+    let cell=floor(p+vec2((p.x+p.y)*skew));
+    let local=p-cell+vec2((cell.x+cell.y)*unskew);
+    let side=select(vec2(0,1),vec2(1,0),local.x>local.y);
+    let lattice=vec2<i32>(cell);
+    let value=fresh_kernel(lattice,local)
+        +fresh_kernel(lattice+side,local-vec2<f32>(side)+vec2(unskew))
+        +fresh_kernel(lattice+vec2(1),local-vec2(1.0)+vec2(2.0*unskew));
+    return clamp(0.5+35.0*value,0.0,1.0);
+}
+fn filtered_fresh_noise(p: vec2<f32>) -> f32 {
+    let footprint=max(length(dpdx(p)),length(dpdy(p)));
+    return mix(fresh_noise(p),0.5,smoothstep(0.5,2.0,footprint));
+}
 fn prototype_opacity(density: f32, depth: f32, grain: f32, width: f32, scale: f32) -> f32 {
     let coverage=1.0-exp(-max(density,0.0)/scale);
     // The original threshold can leak white at zero density for low grain.
     return smoothstep(grain-0.11-width,grain+0.08+width,coverage)
+        *smoothstep(0.0,0.02,coverage)*smoothstep(0.003,0.02,depth);
+}
+fn residual_opacity(density: f32, depth: f32, grain: f32, width: f32, scale: f32) -> f32 {
+    let coverage=1.0-exp(-max(0.0,density)/scale);
+    // Narrow contour bands become filaments/spots as R falls; only appearance,
+    // not resolved turbulence. Derivative filtering suppresses subpixel flicker.
+    let band=abs(grain-0.5)*2.0;
+    let aa=0.025+width;
+    return (1.0-smoothstep(coverage-aa,coverage+aa,band))
         *smoothstep(0.0,0.02,coverage)*smoothstep(0.003,0.02,depth);
 }
 fn material_grid(material: vec2<f32>) -> f32 {
@@ -222,7 +262,18 @@ fn material_grid(material: vec2<f32>) -> f32 {
     let line=vec2(1.0)-smoothstep(vec2(0.0),max(fwidth(p),vec2(0.001)),d);
     return max(line.x,line.y);
 }
-fn foam_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<f32>, density: f32, depth: f32) -> FoamAppearance {
+fn foam_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<f32>, density: f32, species: vec2<f32>, depth: f32) -> FoamAppearance {
+    if shore.foam_lifetime.x>0.5 {
+        // Decorrelate the two octave orientations as well as their frequencies.
+        let fine=vec2(0.8*material.x-0.6*material.y,0.6*material.x+0.8*material.y);
+        let fresh=0.7*filtered_fresh_noise(material*0.8)+0.3*filtered_fresh_noise(fine*2.5+vec2(17.3,-9.1));
+        let old=0.55*prototype_noise(material*2.5)+0.30*prototype_noise(material*7.0)+0.15*prototype_noise(material*17.0);
+        let white=prototype_opacity(species.x,depth,fresh,0.5*fwidth(fresh),shore.foam_material.w);
+        let residue=residual_opacity(species.y,depth,old,fwidth(old),shore.foam_material.w);
+        let color=shore.water_foam_color.rgb*(0.65+0.35*max(dot(base,camera.sun.xyz),0.0));
+        return FoamAppearance(color*(white+0.72*residue*(1.0-white)),
+            white+residue*(1.0-white),vec2(fresh,old),base);
+    }
     if shore.foam_shading.x>0.5 {
         let grain=0.55*prototype_noise(material*2.5)+0.30*prototype_noise(material*7.0)+0.15*prototype_noise(material*17.0);
         let opacity=prototype_opacity(density,depth,grain,0.5*fwidth(grain),shore.foam_material.w);
@@ -280,7 +331,7 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
             let u = shore_history.w;
             return vec4(mix(vec3(0.08), select(vec3(0.95, 0.32, 0.08), vec3(0.05, 0.65, 1.0), u < 0.0), clamp(abs(u) / 2.0, 0.0, 1.0)), 1.0);
         }
-        if shore.options.y > 6.5 {
+        if shore.options.y > 6.5 && shore.options.y < 8.5 {
             let diagnostic=sample_shore_extra(input.world.xz).xy;
             var value=diagnostic.y;
             if shore.options.y<7.5 { value=diagnostic.x/max(shore.foam_front.x,0.000001); }
@@ -342,7 +393,7 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     // World coordinates prevent repeated shoreline patterns on the 3x3 tiles.
     var detail = foam_detail(input.grid);
     var foam = camera.misc.x * smoothstep(0.015, 0.25, foam_data.x) * (0.55 + 0.45 * smoothstep(0.15, 0.75, detail));
-    if shore_active(shore) && shore.foam_material.x<0.5 && shore.foam_shading.x<0.5 {
+    if shore_active(shore) && shore.foam_material.x<0.5 && shore.foam_shading.x<0.5 && shore.foam_lifetime.x<0.5 {
         let texture_motion=sample_shore_texture(input.world.xz);
         let material_a=input.world.xz-texture_motion.offsets.xy;
         let material_b=input.world.xz-texture_motion.offsets.zw;
@@ -359,12 +410,13 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     }
     let foam_normal = shore_detail_normal(normalize(input.foam_normal), input.grid, input.world, local_depth, detail_footprint);
     let foam_color = shore.water_foam_color.rgb * (0.65 + 0.35 * max(dot(foam_normal, camera.sun.xyz), 0.0));
-    if shore_active(shore) && (shore.foam_material.x>0.5 || shore.foam_shading.x>0.5) {
+    if shore_active(shore) && (shore.foam_material.x>0.5 || shore.foam_shading.x>0.5 || shore.foam_lifetime.x>0.5) {
         // Each phase is thresholded and shaded before cross-fading. Blending
         // raw Soft/Height first would open/close unrelated holes at handoff.
         let motion=sample_shore_texture(input.world.xz);
-        let a=foam_material_phase(input.world.xz-motion.offsets.xy,input.world,foam_normal,view,shore_history.x,local_depth);
-        let b=foam_material_phase(input.world.xz-motion.offsets.zw,input.world,foam_normal,view,shore_history.x,local_depth);
+        let species=sample_shore_species(input.world.xz);
+        let a=foam_material_phase(input.world.xz-motion.offsets.xy,input.world,foam_normal,view,shore_history.x,species,local_depth);
+        let b=foam_material_phase(input.world.xz-motion.offsets.zw,input.world,foam_normal,view,shore_history.x,species,local_depth);
         let opacity=mix(b.opacity,a.opacity,motion.blend)*camera.misc.x;
         let contribution=mix(b.premultiplied,a.premultiplied,motion.blend)*camera.misc.x;
         // Offshore history retains its existing material.
@@ -388,9 +440,14 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     }
     if shore_active(shore) && shore.options.y > 5.5 {
         // No texture, lighting or FFT foam in density debug colors.
-        let presence=smoothstep(0.0,0.01,shore_history.x);
+        var amount=shore_history.x;
+        if shore.options.y>8.5 {
+            let species=sample_shore_species(input.world.xz);
+            amount=select(species.x,species.y,shore.options.y>9.5);
+        }
+        let presence=smoothstep(0.0,0.01,amount);
         color=mix(mix(medium.background+medium.scattering,reflected,fresnel),
-            foam_density_color(shore_history.x,shore),presence);
+            foam_density_color(amount,shore),presence);
     }
     return vec4(color, 1.0);
 }

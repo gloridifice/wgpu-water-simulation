@@ -13,6 +13,8 @@ pub fn verify_terrain(gpu: &Gpu) -> Result<(), super::gpu::Error> {
 
 #[path = "collider_verify.rs"]
 mod collider_verify;
+#[path = "foam_dual_verify.rs"]
+mod foam_dual_verify;
 #[path = "foam_height_verify.rs"]
 mod foam_height_verify;
 #[path = "foam_material_verify.rs"]
@@ -38,7 +40,7 @@ pub const FOAM_MATERIAL_VIEWS: [&str; 6] = [
     "不透明度（黑透／白实）",
     "输运坐标网格",
 ];
-pub const VIEWS: [(u32, &str); 8] = [
+pub const VIEWS: [(u32, &str); 10] = [
     (0, "正常着色"),
     (1, "水深"),
     (2, "水流方向"),
@@ -47,6 +49,8 @@ pub const VIEWS: [(u32, &str); 8] = [
     (6, "泡沫密度（低绿／高红）"),
     (7, "前沿实际生成率（最近子步）"),
     (8, "压缩脊线发射权重"),
+    (9, "新鲜白沫 N 密度"),
+    (10, "水面残余 R 密度"),
 ];
 
 fn deserialize_view<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
@@ -76,6 +80,10 @@ pub struct ShoreConfig {
     pub foam_material_view: u32,
     pub foam_prototype: bool,
     pub foam_texture_period: f32,
+    pub foam_dual_phase: bool,
+    pub foam_fresh_half_life: f32,
+    pub foam_residual_half_life: f32,
+    pub foam_conversion: f32,
     pub breaking_depth: f32,
     pub generation: f32,
     pub foam_generation_threshold: f32,
@@ -127,6 +135,10 @@ impl Default for ShoreConfig {
             foam_material_view: 0,
             foam_prototype: false,
             foam_texture_period: 2.0,
+            foam_dual_phase: false,
+            foam_fresh_half_life: 1.4,
+            foam_residual_half_life: 9.0,
+            foam_conversion: 0.65,
             breaking_depth: 2.0,
             generation: 4.0,
             foam_generation_threshold: 0.25,
@@ -219,6 +231,19 @@ impl ShoreConfig {
                 0.0,
                 1.0,
             ),
+            (
+                "fresh foam half-life (s)",
+                self.foam_fresh_half_life,
+                0.1,
+                60.0,
+            ),
+            (
+                "residual foam half-life (s)",
+                self.foam_residual_half_life,
+                0.1,
+                120.0,
+            ),
+            ("fresh to residual fraction", self.foam_conversion, 0.0, 1.0),
             ("shore foam decay", self.decay, 0.0, 4.0),
             ("foam follow multiplier", self.foam_follow, 0.0, 1.0),
             ("foam response time", self.foam_response_time, 0.0, 20.0),
@@ -333,6 +358,7 @@ pub struct ShoreUniform {
     pub water_foam_color: [f32; 4],
     pub foam_material: [f32; 4],
     pub foam_shading: [f32; 4],
+    pub foam_lifetime: [f32; 4], // dual mode, fresh/residual exit rates /s, conversion fraction
     pub options: [f32; 4],
     pub collider_meta: [f32; 4],
     pub model: [f32; 4], // enabled, minimum bed, fallback bed, sponge width
@@ -774,6 +800,12 @@ impl Shore {
                 c.foam_material_view as f32,
                 c.foam_texture_period,
             ],
+            foam_lifetime: [
+                f32::from(c.foam_dual_phase),
+                std::f32::consts::LN_2 / c.foam_fresh_half_life,
+                std::f32::consts::LN_2 / c.foam_residual_half_life,
+                c.foam_conversion,
+            ],
             options: [c.generation, c.view as f32, self.resolution as f32, 0.0],
             collider_meta: [collider_count as f32, 0.0, 0.0, 0.0],
             model: [
@@ -789,6 +821,7 @@ impl Shore {
         };
         let changed = self.last.is_none_or(|old| {
             old.solver[0] != s.solver[0]
+                || old.foam_lifetime[0] != s.foam_lifetime[0]
                 || old.solver[2..] != s.solver[2..]
                 || old.filter != s.filter
                 || old.terrain != s.terrain
@@ -1446,6 +1479,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     foam_height_verify::verify(gpu)?;
     foam_momentum_verify::verify(gpu)?;
     foam_ridge_verify::verify(gpu)?;
+    foam_dual_verify::verify(gpu)?;
     verify_inlet(gpu)?;
     verify_fft_initialization(gpu)?;
     verify_wave_accuracy(gpu)?;
@@ -2815,7 +2849,19 @@ mod tests {
                 ..Default::default()
             },
             ShoreConfig {
-                view: 9,
+                foam_fresh_half_life: f32::NAN,
+                ..Default::default()
+            },
+            ShoreConfig {
+                foam_residual_half_life: f32::INFINITY,
+                ..Default::default()
+            },
+            ShoreConfig {
+                foam_conversion: f32::NAN,
+                ..Default::default()
+            },
+            ShoreConfig {
+                view: 11,
                 ..Default::default()
             },
         ] {

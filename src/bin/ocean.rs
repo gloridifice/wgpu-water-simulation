@@ -35,7 +35,7 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --swe-sponge M   Model-scene open-boundary relaxation width in meters
   --swe-open-edges A,B,C,D  -X,+X,-Z,+Z; each 0=wall or 1=FFT open
   --hide-swe-box   Hide model-scene domain wireframe
-  --shore-view N  0=shaded, 1=depth, 2=flow, 3=foam, 4=wetness, 6=density, 7=source rate, 8=front weight
+  --shore-view N  0=shaded, 1=depth, 2=flow, 3=foam, 4=wetness, 6=density, 7=source rate, 8=front weight, 9=fresh N, 10=residual R
   --swe-filter-cutoff M    Reject inlet wavelengths <= M (0..512, default: 12)
   --swe-filter-transition M  Transition width in meters (0..512, default: 12)
   --water-foam-color R,G,B    Water foam linear RGB (each 0..1)
@@ -59,6 +59,11 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --foam-view N    Snapshot: 0=water, 1=Jacobian, 2=foam coverage
   --foam-texture N Nearshore: 0=legacy, 1=Shorewaves NSH, 2=Crest foam, 3=Crest Foam2
   --foam-transport-order N  Foam spatial flux: 1=baseline (default), 2=MUSCL (requires --swe-order 2)
+  --foam-dual-phase Experimental fresh N / residual R, SWE-flow SL transport (default: off)
+  --no-foam-dual-phase Restore conservative single-density foam (resets SWE history)
+  --foam-fresh-half-life S Fresh exit half-life, includes conversion (0.1..60 s; default: 1.4)
+  --foam-residual-half-life S Residual half-life (0.1..120 s; default: 9)
+  --foam-conversion N Fresh exit fraction transferred to residual (0..1; default: 0.65)
   --foam-prototype Use advected multiscale noise pores (appearance only; default: off)
   --no-foam-prototype Restore saved texture material
   --foam-texture-period S Coordinate reset period: 0=continuous, 0.25..60 s (default: 2)
@@ -182,6 +187,11 @@ fn run() -> Result<(), Error> {
             "--verify-terrain" => verify_terrain = true,
             "--snapshot" => path = Some(value(&mut args, &arg)?),
             "--foam-view" => foam_view = Some(value(&mut args, &arg)?),
+            "--foam-dual-phase" => optics.shore.foam_dual_phase = true,
+            "--no-foam-dual-phase" => optics.shore.foam_dual_phase = false,
+            "--foam-fresh-half-life" => optics.shore.foam_fresh_half_life = value(&mut args, &arg)?,
+            "--foam-residual-half-life" => optics.shore.foam_residual_half_life = value(&mut args, &arg)?,
+            "--foam-conversion" => optics.shore.foam_conversion = value(&mut args, &arg)?,
             "--foam-prototype" => optics.shore.foam_prototype = true,
             "--no-foam-prototype" => optics.shore.foam_prototype = false,
             "--foam-texture-period" => optics.shore.foam_texture_period = value(&mut args, &arg)?,

@@ -654,23 +654,31 @@ parameter(ui, "水上泡沫", help("水上泡沫"), |ui| ui.color_edit_button_rg
 
 
                             ui.separator();
+                            ui.label(egui::RichText::new("新鲜白沫与水面残余").strong());
+                            parameter_table(ui, "foam lifetime table", |ui| {
+                                parameter(ui, "双浓度实验", "默认关闭。开启后新鲜 N 与残余 R 共用 SWE 水流做半拉格朗日输运，并共同压缩／稀释；不再使用惯性、拖曳或守恒泡沫通量。所有源只加入 N，R 仅在水面保留。启用专用白块／细丝外观，覆盖旧材质选择。切换会重置近岸水体、泡沫与湿沙，保存配置。", |ui| ui.checkbox(&mut shore.foam_dual_phase, ""));
+                                parameter(ui, "新鲜半衰期（秒）", "模拟秒，0.1～60，默认 1.4。N 的总退出半衰期，已包含转成 R 的减少，不重复衰减。双浓度模式下实时生效并保存，不清空历史。", |ui| ui.add_enabled(shore.foam_dual_phase, egui::Slider::new(&mut shore.foam_fresh_half_life, 0.1..=60.0).logarithmic(true)));
+                                parameter(ui, "残余半衰期（秒）", "模拟秒，0.1～120，默认 9。R 独立指数衰减，新转入的 R 也立即参与衰减。双浓度模式下实时生效并保存，不清空历史。", |ui| ui.add_enabled(shore.foam_dual_phase, egui::Slider::new(&mut shore.foam_residual_half_life, 0.1..=120.0).logarithmic(true)));
+                                parameter(ui, "退出转残余比例", "无量纲，0～1，默认 0.65。N 退出量的 65% 转为 R，其余直接消失；0 不转化，1 全转化。局部转化与衰减用联合解析解。双浓度模式下实时生效并保存，不清空历史。", |ui| ui.add_enabled(shore.foam_dual_phase, egui::Slider::new(&mut shore.foam_conversion, 0.0..=1.0)));
+                            });
+                            ui.separator();
                             ui.label(egui::RichText::new("泡沫纹理与材质").strong());
                             parameter_table(ui, "foam material table", |ui| {
-                                parameter(ui, "原型孔洞外观", "默认关闭。以输运坐标采样三尺度噪声，密度控制孔洞破裂；覆盖旧纹理选择，不改生成、输送、拖曳和衰减。固定空间尺度与 HTML 原型一致，无额外微法线。实时生效并保存，不重置。", |ui| ui.checkbox(&mut shore.foam_prototype, ""));
+                                parameter(ui, "原型孔洞外观", "默认关闭。以输运坐标采样三尺度噪声，密度控制孔洞破裂；覆盖旧纹理选择，不改生成、输送、拖曳和衰减。固定空间尺度与 HTML 原型一致，无额外微法线。实时生效并保存，不重置。", |ui| ui.add_enabled(!shore.foam_dual_phase, egui::Checkbox::new(&mut shore.foam_prototype, "")));
                                 parameter(ui, "坐标重置周期（秒）", "模拟时间，默认 2 秒，可选 0 或 0.25～60 秒。越长保留越多拉伸；0 为持续形变、不重置，长期可能失真。只重置不可见的坐标层，不清除泡沫；实时保存，修改周期可能改变相位混合，严格比较请重置模拟。", |ui| ui.add(egui::Slider::new(&mut shore.foam_texture_period,0.0..=60.0).step_by(0.25)));
                                 parameter(ui, "纹理来源", "0 为原灰度效果；其余为线性 NSH：法线 XY、Soft、Height。三张图使用同一密度与双相位运动，可在暂停时比较。实时生效并保存，不重置模拟；只改变近岸水上泡沫。", |ui| {
                                     let names=super::shore::FOAM_TEXTURE_NAMES;
-                                    egui::ComboBox::from_id_salt("foam texture source").width(ui.available_width()).selected_text(names[shore.foam_texture as usize]).show_ui(ui, |ui| {
+                                    ui.add_enabled_ui(!shore.foam_dual_phase, |ui| { egui::ComboBox::from_id_salt("foam texture source").width(ui.available_width()).selected_text(names[shore.foam_texture as usize]).show_ui(ui, |ui| {
                                         for (index,name) in names.iter().enumerate() { ui.selectable_value(&mut shore.foam_texture,index as u32,*name); }
-                                    });
+                                    }); });
                                 });
-                                parameter(ui, "纹理尺寸（米）", "粗层每块覆盖的世界长度，0.25～64 米，默认 12 米；细层固定为其 1/10。只作用于 NSH 路径。实时生效并保存，不重置密度或位移历史。", |ui| ui.add_enabled(shore.foam_texture>0 && !shore.foam_prototype,egui::Slider::new(&mut shore.foam_texture_size,0.25..=64.0).logarithmic(true)));
-                                parameter(ui, "泡沫微法线强度", "无量纲，0～3，默认 0.65；0 关闭 NSH 细法线，保留密度厚度法线。只改变泡沫光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0 && !shore.foam_prototype,egui::Slider::new(&mut shore.foam_micro_normal,0.0..=3.0)));
-                                parameter(ui, "不透明度密度尺度", "模拟泡沫量／面积，非实测质量单位；范围 0.01～20，默认 2。NSH 不透明度 = 孔隙覆盖率 × (1 − exp(−原始密度／此值))。完整覆盖处，密度等于此值时约 63%，三倍时约 95%；越大越透水，不改变 NSH 孔隙阈值。原型模式则用 1 − exp(−密度／此值) 控制噪声孔洞阈值；取 1/6 对应 HTML 的密度响应。实时生效并保存，不重置或改变模拟密度。", |ui| ui.add_enabled(shore.foam_texture>0 || shore.foam_prototype,egui::Slider::new(&mut shore.foam_opacity_scale,0.01..=20.0).logarithmic(true).max_decimals(3)));
-                                parameter(ui, "泡沫粗糙度", "无量纲，0.15～1，默认 0.85；越高高光越宽。仅作用于 NSH 泡沫的简化光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0 && !shore.foam_prototype,egui::Slider::new(&mut shore.foam_roughness,0.15..=1.0)));
-                                parameter(ui, "材质调试", "显示图案、Height、法线、不透明度或 0.5 米输运坐标网格，含双相位混合。原型模式 Soft 显示噪声，Height 为零；网格独立于泡沫密度便于观察形变。NSH／原型模式显示泡沫且浅水视图为正常着色时启用，不覆盖密度调试。实时生效并保存。", |ui| {
+                                parameter(ui, "纹理尺寸（米）", "粗层每块覆盖的世界长度，0.25～64 米，默认 12 米；细层固定为其 1/10。只作用于 NSH 路径。实时生效并保存，不重置密度或位移历史。", |ui| ui.add_enabled(shore.foam_texture>0 && !shore.foam_prototype && !shore.foam_dual_phase,egui::Slider::new(&mut shore.foam_texture_size,0.25..=64.0).logarithmic(true)));
+                                parameter(ui, "泡沫微法线强度", "无量纲，0～3，默认 0.65；0 关闭 NSH 细法线，保留密度厚度法线。只改变泡沫光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0 && !shore.foam_prototype && !shore.foam_dual_phase,egui::Slider::new(&mut shore.foam_micro_normal,0.0..=3.0)));
+                                parameter(ui, "不透明度密度尺度", "模拟泡沫量／面积，非实测质量单位；范围 0.01～20，默认 2。NSH 不透明度 = 孔隙覆盖率 × (1 − exp(−原始密度／此值))。完整覆盖处，密度等于此值时约 63%，三倍时约 95%；越大越透水，不改变 NSH 孔隙阈值。双浓度模式分别用 N、R 的 1 − exp(−密度／此值) 控制白块与细丝覆盖；原型模式用同一响应控制噪声孔洞阈值；取 1/6 对应 HTML 的密度响应。实时生效并保存，不重置或改变模拟密度。", |ui| ui.add_enabled(shore.foam_texture>0 || shore.foam_prototype || shore.foam_dual_phase,egui::Slider::new(&mut shore.foam_opacity_scale,0.01..=20.0).logarithmic(true).max_decimals(3)));
+                                parameter(ui, "泡沫粗糙度", "无量纲，0.15～1，默认 0.85；越高高光越宽。仅作用于 NSH 泡沫的简化光照，实时生效并保存。", |ui| ui.add_enabled(shore.foam_texture>0 && !shore.foam_prototype && !shore.foam_dual_phase,egui::Slider::new(&mut shore.foam_roughness,0.15..=1.0)));
+                                parameter(ui, "材质调试", "显示图案、Height、法线、不透明度或 0.5 米输运坐标网格，含双相位混合。双浓度模式 Soft／Height 分别显示 N／R 噪声；原型模式 Soft 显示噪声，Height 为零；网格独立于泡沫密度便于观察形变。NSH／原型模式显示泡沫且浅水视图为正常着色时启用，不覆盖密度调试。实时生效并保存。", |ui| {
                                     let names=super::shore::FOAM_MATERIAL_VIEWS;
-                                    ui.add_enabled_ui(shore.foam_texture>0 || shore.foam_prototype, |ui| {
+                                    ui.add_enabled_ui(shore.foam_texture>0 || shore.foam_prototype || shore.foam_dual_phase, |ui| {
                                         egui::ComboBox::from_id_salt("foam material view").width(ui.available_width()).selected_text(names[shore.foam_material_view as usize]).show_ui(ui, |ui| {
                                             for (index,name) in names.iter().enumerate() { ui.selectable_value(&mut shore.foam_material_view,index as u32,*name); }
                                         });
@@ -725,6 +733,7 @@ parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui
                             ui.separator();
 
                             ui.label(egui::RichText::new("泡沫动量与水流拖曳").strong());
+                            ui.add_enabled_ui(!shore.foam_dual_phase, |ui| {
                             parameter_table(ui, "foam motion table", |ui| {
                                 parameter(ui, "泡沫空间输送", "无单位，1 为原一阶通量（默认），2 为受限 MUSCL 重构，减少细丝和孔洞的数值扩散。密度和动量共同守恒输送，不限制密度到 1。仅 SWE 二阶（RK2）启用此选择；SWE 一阶始终使用原通量。改变选择实时生效并保存，不清空历史；不改生成、衰减或材质。", |ui| {
                                     ui.add_enabled_ui(shore.order == 2, |ui| {
@@ -744,6 +753,7 @@ parameter(ui, "FFT → SWE 增益", help("FFT → SWE 增益"), |ui| ui.add(egui
                             });
                             ui.separator();
 
+                            });
                             ui.label(egui::RichText::new("泡沫高度（仅外观）").strong());
                             parameter_table(ui, "foam height table", |ui| {
                                 parameter(ui, "最大高度（米）", "范围 0～1 米，默认 0.05 米；0 关闭高度效果。只根据近岸水上泡沫密度向上移动渲染顶点，不增加水位、水深或动量。泡沫明暗使用抬高后的法线，水体仍使用原水面。实时生效并保存，不重置历史。", |ui| ui.add(egui::Slider::new(&mut shore.foam_height_max, 0.0..=1.0).max_decimals(3)));
@@ -763,7 +773,7 @@ parameter(ui, "FFT 混合水深（米）", help("FFT 混合水深（米）"), |u
                             parameter(ui, "背景生成过渡范围", help("背景生成过渡范围"), |ui| ui.add(
                                 egui::Slider::new(&mut shore.foam_generation_transition, 0.0..=2.0).max_decimals(3),
                             ));
-                            parameter(ui, "水上泡沫衰减（每秒）", help("水上泡沫衰减（每秒）"), |ui| ui.add(
+                            parameter(ui, "水上泡沫衰减（每秒）", "仅旧单浓度路径使用，范围 0～4 /秒；双浓度模式改用两项半衰期，不叠加本衰减。实时生效并保存，不重置历史。", |ui| ui.add_enabled(!shore.foam_dual_phase,
                                 egui::Slider::new(&mut shore.decay, 0.0..=4.0)
                                     ,
                             ));
