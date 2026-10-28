@@ -219,7 +219,7 @@ GPU，每帧：
 
 ### 频谱与时间
 
-`src/ocean/spectrum.rs` 把数组索引转换为波向量 `k = 2π * frequency / patch_length`。数组采用未移位 FFT 顺序：`0,1,...,N/2-1,-N/2,...,-1`。
+`src/ocean/simulation/offshore/spectrum.rs` 把数组索引转换为波向量 `k = 2π * frequency / patch_length`。数组采用未移位 FFT 顺序：`0,1,...,N/2-1,-N/2,...,-1`。
 
 Phillips 波谱控制不同波长和方向的能量；高斯随机数给出复数初始系数。初始化使用 `sqrt(P/2) * (ξr+iξi)`，再乘 `N² * Δk`，其中 `Δk=2π/patch_length`：N² 补偿归一化 IFFT，Δk 来自二维频率单元面积的平方根。取消旧版固定 RMS 波高归一化，避免抵消 A 的作用。A、L 均会真实改变海面。保留短波阻尼和逆风方向 0.07 的权重。零频率和 Nyquist 行列设为零。
 
@@ -237,7 +237,7 @@ H(k,t) = h0(k) * exp(iωt) + conjugate(h0(-k)) * exp(-iωt)
 
 `ifft.wgsl` 使用 radix-2 DIT 蝶形：每个轴的第一级通过位反转读取输入，之后逐级把跨度从 2 扩大到 N。逆变换的旋转因子使用正号，每轴最后一级除以 N。
 
-`gpu.rs` 用两个存储缓冲区交替读写。每一级单独提交一个 compute pass，由 wgpu 负责阶段间的资源同步。各级使用独立、不变的参数缓冲区，防止在一次提交前多次写同一个 uniform 导致所有阶段读到最后一组参数。
+`simulation/offshore/fft.rs` 用两个存储缓冲区交替读写。每一级单独提交一个 compute pass，由 wgpu 负责阶段间的资源同步。各级使用独立、不变的参数缓冲区，防止在一次提交前多次写同一个 uniform 导致所有阶段读到最后一组参数。
 
 128×128 网格每轴 7 级，共 14 个 FFT pass。高度、X/Z 位移和近岸输入的低通水位、X/Z 动量放在同一个缓冲区的六个通道中一起变换。总级数为偶数，最终结果回到初始输出缓冲区，直接供顶点着色器读取，不需要每帧下载到 CPU。
 
@@ -278,18 +278,23 @@ CPU 测试检查随机种子复现、有限数值、零频率、Nyquist 处理�
 ## 文件
 
 ```text
-src/bin/ocean.rs               参数与入口
-src/ocean/spectrum.rs          初始化波谱，独立于窗口与 GPU
-src/ocean/shaders/evolve.wgsl  GPU 时间演化和位移频谱
-src/ocean/shaders/ifft.wgsl    GPU 二维逆 FFT 蝶形
-src/ocean/gpu.rs               缓冲区、计算和绘制管线
-src/ocean/foam.rs              泡沫 GPU 资源、CPU 参考及数值验证
-src/ocean/shaders/foam.wgsl    Jacobian 与局部泡沫历史更新
-src/ocean/shaders/render.wgsl  三维水面、泡沫与天空着色
-src/ocean/gui.rs               egui 参数面板与叠加绘制
-src/ocean/viewer.rs            窗口、相机、交互、离屏 PNG
-src/ocean/verify.rs            独立直接 DFT 与 GPU 验证
+src/bin/ocean.rs                         参数与入口
+src/ocean/camera.rs                      窗口与离屏共用的相机及 GPU 布局
+src/ocean/app/{viewer,snapshot}.rs       窗口调度与离屏 PNG，保留各自调度
+src/ocean/gpu/{context,timer}.rs         设备、回读与异步 GPU 时间戳
+src/ocean/parameters/                    参数定义、默认值与校验
+src/ocean/simulation/offshore/           波谱、FFT、远海泡沫及验证
+src/ocean/simulation/nearshore/          SWE、近岸泡沫、湿润历史及验证
+src/ocean/simulation/spray/              浪花源、粒子及验证
+src/ocean/scene/                         模型几何、地形与碰撞体
+src/ocean/render/                        场景绘制、水体与天空光学、纹理
+src/ocean/ui/                            Dock、参数面板、控件与布局保存
+src/ocean/settings/                      当前会话、命名配置库与保存
+src/ocean/labs/foam_weight_lab/          独立泡沫权重实验
+src/ocean/verify.rs                      真实 GPU 验证总入口
 ```
+
+各领域 WGSL 位于所属模块的 `shaders/`；跨模块使用同一份源文件，不复制。`ocean/mod.rs` 保留 `ocean::shore`、`ocean::viewer` 等旧公开路径，`gpu/mod.rs` 保留 `gpu::{Gpu, Ocean, Renderer, CameraUniform, Error}`，均为重导出而非另一套实现。
 
 基础 FFT 生成周期海面，本身不求解岸边碰撞。沙滩和扫描模型场景叠加局部二维 SWE、泡沫输运及湿润历史，详见相关章节；耦合方向为 FFT → SWE。仍不包含真实翻卷或三维空气卷入，水平位移过大使网格折叠并不等于物理破浪。
 
@@ -428,7 +433,7 @@ cargo run --features ocean --bin ocean -- --verify
 
 CPU 测试包含零距离、零消光、纯衰减、RGB 独立性、源项缩放和数值积分对照。`--verify` 运行共享的生产 WGSL 积分函数，检查 40 组参数下所有 RGB 分量；另用真实海底预绘制+水面绘制管线在两种尺寸（包含 resize）、三种深度、七种调试视图和三个像素位置，与独立解析平面交点计算的光程/颜色逐点比较。
 
-代码：`src/ocean/optics.rs`（参数和参考计算）、`optics.wgsl`（共享积分）、`seabed.rs` / `seabed.wgsl`（海底预绘制）、`optics_verify.rs`（光栅管线验证）。
+代码：`src/ocean/parameters/optics.rs`（参数）、`render/optics.rs`（uniform 与参考计算）、`render/shaders/optics.wgsl`（共享积分）、`render/seabed.rs` / `render/shaders/seabed.wgsl`（海底预绘制）、`render/verification/optics.rs`（光栅管线验证）。后续简写路径均相对于 `src/ocean/`。
 
 
 ## 天光深度查找表与分段解析积分

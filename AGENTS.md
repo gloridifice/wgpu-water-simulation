@@ -17,14 +17,18 @@
 | `crates/tui-2d-prototype/src/{main.rs,pic/,tui/}` | CPU PIC 入口、求解与终端交互 |
 | `crates/tui-2d-prototype/src/{solver.rs,shallow_tui/}` | 一维浅水求解与终端交互 |
 | `src/bin/ocean.rs` | GPU 海洋入口及命令行参数 |
-| `src/ocean/viewer.rs` | 窗口、相机、帧调度与运行状态 |
-| `src/ocean/spectrum.rs`、`gpu.rs`、`shaders/{evolve,ifft}.wgsl` | 波谱、GPU FFT 与演化 |
-| `src/ocean/shore.rs`、`shaders/shore*.wgsl` | SWE、FFT 输入、近岸泡沫及岸边状态读取 |
-| `src/ocean/foam.rs`、`shaders/foam.wgsl` | FFT 海洋泡沫 |
-| `src/ocean/shaders/render.wgsl`、`optics*`、`seabed*`、`skylight*` | 水面、海底与天空光学 |
-| `src/ocean/gui.rs`、`color_editor.rs`、`theme.rs` | Dock 面板、参数控件、颜色编辑与主题 |
-| `src/ocean/settings.rs`、`configuration_panel.rs` | 会话保存、命名配置及配置管理界面 |
-| `src/ocean/verify.rs`、`*_verify.rs`、`gpu_timer.rs` | GPU 验证与计时 |
+| `src/ocean/app/`、`camera.rs` | 窗口、帧调度、快照与共享相机 |
+| `src/ocean/gpu/` | 设备上下文、回读与异步 GPU 计时 |
+| `src/ocean/parameters/` | 参数定义、默认值与校验，不依赖窗口或 GPU 资源 |
+| `src/ocean/simulation/offshore/` | 波谱、GPU FFT、远海泡沫及所属着色器 |
+| `src/ocean/simulation/nearshore/` | SWE、FFT 输入、近岸泡沫、状态读取及验证 |
+| `src/ocean/simulation/spray/` | 近岸浪花源、粒子及所属着色器 |
+| `src/ocean/scene/` | 模型几何、地形高度场与碰撞体 |
+| `src/ocean/render/` | 水面、海底、模型、天空光学、纹理及所属着色器 |
+| `src/ocean/ui/` | Dock、参数控件、面板、颜色编辑、主题与布局保存 |
+| `src/ocean/settings/`、`ui/panels/configuration.rs` | 会话、命名配置库、原子保存及配置管理界面 |
+| `src/ocean/verify.rs`、各领域的 `verification/` 或 `verification.rs` | 真实 GPU 验证总入口与所属行为检查 |
+| `src/ocean/labs/foam_weight_lab/` | 独立泡沫权重实验 |
 
 ## 常用命令与验证
 
@@ -64,6 +68,7 @@ target\release\ocean.exe --beach --no-settings --frames 600
 ## 模拟与 GPU 约定
 
 - WGSL 文件放在所属模块的 `shaders/` 子目录，使用相对源文件的 `include_str!` / `include_bytes!` 编译期嵌入；跨模块复用时引用实际所属模块，不复制文件。
+- 海洋内部使用职责路径；`ocean/mod.rs` 和 `gpu/mod.rs` 中的旧路径重导出仅用于兼容现有库调用，不把它们当作内部依赖入口。
 - 保留远海 FFT 与近岸 SWE 的分工；当前耦合方向为 FFT → SWE。不要无意中重新引入独立近岸造波器。
 - FFT 输入涉及水位和匹配动量；调整过滤、增益或初始化时，同时检查两者，避免重复应用增益。
 - 保留一阶、二阶 SWE 切换。修改求解器时检查静水平衡、干湿边界、稳定步长及非负水深。
@@ -91,7 +96,7 @@ target\release\ocean.exe --beach --no-settings --frames 600
 - 新增参数检查完整链路：默认值、合法范围、有限数校验、序列化兼容、面板、CPU → GPU 传递、WGSL 使用点，以及必要的重置或重建条件。
 - 加字段时让旧配置能够使用默认值加载；不要仅因旧文件缺少新字段就丢弃整份配置。
 - 分清当前工作状态自动保存、命名配置手动保存和 Dock 布局保存。它们不是同一功能；不能仅保存模拟参数就声称保存了面板布局。
-- 当前参数保存入口在 `settings.rs`，默认路径由 `default_path()` 决定。不要硬编码开发者机器上的绝对路径。
+- 当前参数保存入口在 `settings/store.rs`，默认路径由 `default_path()` 决定。不要硬编码开发者机器上的绝对路径。
 - 命名配置通过配置库管理。保持默认配置快照、另存、覆盖与自动保存的既有语义，避免自动保存意外改写命名预设。
 - 排查“保存后恢复不一致”时，检查读取路径、保存错误、CLI 覆盖和 `--no-settings`。尤其注意当前 `--beach` 会应用场景预设并覆盖部分已保存状态。
 - 自动验证和预览尽量使用 `--no-settings` 或专用测试文件，不覆盖用户正在调试的个人配置。

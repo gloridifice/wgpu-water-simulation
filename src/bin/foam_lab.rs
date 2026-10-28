@@ -509,8 +509,8 @@ fn transport_pipeline(gpu: &Gpu) -> wgpu::ComputePipeline {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}",
-                    include_str!("../ocean/shaders/shore.wgsl"),
-                    include_str!("../ocean/shaders/shore_compute.wgsl"),
+                    include_str!("../ocean/simulation/nearshore/shaders/shore.wgsl"),
+                    include_str!("../ocean/simulation/nearshore/shaders/shore_compute.wgsl"),
                     include_str!("foam_lab/shaders/transport.wgsl")
                 )
                 .into(),
@@ -550,7 +550,7 @@ async fn run(c: Config) -> Result<(), Error> {
             "flow_follow":1,"drag_response_seconds":0,"density_peak_initial":1,
             "reference_subsamples_per_cell_axis":SAMPLES,"image_extent_m":[-16,-16,32,32],
             "image_linear_density_range":[0,1],"image_size":IMAGE_SIZE,
-            "production_shaders_fnv1a":format!("{:016x}",include_bytes!("../ocean/shaders/shore.wgsl").iter().chain(include_bytes!("../ocean/shaders/shore_compute.wgsl")).fold(0xcbf29ce484222325u64,|h,&b|(h^u64::from(b)).wrapping_mul(0x100000001b3))),
+            "production_shaders_fnv1a":format!("{:016x}",include_bytes!("../ocean/simulation/nearshore/shaders/shore.wgsl").iter().chain(include_bytes!("../ocean/simulation/nearshore/shaders/shore_compute.wgsl")).fold(0xcbf29ce484222325u64,|h,&b|(h^u64::from(b)).wrapping_mul(0x100000001b3))),
             "limitations":"Prescribed analytic flow, no SWE evolution or foam birth. Time and spatial orders are selected independently; common CFL=0.2. PNGs are linear density plots, not NSH or window screenshots. Finite-volume references use 8x8 quadrature."
         }))?,
     )?;
