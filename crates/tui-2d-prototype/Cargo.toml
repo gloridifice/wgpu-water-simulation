@@ -1,0 +1,15 @@
+[package]
+name = "tui-2d-prototype"
+version = "0.1.0"
+edition = "2024"
+default-run = "water-simulation"
+description = "CPU 2D PIC and 1D shallow-water terminal demos"
+publish = false
+
+[dependencies]
+crossterm = "0.29.0"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+
+[[bin]]
+name = "water-simulation"
+path = "src/main.rs"

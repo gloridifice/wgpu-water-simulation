@@ -5,7 +5,7 @@ use std::{
     thread,
     time::Duration,
 };
-use water_simulation::pic::Simulation;
+use tui_2d_prototype::pic::Simulation;
 
 pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let mut sim = Simulation::new(options.pic_config)?;

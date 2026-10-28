@@ -126,4 +126,4 @@ fn reset_current(layouts: &mut WorkspaceLayouts);
 - 执行阶段：对切换不改变共享参数、布局存取隔离／损坏恢复、隐藏后位置恢复做有意义的状态／配置测试。编写测试前加载 `test-audit` skill，不添加仅断言标题文字和函数存在的测试。
 - 实际 GUI 验证目标规范 A1～A8，包括切换与重启、草稿跨工作区、跨组添加、关闭／恢复、窄窗口与缩放；用专用配置或 `--no-settings`，不覆盖个人配置。用窗口截图验证 UI，而不是仅用 `--snapshot`。
 - 根据改动执行 fmt、clippy、ocean 库测试；若新增依赖触及 feature 边界，验证 `--no-default-features` 的 CPU 构建和测试。纯 UI 工作不要求重复完整 GPU 物理验证；任何意外 shader／绑定变更应移出本变更或补相关 GPU 验证。
-- 实现交付后更新 [docs/ocean.md](../../../../../docs/ocean.md)、[当前架构](../../../../architecture.md)，在当前 specs 目录新增 workspace-ui.md 界面合约，修正 [AGENTS.md](../../../../../AGENTS.md) 的两侧布局约定。创建阶段不更新这些当前事实文档。
+- 实现交付后更新 [doco/guides/ocean.md](../../../../guides/ocean.md)、[当前架构](../../../../architecture.md)，在当前 specs 目录新增 workspace-ui.md 界面合约，修正 [AGENTS.md](../../../../../AGENTS.md) 的两侧布局约定。创建阶段不更新这些当前事实文档。

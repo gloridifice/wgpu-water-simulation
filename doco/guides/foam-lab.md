@@ -57,7 +57,7 @@ cargo run --release --features ocean --bin foam-lab -- --benchmark --resolutions
 
 ## 使用的实际代码
 
-`src/bin/foam_lab.rs` 将 `src/ocean/shore.wgsl`、`shore_compute.wgsl` 与诊断入口 `src/bin/foam_lab/transport.wgsl` 一起编译。
+`src/bin/foam_lab.rs` 将 `src/ocean/shaders/shore.wgsl`、`shore_compute.wgsl` 与诊断入口 `src/bin/foam_lab/shaders/transport.wgsl` 按原有顺序拼接，通过 `include_str!` 编译期嵌入；生产着色器的内容指纹同样读取新路径。
 
 诊断入口调用生产的 `transport_foam`、`foam_sources` 和 `advance_foam_motion`；密度与动量使用生产通量，纹理位移也随模拟推进。RK2 的预测／校正由诊断入口组织。水深和水流保持规定值，**不执行完整 SWE、FFT 输入或近岸造泡**。没有复制另一套 CPU 输送算法。空间阶数使用与正常海洋相同的 uniform 控制；正常海洋中二阶泡沫输送需搭配二阶 SWE，默认仍为一阶。
 

@@ -14,7 +14,7 @@ use std::{
     io,
     time::{Duration, Instant},
 };
-use water_simulation::pic::Config;
+use tui_2d_prototype::pic::Config;
 
 pub fn run(
     config: Config,

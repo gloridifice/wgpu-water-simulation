@@ -122,7 +122,7 @@ impl ModelRenderer {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("unlit coast scan"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("model_render.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/model_render.wgsl").into()),
         });
         let attributes = wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3,2=>Float32x2];
         let buffers = [wgpu::VertexBufferLayout {

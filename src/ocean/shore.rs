@@ -434,8 +434,8 @@ impl Shore {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}",
-                    include_str!("shore.wgsl"),
-                    include_str!("shore_compute.wgsl")
+                    include_str!("shaders/shore.wgsl"),
+                    include_str!("shaders/shore_compute.wgsl")
                 )
                 .into(),
             ),
@@ -1254,8 +1254,8 @@ fn verify_inlet(gpu: &Gpu) -> Result<(), super::gpu::Error> {
         .write_buffer(&shore.uniform, 0, bytemuck::bytes_of(&params));
     let source = format!(
         "{}\n{}\n{}",
-        include_str!("shore.wgsl"),
-        include_str!("shore_compute.wgsl"),
+        include_str!("shaders/shore.wgsl"),
+        include_str!("shaders/shore_compute.wgsl"),
         r#"
 @compute @workgroup_size(8,8)
 fn inlet_probe(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -1765,8 +1765,8 @@ fn verify_foam_generation_controls(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     let shore = Shore::new(gpu, &ocean);
     let source = format!(
         "{}\n{}\n{}",
-        include_str!("shore.wgsl"),
-        include_str!("shore_compute.wgsl"),
+        include_str!("shaders/shore.wgsl"),
+        include_str!("shaders/shore_compute.wgsl"),
         r#"
 @compute @workgroup_size(8)
 fn generation_probe(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -1859,7 +1859,7 @@ fn verify_front_foam(gpu: &Gpu) -> Result<(), super::gpu::Error> {
     let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("front foam probe"),
         source: wgpu::ShaderSource::Wgsl(format!("{}\n{}\n{}",
-            include_str!("shore.wgsl"), include_str!("shore_compute.wgsl"),
+            include_str!("shaders/shore.wgsl"), include_str!("shaders/shore_compute.wgsl"),
             "@compute @workgroup_size(1) fn front_probe() { new_shore[0]=vec4(foam_front_weight(vec2<i32>(i32(shore.visual.y),96)),0.0,0.0,0.0); }").into()),
     });
     let pipeline = gpu
@@ -2167,8 +2167,8 @@ fn verify_foam_motion(gpu: &Gpu) -> Result<(), super::gpu::Error> {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}",
-                    include_str!("shore.wgsl"),
-                    include_str!("shore_compute.wgsl"),
+                    include_str!("shaders/shore.wgsl"),
+                    include_str!("shaders/shore_compute.wgsl"),
                     r#"
 @compute @workgroup_size(8,8)
 fn motion_probe(@builtin(global_invocation_id) id: vec3<u32>) {

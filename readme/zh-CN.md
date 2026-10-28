@@ -34,7 +34,7 @@ cargo run --release
 cargo run --release -- --help
 ```
 
-恢复已保存设置时不要指定场景预设：`--beach` 和 `--model` 会覆盖部分场景设置。操作与配置详见 [Ocean 使用说明](../docs/ocean.md)。
+恢复已保存设置时不要指定场景预设：`--beach` 和 `--model` 会覆盖部分场景设置。操作与配置详见 [Ocean 使用说明](../doco/guides/ocean.md)。
 
 ### 更新
 
@@ -52,7 +52,7 @@ cargo run --release
 - 独立的远海泡沫、近岸泡沫输送、沙滩湿润状态及可选 GPU 浪花粒子。
 - 水体、海底与天空渲染，支持扫描海岸地形。
 - 可停靠的 egui 参数面板、会话保存与命名配置。
-- CPU 二维 PIC 和一维浅水终端演示，无需启用 `ocean` feature。
+- CPU 二维 PIC 和一维浅水终端演示，独立位于 `crates/tui-2d-prototype`，不依赖 GPU。
 - 独立的[三维液体模拟库](../crates/tall-cell-fluid/README.md)，附带自己的演示程序，尚未接入 Ocean。
 
 ## 从源码构建
@@ -66,10 +66,10 @@ cargo build --release --bin ocean
 运行 CPU PIC 演示，不编译 GPU 依赖：
 
 ```sh
-cargo run --release --no-default-features --bin water-simulation
+cargo run --release -p tui-2d-prototype
 ```
 
-终端操作与其他模式见 [PIC 说明](../docs/pic.md)和[一维浅水说明](../docs/shallow.md)。
+终端操作与其他模式见 [PIC 说明](../doco/guides/pic.md)和[一维浅水说明](../doco/guides/shallow.md)。
 
 ## 许可证
 
@@ -79,10 +79,10 @@ cargo run --release --no-default-features --bin water-simulation
 
 详细文档主要使用中文。
 
-- [Ocean 使用与 GPU 验证](../docs/ocean.md)
-- [CPU PIC 模拟](../docs/pic.md)
-- [一维浅水模拟](../docs/shallow.md)
-- [泡沫诊断与基准测试](../docs/foam-lab.md)
+- [Ocean 使用与 GPU 验证](../doco/guides/ocean.md)
+- [CPU PIC 模拟](../doco/guides/pic.md)
+- [一维浅水模拟](../doco/guides/shallow.md)
+- [泡沫诊断与基准测试](../doco/guides/foam-lab.md)
 - [保存设置与实验配置](../configs/README.md)
 - [当前架构](../doco/architecture.md)
 - [仓库开发约定](../AGENTS.md)

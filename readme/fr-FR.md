@@ -34,7 +34,7 @@ Cette commande lance GPU Ocean. Les ressources sont incluses dans le dépôt ; l
 cargo run --release -- --help
 ```
 
-Pour restaurer les réglages enregistrés, ne précisez pas de préréglage de scène : `--beach` et `--model` remplacent une partie de ces réglages. Consultez le [guide Ocean](../docs/ocean.md) pour les commandes et la configuration.
+Pour restaurer les réglages enregistrés, ne précisez pas de préréglage de scène : `--beach` et `--model` remplacent une partie de ces réglages. Consultez le [guide Ocean](../doco/guides/ocean.md) pour les commandes et la configuration.
 
 ### Mise à jour
 
@@ -52,7 +52,7 @@ cargo run --release
 - Gestion distincte de l’écume au large, du transport de l’écume côtière, de l’humidité du sable et des particules d’embruns GPU optionnelles.
 - Rendu de l’eau, du fond marin et du ciel, avec prise en charge de terrains côtiers numérisés.
 - Panneaux de paramètres egui ancrables, sessions enregistrées et configurations nommées.
-- Démonstrations CPU dans le terminal : PIC 2D et eau peu profonde 1D, sans la feature `ocean`.
+- Démonstrations CPU dans le terminal : PIC 2D et eau peu profonde 1D, dans `crates/tui-2d-prototype`, sans dépendances GPU.
 - Une [bibliothèque de simulation de liquide 3D](../crates/tall-cell-fluid/README.md) distincte, avec sa propre démonstration ; non intégrée à Ocean.
 
 ## Compilation depuis les sources
@@ -66,10 +66,10 @@ cargo build --release --bin ocean
 Pour lancer la démonstration CPU PIC sans compiler les dépendances GPU :
 
 ```sh
-cargo run --release --no-default-features --bin water-simulation
+cargo run --release -p tui-2d-prototype
 ```
 
-Consultez le [guide PIC](../docs/pic.md) et le [guide de simulation en eau peu profonde 1D](../docs/shallow.md) pour les commandes du terminal et les autres modes.
+Consultez le [guide PIC](../doco/guides/pic.md) et le [guide de simulation en eau peu profonde 1D](../doco/guides/shallow.md) pour les commandes du terminal et les autres modes.
 
 ## Licence
 
@@ -79,10 +79,10 @@ Aucune licence générale du projet n’est actuellement fournie. Les ressources
 
 Les guides détaillés sont principalement en chinois.
 
-- [Utilisation d’Ocean et vérification GPU](../docs/ocean.md)
-- [Simulation CPU PIC](../docs/pic.md)
-- [Simulation en eau peu profonde 1D](../docs/shallow.md)
-- [Diagnostics et benchmarks de l’écume](../docs/foam-lab.md)
+- [Utilisation d’Ocean et vérification GPU](../doco/guides/ocean.md)
+- [Simulation CPU PIC](../doco/guides/pic.md)
+- [Simulation en eau peu profonde 1D](../doco/guides/shallow.md)
+- [Diagnostics et benchmarks de l’écume](../doco/guides/foam-lab.md)
 - [Réglages enregistrés et expériences](../configs/README.md)
 - [Architecture actuelle](../doco/architecture.md)
 - [Consignes de développement du dépôt](../AGENTS.md)

@@ -1,12 +1,14 @@
+[workspace]
+members = [".", "crates/tui-2d-prototype"]
+default-members = ["."]
+exclude = ["crates/tall-cell-fluid"]
+resolver = "3"
+
 [package]
 name = "water-simulation"
 version = "0.1.0"
 edition = "2024"
 default-run = "ocean"
-
-[dependencies]
-crossterm = "0.29.0"
-ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 
 [features]
 default = ["ocean"]

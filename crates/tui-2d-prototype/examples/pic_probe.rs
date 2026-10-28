@@ -1,9 +1,9 @@
-//! 不依赖终端的 PIC 示例：cargo run --release --example pic_probe -- 8 [frames.csv]
+//! 不依赖终端的 PIC 示例：cargo run --release -p tui-2d-prototype --example pic_probe -- 8 [frames.csv]
 use std::{
     fs::File,
     io::{BufWriter, Write},
 };
-use water_simulation::pic::{Config, Simulation};
+use tui_2d_prototype::pic::{Config, Simulation};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();

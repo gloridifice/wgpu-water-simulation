@@ -1,5 +1,5 @@
 use std::time::Duration;
-use water_simulation::pic::{Config, Simulation};
+use tui_2d_prototype::pic::{Config, Simulation};
 
 pub struct App {
     pub sim: Simulation,

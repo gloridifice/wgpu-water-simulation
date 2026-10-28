@@ -147,7 +147,7 @@ impl Ocean {
         let scratch = make_field("FFT ping pong");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("spectral evolution"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("evolve.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/evolve.wgsl").into()),
         });
         let evolve = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("evolve"),
@@ -175,7 +175,7 @@ impl Ocean {
         let evolve_bind = bind(device, &evolve, &[&initial, &fields, &time_buffer]);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("radix 2 inverse FFT"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("ifft.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/ifft.wgsl").into()),
         });
         let fft = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("IFFT butterfly"),
@@ -537,12 +537,12 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}\n{}\n{}\n{}",
-                    include_str!("optics.wgsl"),
-                    include_str!("sky.wgsl"),
-                    include_str!("skylight.wgsl"),
-                    include_str!("render.wgsl"),
-                    include_str!("shore.wgsl"),
-                    include_str!("shore_read.wgsl")
+                    include_str!("shaders/optics.wgsl"),
+                    include_str!("shaders/sky.wgsl"),
+                    include_str!("shaders/skylight.wgsl"),
+                    include_str!("shaders/render.wgsl"),
+                    include_str!("shaders/shore.wgsl"),
+                    include_str!("shaders/shore_read.wgsl")
                 )
                 .into(),
             ),

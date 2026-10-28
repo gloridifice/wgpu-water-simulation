@@ -152,7 +152,7 @@ impl Renderer {
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("tall cell surface preview"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("render.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/render.wgsl").into()),
         });
         let pipelines = make_pipelines(&device, &pipeline_layout, &shader, config.format);
         let snapshot_pipelines = make_pipelines(

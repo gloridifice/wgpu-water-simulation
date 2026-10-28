@@ -1,4 +1,4 @@
-use water_simulation::solver::{Config, Simulation};
+use tui_2d_prototype::solver::{Config, Simulation};
 
 #[test]
 fn disturbances_conserve_mass_at_the_center_and_walls_and_then_propagate() {

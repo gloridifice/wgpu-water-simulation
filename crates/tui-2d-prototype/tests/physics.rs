@@ -1,4 +1,4 @@
-use water_simulation::{Cell, Config, Simulation, rusanov_flux};
+use tui_2d_prototype::{Cell, Config, Simulation, rusanov_flux};
 
 fn close(actual: f64, expected: f64, tolerance: f64) {
     assert!(

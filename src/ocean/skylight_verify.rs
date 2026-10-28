@@ -69,7 +69,7 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
         mapped_at_creation: false,
     });
     // Reuse the actual render uniform declaration to catch CPU/WGSL layout drift.
-    let render = include_str!("render.wgsl");
+    let render = include_str!("shaders/render.wgsl");
     let declaration = render
         .split("struct Optics {")
         .nth(1)
@@ -79,8 +79,8 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
         .unwrap();
     let source = format!(
         "struct Optics {{{declaration}}}\n{}\n{}\n{}",
-        include_str!("optics.wgsl"),
-        include_str!("skylight.wgsl"),
+        include_str!("shaders/optics.wgsl"),
+        include_str!("shaders/skylight.wgsl"),
         r#"
         @group(0) @binding(0) var<uniform> optics: Optics;
         @group(0) @binding(1) var sky_lut: texture_2d<f32>;

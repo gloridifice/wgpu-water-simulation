@@ -27,12 +27,12 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                    include_str!("optics.wgsl"),
-                    include_str!("sky.wgsl"),
-                    include_str!("skylight.wgsl"),
-                    include_str!("render.wgsl"),
-                    include_str!("shore.wgsl"),
-                    include_str!("shore_read.wgsl"),
+                    include_str!("shaders/optics.wgsl"),
+                    include_str!("shaders/sky.wgsl"),
+                    include_str!("shaders/skylight.wgsl"),
+                    include_str!("shaders/render.wgsl"),
+                    include_str!("shaders/shore.wgsl"),
+                    include_str!("shaders/shore_read.wgsl"),
                     r#"
 @group(0) @binding(12) var<storage, read_write> result: array<vec4<f32>>;
 @compute @workgroup_size(1) fn height_probe() {

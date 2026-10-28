@@ -100,8 +100,8 @@ impl SkyLut {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}",
-                    include_str!("sky.wgsl"),
-                    include_str!("skylight_lut.wgsl")
+                    include_str!("shaders/sky.wgsl"),
+                    include_str!("shaders/skylight_lut.wgsl")
                 )
                 .into(),
             ),

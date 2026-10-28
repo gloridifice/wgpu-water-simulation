@@ -123,13 +123,15 @@ fn simulate() -> Result<(), Box<dyn std::error::Error>> {
 | `simulation` | CFL 子步、RK2 半拉格朗日输送、重力、空气速度外推、level-set 重建与可选体积校正 |
 | `surface` | 六四面体一致分解、共享交点去重、外法线、索引三角形、输出资源上限 |
 | `optics` | 反射、Snell 折射、介电 Fresnel、Beer–Lambert 吸收和简化单界面颜色组合 |
-| `gpu/transport.*` | WGSL RK2 输送、速度外推、边界与重力、Jacobi Eikonal 距离重建、并行体积归约和二分校正 |
-| `gpu/volume.wgsl` | 独立的两级体积归约核，屏蔽固体和最后工作组的无效单元 |
-| `gpu/adaptivity.*` | WGSL q/I 评价、层厚种子、L1 膨胀与高度平滑；回读后整理 CPU 拓扑 |
-| `gpu/pressure.*` | WGSL 散度/RHS、CSR 乘法、Jacobi-PCG、点积归约、真实残差、压力重建和面速度修正 |
-| `gpu/surface.*` | WGSL Marching Tetrahedra、梯度法线、原子输出计数和容量检测 |
+| `gpu/transport.rs`、`gpu/shaders/transport.wgsl` | WGSL RK2 输送、速度外推、边界与重力、Jacobi Eikonal 距离重建、并行体积归约和二分校正 |
+| `gpu/shaders/volume.wgsl` | 独立的两级体积归约核，屏蔽固体和最后工作组的无效单元 |
+| `gpu/adaptivity.rs`、`gpu/shaders/adaptivity.wgsl` | WGSL q/I 评价、层厚种子、L1 膨胀与高度平滑；回读后整理 CPU 拓扑 |
+| `gpu/pressure.rs`、`gpu/shaders/pressure.wgsl` | WGSL 散度/RHS、CSR 乘法、Jacobi-PCG、点积归约、真实残差、压力重建和面速度修正 |
+| `gpu/surface.rs`、`gpu/shaders/surface.wgsl` | WGSL Marching Tetrahedra、梯度法线、原子输出计数和容量检测 |
 | `gpu/simulation` | 完整 GPU 子步调度、事务状态提交与 CPU 可检查快照 |
 | `demo` | 独立窗口、egui 停靠面板、三阶段耗时、后台模拟、两种初始场景、表面/网格/法线预览、PNG 和运行协议验证 |
+
+着色器按模块放在 `src/gpu/shaders/` 和 `src/demo/shaders/`，通过 `include_str!` 编译期嵌入，无需运行时读取文件。
 
 `Domain` 的尺寸是单元数，`cell_size` 是米，`origin` 是世界坐标。各字段按 x 最快、然后 y、最后 z 存储：`x + Nx * (y + Ny * z)`。三个面数组的尺寸分别为 `(Nx+1,Ny,Nz)`、`(Nx,Ny+1,Nz)`、`(Nx,Ny,Nz+1)`。
 

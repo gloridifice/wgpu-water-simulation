@@ -118,7 +118,11 @@ pub fn extract_surface(
         &vec![OutputVertex::zeroed(); output_count],
     );
     let counter = context.buffer("surface triangle counter", &[0_u32; 4]);
-    let pipeline = context.pipeline("marching tetrahedra", include_str!("surface.wgsl"), "main")?;
+    let pipeline = context.pipeline(
+        "marching tetrahedra",
+        include_str!("shaders/surface.wgsl"),
+        "main",
+    )?;
     let bindings = context.bind(&pipeline, &[&uniforms, &phi_buffer, &output, &counter]);
     context.dispatch(&pipeline, &bindings, groups as u32);
     let triangle_count = context.read::<u32>(&counter, 4)?[0];

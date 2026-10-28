@@ -1,6 +1,6 @@
 # 一维 CPU 浅水模拟器
 
-> 以下保留一维版本的说明。`cargo run` 默认启动 GPU Ocean；本页命令指定 CPU 程序 `--no-default-features --bin water-simulation`，并通过 `--shallow` 选择一维模式。这里提到的 `src/tui/` 现位于 `src/shallow_tui/`，求解核心仍是 `src/solver.rs`。
+> 以下保留一维版本的说明。根目录 `cargo run` 默认启动 GPU Ocean；CPU 程序已独立为 `crates/tui-2d-prototype`，通过 `cargo run -p tui-2d-prototype -- --shallow` 选择一维模式，无需 GPU 依赖。下文代码路径相对于该 crate。
 
 可交互的一维 CPU 浅水模拟器。中央水位凸起分成左右两列波，遇到两端的墙后反射回来。核心算法只使用 Rust 标准库，界面使用 Ratatui 与 Crossterm。
 
@@ -9,26 +9,26 @@
 在 PowerShell 中：
 
 ```powershell
-Set-Location G:\MyProjects\Rust\water-simulation
-cargo test --no-default-features
-cargo run --no-default-features --bin water-simulation -- --shallow
+# 在仓库根目录运行。
+cargo test -p tui-2d-prototype
+cargo run -p tui-2d-prototype -- --shallow
 ```
 
 在交互终端中，默认启动 TUI 并以 1 倍速持续模拟，按 Q 退出。建议使用 Windows Terminal，终端至少 70 列 × 22 行，120 × 36 时曲线更清楚。重定向输入或输出时自动使用批处理模式，也可以显式传入 `--headless`。
 
 ```powershell
 # 从暂停状态开始，用 N 逐个 CFL 时间步观察。
-cargo run --no-default-features --bin water-simulation -- --shallow --paused --cells 41
+cargo run -p tui-2d-prototype -- --shallow --paused --cells 41
 
 # 优化构建启动交互界面。
-cargo run --release --no-default-features --bin water-simulation -- --shallow
+cargo run --release -p tui-2d-prototype -- --shallow
 
 # 只输出最终统计；CSV 保存初态及每个输出时刻的所有网格。
-cargo run --no-default-features --bin water-simulation -- --shallow --headless --quiet --csv snapshots.csv
+cargo run -p tui-2d-prototype -- --shallow --headless --quiet --csv snapshots.csv
 
 # 更长时间 / 更多输出帧 / 调整 CFL。
-cargo run --no-default-features --bin water-simulation -- --shallow --headless --time 12 --frames 24 --cfl 0.4
-cargo run --no-default-features --bin water-simulation -- --help
+cargo run -p tui-2d-prototype -- --shallow --headless --time 12 --frames 24 --cfl 0.4
+cargo run -p tui-2d-prototype -- --help
 ```
 
 `--time / --frames / --csv / --quiet / --animate` 也会选择批处理模式，兼容之前的命令。这些批处理选项不能与 `--tui / --paused` 混用。`--cells` 和 `--cfl` 同时适用于两种模式。
@@ -61,20 +61,20 @@ cargo run --no-default-features --bin water-simulation -- --help
 
 ```text
 src/
-  lib.rs          库入口，公开 solver 并保留原有导入路径
+  lib.rs          库入口，公开 pic、solver 和一维求解器类型
   solver.rs       Cell / Flux / Config / Simulation，Rusanov、CFL、双缓冲、边界
   main.rs         参数解析和 TUI / 批处理模式选择
   batch.rs        原有 ASCII 快照、动画和 CSV 输出
-  tui/
-    mod.rs        终端生命周期、按键与刷新循环
+  shallow_tui/
+    mod.rs        一维终端生命周期、按键与刷新循环
     app.rs        暂停、单步、调速、重置、网格选择
     view.rs       曲线、诊断数值、按键提示与窗口布局
 ```
 
-依赖方向是 `tui / batch → solver`。`solver.rs` 不读取键盘、时钟或终端，也不包含 Ratatui/Crossterm 类型，可以单独阅读或移入其他 Rust 项目。
+一维模式的依赖方向是 `shallow_tui / batch → solver`。`solver.rs` 不读取键盘、时钟或终端，也不包含 Ratatui/Crossterm 类型，可以单独阅读或移入其他 Rust 项目。
 
 ```rust
-use water_simulation::solver::{Config, Simulation};
+use tui_2d_prototype::solver::{Config, Simulation};
 
 let mut simulation = Simulation::new(Config::default())?;
 simulation.advance_to(1.0)?;
@@ -106,7 +106,7 @@ ASCII 中 `*` 表示水面，`.` 表示初始静水位。纵轴固定并放大�
 
 ## 从代码理解一次更新
 
-建议先看 `src/solver.rs`，再看 `src/tui/app.rs` 如何调用求解器，最后看 `tests/physics.rs`。`src/tui/view.rs` 负责显示，求解器不依赖终端。
+建议先看 `src/solver.rs`，再看 `src/shallow_tui/app.rs` 如何调用求解器，最后看 `tests/physics.rs`。`src/shallow_tui/view.rs` 负责显示，求解器不依赖终端。
 
 ### 1. 一个格子保存什么
 
@@ -197,9 +197,9 @@ dt = min(dt_cfl, 距下次输出的剩余时间)
 ## 验证覆盖
 
 ```powershell
-cargo fmt --check
-cargo test --no-default-features
-cargo clippy --all-targets -- -D warnings
+cargo fmt --all --check
+cargo test -p tui-2d-prototype
+cargo clippy -p tui-2d-prototype --all-targets -- -D warnings
 ```
 
 物理测试覆盖：相同状态通量、手算水深跳跃通量、墙面零质量通量、静水保持、41/201 网格长期质量守恒、水深镜像与动量反镜像、动态 CFL 限制、小振幅传播速度、撞墙后传播方向反转。另有较陡的全湿凸起在 CFL=0.5 下运行 30 秒的有限性、正水深、有界性及能量检查，以及无效输入、时间对齐和命令行检查。

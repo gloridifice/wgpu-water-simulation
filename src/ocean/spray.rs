@@ -227,9 +227,9 @@ impl SpraySource {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}",
-                    include_str!("shore.wgsl"),
-                    include_str!("spray_common.wgsl"),
-                    include_str!("spray_source.wgsl")
+                    include_str!("shaders/shore.wgsl"),
+                    include_str!("shaders/spray_common.wgsl"),
+                    include_str!("shaders/spray_source.wgsl")
                 )
                 .into(),
             ),
@@ -349,9 +349,9 @@ impl SprayParticles {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}",
-                    include_str!("shore.wgsl"),
-                    include_str!("spray_common.wgsl"),
-                    include_str!("spray_compute.wgsl")
+                    include_str!("shaders/shore.wgsl"),
+                    include_str!("shaders/spray_common.wgsl"),
+                    include_str!("shaders/spray_compute.wgsl")
                 )
                 .into(),
             ),
@@ -400,8 +400,8 @@ impl SprayParticles {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}",
-                    include_str!("spray_common.wgsl"),
-                    include_str!("spray_render.wgsl")
+                    include_str!("shaders/spray_common.wgsl"),
+                    include_str!("shaders/spray_render.wgsl")
                 )
                 .into(),
             ),

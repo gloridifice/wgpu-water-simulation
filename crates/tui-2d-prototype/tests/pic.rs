@@ -1,4 +1,4 @@
-use water_simulation::pic::{CellType, Config, Simulation};
+use tui_2d_prototype::pic::{CellType, Config, Simulation};
 
 fn small_config() -> Config {
     Config {

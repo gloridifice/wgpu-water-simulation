@@ -225,7 +225,7 @@ fn solve(
     let uniform = context.uniform("pressure parameters", &params);
     let pipeline = context.pipeline(
         "GPU pressure projection",
-        include_str!("pressure.wgsl"),
+        include_str!("shaders/pressure.wgsl"),
         "pressure_main",
     )?;
     let bindings = context.bind(

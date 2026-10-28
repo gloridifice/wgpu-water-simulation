@@ -238,7 +238,7 @@ fn draw_water(frame: &mut Frame, plot: TankPlot, app: &App) {
 mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
-    use water_simulation::pic::Config;
+    use tui_2d_prototype::pic::Config;
     #[test]
     fn particle_view_and_mouse_coordinates_follow_window_size() {
         let app = App::new(Config::default(), true, true, true).unwrap();

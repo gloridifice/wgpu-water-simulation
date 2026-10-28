@@ -212,7 +212,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), Error> {
     }
     let source = format!(
         "{}\n{}",
-        include_str!("optics.wgsl"),
+        include_str!("shaders/optics.wgsl"),
         r#"
         struct Case { bg_d: vec4<f32>, sigma: vec4<f32>, source: vec4<f32> }
         @group(0) @binding(0) var<storage, read> cases: array<Case>;

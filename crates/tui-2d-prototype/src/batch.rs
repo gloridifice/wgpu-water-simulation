@@ -5,7 +5,7 @@ use std::{
     thread,
     time::Duration,
 };
-use water_simulation::solver::Simulation;
+use tui_2d_prototype::solver::Simulation;
 
 fn statistics(sim: &Simulation, initial_mass: f64) -> String {
     let min_h = sim

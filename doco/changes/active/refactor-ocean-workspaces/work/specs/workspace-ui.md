@@ -95,4 +95,4 @@ Dock 上方常驻工具栏横跨整个窗口宽度，左侧导航从其下方开
 
 ## Current-document impact
 
-交付后在当前 specs 目录新增 workspace-ui.md 界面规范，更新当前架构、[docs/ocean.md](../../../../../../docs/ocean.md) 和 [AGENTS.md](../../../../../../AGENTS.md) 布局约定。创建阶段不改当前事实，不改 GPU 浪花等物理合约。
+交付后在当前 specs 目录新增 workspace-ui.md 界面规范，更新当前架构、[doco/guides/ocean.md](../../../../../guides/ocean.md) 和 [AGENTS.md](../../../../../../AGENTS.md) 布局约定。创建阶段不改当前事实，不改 GPU 浪花等物理合约。

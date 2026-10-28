@@ -38,7 +38,7 @@
 
 - [x] 3.2 执行整体检查并同步已实现文档
   - Dependencies: 3.1
-  - Acceptance: 执行下列构建、测试和有界预览，记录实际结果及未验证限制；更新 [docs/ocean.md](../../../../../docs/ocean.md)、[doco/architecture.md](../../../../architecture.md) 和已交付的 [doco/specs/](../../../../specs/) 合约。检查无运行时代码依赖 CPU 回读发射信号/计数；`doco check add-gpu-spray-particles` 和差异检查通过后才可申请完成，不自动归档。
+  - Acceptance: 执行下列构建、测试和有界预览，记录实际结果及未验证限制；更新 [doco/guides/ocean.md](../../../../guides/ocean.md)、[doco/architecture.md](../../../../architecture.md) 和已交付的 [doco/specs/](../../../../specs/) 合约。检查无运行时代码依赖 CPU 回读发射信号/计数；`doco check add-gpu-spray-particles` 和差异检查通过后才可申请完成，不自动归档。
 
 - [x] 4.1 接入联网调研的浪花图集
   - Dependencies: 3.2

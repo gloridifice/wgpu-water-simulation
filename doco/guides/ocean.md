@@ -1,6 +1,6 @@
 # 三维 FFT 海洋（wgpu + egui）
 
-在独立窗口里运行的海面演示。CPU 初始化 Phillips 波谱，GPU 执行频谱演化、二维逆 FFT 和水面绘制。默认 128×128 个频率、128 米周期块，渲染 3×3 个重复块。`cargo run` 默认启动此程序；CPU PIC / 浅水 TUI 可通过独立的 `water-simulation` 二进制启动。
+在独立窗口里运行的海面演示。CPU 初始化 Phillips 波谱，GPU 执行频谱演化、二维逆 FFT 和水面绘制。默认 128×128 个频率、128 米周期块，渲染 3×3 个重复块。`cargo run` 默认启动此程序；CPU PIC / 浅水 TUI 位于独立 workspace 成员 `crates/tui-2d-prototype`，二进制仍名为 `water-simulation`。
 
 ## 运行
 
@@ -15,7 +15,7 @@ cargo run --release
 cargo run --release --features ocean --bin ocean -- --resolution 256 --wind 18 --seed 7
 ```
 
-需要支持计算着色器和顶点阶段存储缓冲区的图形设备；通过 wgpu 使用本机后端，素材随仓库提供。首次构建会下载图形相关依赖。`ocean` feature 默认启用；使用 `cargo run --no-default-features --bin water-simulation` 可启动 CPU TUI 并避免编译图形依赖，再加 `-- --shallow` 启动一维浅水模式。
+需要支持计算着色器和顶点阶段存储缓冲区的图形设备；通过 wgpu 使用本机后端，素材随仓库提供。首次构建会下载图形相关依赖。`ocean` feature 默认启用；使用 `cargo run -p tui-2d-prototype` 可启动 CPU TUI 并避免编译图形依赖，再加 `-- --shallow` 启动一维浅水模式。
 
 | 操作 | 效果 |
 | --- | --- |
@@ -58,7 +58,7 @@ egui 控件和 egui_dock 使用从 `wgpu_pbr` 移植的深色主题与 MiSans �
 
 ## 扫描海岸模型与可调 SWE 区域
 
-新增 **模型与区域** Dock 页签。模型场景使用 `assets/models/challaborough_pillbox.glb` 显示岩岸，使用预烘焙的 `.sweh` 高度场驱动 SWE；保留原沙滩／平面场景，不改变默认启动场景。资源来源、CC BY 4.0 署名、裁切面清理和磁盘格式见 [`assets/models/README.md`](../assets/models/README.md)。
+新增 **模型与区域** Dock 页签。模型场景使用 `assets/models/challaborough_pillbox.glb` 显示岩岸，使用预烘焙的 `.sweh` 高度场驱动 SWE；保留原沙滩／平面场景，不改变默认启动场景。资源来源、CC BY 4.0 署名、裁切面清理和磁盘格式见 [`assets/models/README.md`](../../assets/models/README.md)。
 
 ```powershell
 # 首次生成磁盘高度场；已有输出不会被覆盖。此步骤不需要 GPU。
@@ -142,7 +142,7 @@ cargo run --release --bin ocean -- --config configs/experiments/reef-front-ridge
 
 `--shore-view 7` 显示最近完成子步的实际源项（白色对应配置的前沿满生成率），`8` 显示发射权重，`6` 仍为输送后的密度。旧模式在选择 7／8 后需要推进一步才有诊断数据；暂停保留最后数据。实验支持 `--snapshot ... --foam-emission-window 8,9`，只在第 8～9 秒发射；按暖机帧切换，时间分辨率约 1/60 秒。
 
-这是源项筛选实验，不是已验证的网状泡沫模型：流向不一定是波前法线，停驻压缩峰仍会持续发射，尚无波前追踪或时间滞回。礁石对照中生成区域收窄、停止发射后泡沫仍保留，但没有证明会自然形成连通网状。复现命令、固定配置和实测边界见 [configs/README.md](../configs/README.md)。
+这是源项筛选实验，不是已验证的网状泡沫模型：流向不一定是波前法线，停驻压缩峰仍会持续发射，尚无波前追踪或时间滞回。礁石对照中生成区域收窄、停止发射后泡沫仍保留，但没有证明会自然形成连通网状。复现命令、固定配置和实测边界见 [configs/README.md](../../configs/README.md)。
 
 ## GPU 浪花粒子
 
@@ -176,7 +176,7 @@ cargo run --release --bin ocean -- --beach --spray-debug --no-settings --frames 
 
 粒子池最多 65,536 个，先保留存活粒子，再填充空余槽；满池直接丢弃新增请求，不欠账、不覆盖存活粒子。信号和余量合计约每个 SWE 单元 40 字节，双粒子列表约 6 MiB，另有少量参数及纹理。设备限制或分配失败会禁用浪花并显示错误，不改用 CPU 粒子路径。
 
-首版只覆盖纯 SWE 区域（FFT 混合权重不大于约 0.001），不在远海或 FFT 混合带喷射。纹理采用 Effekseer 官方 Pierre 样例中的 CC0 `Splash.png`，按原图 Alpha 拆成四种随机水片／碎滴，使用独立透明边和完整 mip 链避免串图及远处闪烁；原图、作者、许可和离线烘焙说明见 [assets/spray/README.md](../assets/spray/README.md)。绘制使用预乘透明度、已保存的场景深度和软交界；没有透明粒子排序、OIT、风场或独立水雾层。高度场碰撞不表示任意三维模型表面的精确碰撞，也不能生成真实翻卷浪。
+首版只覆盖纯 SWE 区域（FFT 混合权重不大于约 0.001），不在远海或 FFT 混合带喷射。纹理采用 Effekseer 官方 Pierre 样例中的 CC0 `Splash.png`，按原图 Alpha 拆成四种随机水片／碎滴，使用独立透明边和完整 mip 链避免串图及远处闪烁；原图、作者、许可和离线烘焙说明见 [assets/spray/README.md](../../assets/spray/README.md)。绘制使用预乘透明度、已保存的场景深度和软交界；没有透明粒子排序、OIT、风场或独立水雾层。高度场碰撞不表示任意三维模型表面的精确碰撞，也不能生成真实翻卷浪。
 
 完整 `--verify` 包含发射门控、世界坐标/速度的 GPU 信号布局、面积/时间积分、小数发射、容量饱和与复用、暂停/重置、落水，以及两种尺寸下的真实粒子深度遮挡和淡出检查。一阶／二阶开启浪花后，既有水体与泡沫状态仍保持一致。仅验证程序允许末尾读回检查结果。
 
@@ -278,17 +278,17 @@ CPU 测试检查随机种子复现、有限数值、零频率、Nyquist 处理�
 ## 文件
 
 ```text
-src/bin/ocean.rs       参数与入口
-src/ocean/spectrum.rs  初始化波谱，独立于窗口与 GPU
-src/ocean/evolve.wgsl  GPU 时间演化和位移频谱
-src/ocean/ifft.wgsl    GPU 二维逆 FFT 蝶形
-src/ocean/gpu.rs       缓冲区、计算和绘制管线
-src/ocean/foam.rs      泡沫 GPU 资源、CPU 参考及数值验证
-src/ocean/foam.wgsl    Jacobian 与局部泡沫历史更新
-src/ocean/render.wgsl  三维水面、泡沫与天空着色
-src/ocean/gui.rs       egui 参数面板与叠加绘制
-src/ocean/viewer.rs    窗口、相机、交互、离屏 PNG
-src/ocean/verify.rs    独立直接 DFT 与 GPU 验证
+src/bin/ocean.rs               参数与入口
+src/ocean/spectrum.rs          初始化波谱，独立于窗口与 GPU
+src/ocean/shaders/evolve.wgsl  GPU 时间演化和位移频谱
+src/ocean/shaders/ifft.wgsl    GPU 二维逆 FFT 蝶形
+src/ocean/gpu.rs               缓冲区、计算和绘制管线
+src/ocean/foam.rs              泡沫 GPU 资源、CPU 参考及数值验证
+src/ocean/shaders/foam.wgsl    Jacobian 与局部泡沫历史更新
+src/ocean/shaders/render.wgsl  三维水面、泡沫与天空着色
+src/ocean/gui.rs               egui 参数面板与叠加绘制
+src/ocean/viewer.rs            窗口、相机、交互、离屏 PNG
+src/ocean/verify.rs            独立直接 DFT 与 GPU 验证
 ```
 
 基础 FFT 生成周期海面，本身不求解岸边碰撞。沙滩和扫描模型场景叠加局部二维 SWE、泡沫输运及湿润历史，详见相关章节；耦合方向为 FFT → SWE。仍不包含真实翻卷或三维空气卷入，水平位移过大使网格折叠并不等于物理破浪。
@@ -507,7 +507,7 @@ cargo run --release --features ocean --bin ocean -- --snapshot manual-scattering
 
 首次升级时，原有本地配置会封存为只读 **默认配置**；没有已有配置时使用程序初始默认值。默认配置不能重命名、删除或覆盖，点击 **默认配置** 可恢复全部参数，再次点击当前配置也会重新载入。载入任意配置会恢复其中的已应用波谱和未应用草稿，并重置模拟时间、泡沫与浅水历史；草稿仍需 **应用更改** 后生效。`--no-settings` 下禁止新建、删除、保存和重命名，仍可恢复本次启动时的初始配置。
 
-使用 `--settings PATH` 指定可写会话；`--no-settings` 禁用隐式会话读取／保存。`--config PATH` 则严格只读加载指定文件的顶层当前会话，不自动保存，不回退默认值，也不写损坏备份；不能与 `--settings` 合用。明确传入的 CLI 参数覆盖对应保存值，其余字段继续恢复。`--snapshot` 默认不读个人配置，但支持显式 `--config`，不支持可写的 `--settings`；`--time` 是快照模拟时刻，不受配置中的暂停／播放倍率影响。`--verify` 始终不读取配置。仓库配置与礁石实验启动方法见 [configs/README.md](../configs/README.md)。
+使用 `--settings PATH` 指定可写会话；`--no-settings` 禁用隐式会话读取／保存。`--config PATH` 则严格只读加载指定文件的顶层当前会话，不自动保存，不回退默认值，也不写损坏备份；不能与 `--settings` 合用。明确传入的 CLI 参数覆盖对应保存值，其余字段继续恢复。`--snapshot` 默认不读个人配置，但支持显式 `--config`，不支持可写的 `--settings`；`--time` 是快照模拟时刻，不受配置中的暂停／播放倍率影响。`--verify` 始终不读取配置。仓库配置与礁石实验启动方法见 [configs/README.md](../../configs/README.md)。
 
 每次启动会恢复上次使用的配置选项，以及该配置下最后自动保存的工作状态（包括尚未手动保存到命名配置的调整）。配置选项在成功载入或新建后记录，重命名不影响恢复；删除当前配置后，下次启动使用默认配置。自动保存不会覆盖命名配置快照。旧文件没有记录选项或记录已失效时，选中默认配置并保留原有工作状态与命名配置。恢复个人参数时直接运行 `cargo run`，不要额外传入 `--beach` 等场景覆盖参数。
 
@@ -596,7 +596,7 @@ The bundled `assets/shorewaves/voronoi_lace.png` comes from Reboot16 / Enrico K.
 
 Pause freezes simulation and texture flow. R, Restart time and **重置浅水、泡沫和沙地** reinitialize the local simulation from the current FFT and clear foam/sand history. Terrain, 波高增益, SWE input gain, blend-depth and enable changes also reset it; applying a new FFT spectrum rebuilds the coupled resources; foam-rate, drying-time and view changes preserve history. Settings persist, but simulation state does not. Snapshot mode prewarms up to 60 seconds of shore history (8 seconds offshore); later snapshots approximate a finite history window.
 
-`--verify` exercises the actual GPU shader: lake at rest, local pulse mass conservation away from the inlet, propagation and foam transport in both axes, dry-cell foam removal and sand drying/rewetting, extreme slope/amplitude settings, terrain reset, run-up, finite/nonnegative states, pause, reset and disable. Raster verification prewarms 24 seconds and checks water history at two target sizes. The FFT test compares all six channels to a double-precision direct DFT and checks analytic oblique waves in both directions. An inlet probe checks production world-coordinate wrapping, time interpolation and gain against CPU samples. Zero FFT power must generate no shoreline flow/foam. Existing optics and sky tests remain enabled. `cargo test --all-features` covers configuration compatibility and the existing CPU suites.
+`--verify` exercises the actual GPU shader: lake at rest, local pulse mass conservation away from the inlet, propagation and foam transport in both axes, dry-cell foam removal and sand drying/rewetting, extreme slope/amplitude settings, terrain reset, run-up, finite/nonnegative states, pause, reset and disable. Raster verification prewarms 24 seconds and checks water history at two target sizes. The FFT test compares all six channels to a double-precision direct DFT and checks analytic oblique waves in both directions. An inlet probe checks production world-coordinate wrapping, time interpolation and gain against CPU samples. Zero FFT power must generate no shoreline flow/foam. Existing optics and sky tests remain enabled. `cargo test --all-features` covers configuration compatibility; use `cargo test --workspace --all-features` to also run the CPU suites in `tui-2d-prototype`.
 
 The heightfield cannot overturn or produce airborne spray. First-order numerical diffusion and the coarse alongshore spacing limit small-scale hydrodynamic detail; the lace texture supplies visual detail. Refraction remains the existing optical path implementation. Performance depends on substep count, mesh resolution and GPU; no frame-rate guarantee is implied.
 
@@ -858,7 +858,7 @@ cargo run --release --features ocean --bin foam-lab -- --output target/foam-lab
 
 在 **浅水模拟（SWE）→ 泡沫纹理与材质** 中选择原灰度效果、Shorewaves NSH、Crest Foam NSH 或 Crest Foam2 NSH。默认使用 Shorewaves NSH；旧配置缺少字段时补此默认值，其余已有参数正常加载。切换纹理、尺寸、微法线、不透明度密度尺度及粗糙度实时生效并保存，暂停时也可以比较，不重置模拟或纹理位移历史。旧配置中的 `foam_soft_opacity`、`foam_thick_start` 被忽略，新字段 `foam_opacity_scale` 缺失时使用默认值 2，其余参数正常加载。
 
-三张 NSH 都由仓库内的源图离线烘焙，统一为 1024×1024：RG 为切线法线 XY，B 为 Soft，A 为相对 Height。它们作为线性 `Rgba8Unorm` 纹理数组上传，使用 Repeat 和完整 mip 链；法线按三维方向平均后归一化，Soft／Height 单独做线性过滤。Crest 源图按原导入设置解码 sRGB 后烘焙；源图、固定版本、SHA-256 和 MIT 许可见 [assets/foam/SOURCES.md](../assets/foam/SOURCES.md)。Height 是为着色设计的形态，不是实测泡沫厚度。
+三张 NSH 都由仓库内的源图离线烘焙，统一为 1024×1024：RG 为切线法线 XY，B 为 Soft，A 为相对 Height。它们作为线性 `Rgba8Unorm` 纹理数组上传，使用 Repeat 和完整 mip 链；法线按三维方向平均后归一化，Soft／Height 单独做线性过滤。Crest 源图按原导入设置解码 sRGB 后烘焙；源图、固定版本、SHA-256 和 MIT 许可见 [assets/foam/SOURCES.md](../../assets/foam/SOURCES.md)。Height 是为着色设计的形态，不是实测泡沫厚度。
 
 材质保留现有两套位移场与 2 秒交替重置。每套位移分别采样粗细两种尺度，细尺度为粗尺度的 1/10，权重 0.72／0.28。每个相位保留原有密度和 Soft 决定的孔隙覆盖，但不再划分薄／厚两种着色；覆盖内使用连续密度响应：
 
@@ -893,7 +893,7 @@ cargo run --release --bin ocean -- --beach --no-settings --foam-texture 2 --foam
 cargo run --release --bin ocean -- --beach --no-settings --foam-opacity-scale 4 --foam-material-view 4 --frames 600
 ```
 
-烘焙流程及预览面板顺序见 [assets/foam/README.md](../assets/foam/README.md)。输出图在编译时嵌入，重新烘焙后需要重新构建 ocean。当前工具从现成灰度图加工 NSH，尚未实现从随机种子生成泡径／网膜形态的生成器，也未改成三相位。
+烘焙流程及预览面板顺序见 [assets/foam/README.md](../../assets/foam/README.md)。输出图在编译时嵌入，重新烘焙后需要重新构建 ocean。当前工具从现成灰度图加工 NSH，尚未实现从随机种子生成泡径／网膜形态的生成器，也未改成三相位。
 
 `--verify` 检查生产 WGSL 的零密度／干水边界、超出旧参考值后的指数不透明度、密度与尺度单调性、孔隙保持及法线方向与归一化，以及实际 GPU 三层纹理采样、Repeat 和 mip 标量平均。已有一阶／二阶对照同时检查材质参数不影响模拟状态。
 

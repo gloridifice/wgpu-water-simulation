@@ -61,7 +61,7 @@ fn verify_kinetics(gpu: &Gpu) -> Result<(), Error> {
     var nr=c.nr;
     for(var i=0u;i<steps;i++) {{ nr=dual_foam_sources(nr,c.source,c.time/f32(steps),c.rates); }}
     new_shore[id.x]=vec4(nr,0.0,0.0);
-}}", include_str!("shore.wgsl"), include_str!("shore_compute.wgsl")
+}}", include_str!("shaders/shore.wgsl"), include_str!("shaders/shore_compute.wgsl")
         )
                     .into(),
                 ),

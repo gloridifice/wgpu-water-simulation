@@ -141,10 +141,10 @@ impl Seabed {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}\n{}",
-                    include_str!("seabed.wgsl"),
-                    include_str!("shore.wgsl"),
-                    include_str!("shore_read.wgsl"),
-                    include_str!("collider_render.wgsl")
+                    include_str!("shaders/seabed.wgsl"),
+                    include_str!("shaders/shore.wgsl"),
+                    include_str!("shaders/shore_read.wgsl"),
+                    include_str!("shaders/collider_render.wgsl")
                 )
                 .into(),
             ),

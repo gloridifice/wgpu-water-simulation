@@ -87,7 +87,7 @@ fn color_mips(gpu: &Gpu, image: &image::RgbaImage) -> wgpu::Texture {
         .device
         .create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("linear-light color downsample"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("color_mips.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/color_mips.wgsl").into()),
         });
     let pipeline = gpu
         .device

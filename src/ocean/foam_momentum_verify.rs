@@ -210,8 +210,8 @@ fn verify_sources(gpu: &Gpu, ocean: &Ocean) -> Result<(), Error> {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}",
-                    include_str!("shore.wgsl"),
-                    include_str!("shore_compute.wgsl"),
+                    include_str!("shaders/shore.wgsl"),
+                    include_str!("shaders/shore_compute.wgsl"),
                     r#"
 @compute @workgroup_size(1)
 fn source_probe() {

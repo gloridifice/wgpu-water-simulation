@@ -33,7 +33,7 @@
 
 - [ ] 4.2 同步当前文档并完成最终回归核对
   - Dependencies: 4.1
-  - Acceptance: fmt、clippy、ocean 库测试及受影响的无默认 feature 检查通过；更新 [docs/ocean.md](../../../../../docs/ocean.md)、当前架构、当前界面规范和 [AGENTS.md](../../../../../AGENTS.md)，不把未交付事项写成当前事实；保留个人配置及无关文件，报告未验证限制。
+  - Acceptance: fmt、clippy、ocean 库测试及受影响的无默认 feature 检查通过；更新 [doco/guides/ocean.md](../../../../guides/ocean.md)、当前架构、当前界面规范和 [AGENTS.md](../../../../../AGENTS.md)，不把未交付事项写成当前事实；保留个人配置及无关文件，报告未验证限制。
 
 ## Verification
 

@@ -269,7 +269,7 @@ fn y_labels(low: f64, high: f64, height: u16) -> Vec<String> {
 mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend};
-    use water_simulation::solver::Config;
+    use tui_2d_prototype::solver::Config;
 
     #[test]
     fn charts_and_selected_state_render_at_normal_and_small_sizes() {

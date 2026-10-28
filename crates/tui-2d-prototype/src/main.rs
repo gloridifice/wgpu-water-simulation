@@ -8,12 +8,12 @@ use std::{
     io::{self, IsTerminal},
     process::ExitCode,
 };
-use water_simulation::pic;
-use water_simulation::solver::Config;
+use tui_2d_prototype::pic;
+use tui_2d_prototype::solver::Config;
 
 const HELP: &str = "Two-dimensional CPU PIC water simulator (side view)
 
-Usage: cargo run --no-default-features --bin water-simulation -- [options]
+Usage: cargo run -p tui-2d-prototype -- [options]
   --tui           Force interactive TUI (requires a terminal)
   --paused        Start TUI paused, ready for single stepping
   --headless      ASCII / CSV batch output for the selected solver
@@ -46,10 +46,10 @@ TUI keys:
   Shallow mode: G switches 41/201 cells; mouse adds a surface ripple
 
 Examples:
-  cargo run --no-default-features --bin water-simulation
-  cargo run --release --no-default-features --bin water-simulation -- --paused
-  cargo run --no-default-features --bin water-simulation -- --shallow --paused --cells 41
-  cargo run --no-default-features --bin water-simulation -- --headless --quiet --csv snapshots.csv
+  cargo run -p tui-2d-prototype
+  cargo run --release -p tui-2d-prototype -- --paused
+  cargo run -p tui-2d-prototype -- --shallow --paused --cells 41
+  cargo run -p tui-2d-prototype -- --headless --quiet --csv snapshots.csv
 ";
 
 struct Options {

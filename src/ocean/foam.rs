@@ -76,7 +76,7 @@ impl Foam {
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Jacobian foam"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("foam.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/foam.wgsl").into()),
             });
         let pipeline = gpu
             .device

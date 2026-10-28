@@ -109,7 +109,7 @@ impl Maps {
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("FFT J weight experiment"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("weights.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/weights.wgsl").into()),
             });
         let pipeline = gpu
             .device

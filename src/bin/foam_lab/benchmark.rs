@@ -307,7 +307,7 @@ pub(super) fn run(gpu: &Gpu, output: &std::path::Path, resolutions: &[usize]) ->
             "gpu":gpu.name,"fixture_version":1,"rounds":ROUNDS,"iterations_per_round":STEPS,"warmup_iterations":8,
             "method":"Full production SWE main entry and specialized pipelines. Immutable initial input; RK2 recomputes predictor each iteration. Fixed dt; alternating variant order. GPU timestamps exclude compilation, uploads, normal-frame state copies, FFT, spray, rendering, readback and inter-round idle. Per-simulated-second cost is extrapolated from repeated fixed inputs, not continuous evolution. No personal settings.",
             "state_format":"Little-endian f32; production five vec4 blocks per cell; output after ONE fixed substep, not a time evolution.",
-            "shader_fnv1a":fingerprint(format!("{}\n{}",include_str!("../../ocean/shore.wgsl"),include_str!("../../ocean/shore_compute.wgsl")).as_bytes()),
+            "shader_fnv1a":fingerprint(format!("{}\n{}",include_str!("../../ocean/shaders/shore.wgsl"),include_str!("../../ocean/shaders/shore_compute.wgsl")).as_bytes()),
             "results":results
         }))?,
     )?;

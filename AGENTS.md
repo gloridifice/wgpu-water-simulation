@@ -5,23 +5,23 @@
 ## 项目与入口
 
 - 项目使用 Rust 2024 edition。
-- `cargo run` 默认启动 GPU Ocean；另保留 CPU 二维 PIC 终端程序与一维浅水模式。
+- 根包 `cargo run` 默认启动 GPU Ocean；CPU 二维 PIC 终端程序与一维浅水模式独立位于 workspace 成员 `crates/tui-2d-prototype/`。
 - 默认启用的 `ocean` feature 提供 wgpu 三维海洋：远海 FFT、近岸局部二维 SWE、泡沫、沙滩与水体光学，以及 egui_dock 参数面板。
-- 修改 GPU 海洋时，保留不启用 `ocean` feature 的原有程序。
-- 使用说明见 `README.md`、`docs/shallow.md`、`docs/ocean.md`。修改用户可见行为、参数或启动方式时，同步相关说明。
+- 修改 GPU 海洋时，保留独立 CPU 包的可用性，不向其引入 GPU 依赖；`crates/tall-cell-fluid/` 保持独立 workspace。
+- 使用说明集中在 `doco/guides/`，入口见 `README.md`；架构与精确合约分别在 `doco/architecture.md`、`doco/specs/`。修改用户可见行为、参数或启动方式时，同步相关说明。
 
 ## 代码位置
 
 | 位置 | 职责 |
 | --- | --- |
-| `src/main.rs`、`src/pic/`、`src/tui/` | CPU PIC 入口、求解与终端交互 |
-| `src/solver.rs`、`src/shallow_tui/` | 一维浅水求解与终端交互 |
+| `crates/tui-2d-prototype/src/{main.rs,pic/,tui/}` | CPU PIC 入口、求解与终端交互 |
+| `crates/tui-2d-prototype/src/{solver.rs,shallow_tui/}` | 一维浅水求解与终端交互 |
 | `src/bin/ocean.rs` | GPU 海洋入口及命令行参数 |
 | `src/ocean/viewer.rs` | 窗口、相机、帧调度与运行状态 |
-| `src/ocean/spectrum.rs`、`gpu.rs`、`evolve.wgsl`、`ifft.wgsl` | 波谱、GPU FFT 与演化 |
-| `src/ocean/shore.rs`、`shore*.wgsl` | SWE、FFT 输入、近岸泡沫及岸边状态读取 |
-| `src/ocean/foam.rs`、`foam.wgsl` | FFT 海洋泡沫 |
-| `src/ocean/render.wgsl`、`optics*`、`seabed*`、`skylight*` | 水面、海底与天空光学 |
+| `src/ocean/spectrum.rs`、`gpu.rs`、`shaders/{evolve,ifft}.wgsl` | 波谱、GPU FFT 与演化 |
+| `src/ocean/shore.rs`、`shaders/shore*.wgsl` | SWE、FFT 输入、近岸泡沫及岸边状态读取 |
+| `src/ocean/foam.rs`、`shaders/foam.wgsl` | FFT 海洋泡沫 |
+| `src/ocean/shaders/render.wgsl`、`optics*`、`seabed*`、`skylight*` | 水面、海底与天空光学 |
 | `src/ocean/gui.rs`、`color_editor.rs`、`theme.rs` | Dock 面板、参数控件、颜色编辑与主题 |
 | `src/ocean/settings.rs`、`configuration_panel.rs` | 会话保存、命名配置及配置管理界面 |
 | `src/ocean/verify.rs`、`*_verify.rs`、`gpu_timer.rs` | GPU 验证与计时 |
@@ -37,12 +37,14 @@ cargo run
 cargo run --release
 
 # 启动原有 CPU 程序。
-cargo run --release --no-default-features --bin water-simulation
+cargo run --release -p tui-2d-prototype
 
 # 格式、静态检查与包含海洋模块的单元测试。
-cargo fmt --check
+cargo fmt --all --check
 cargo clippy --features ocean --all-targets -- -D warnings
 cargo test --features ocean --lib
+# CPU 包测试；--workspace 可同时覆盖根包与 CPU 包。
+cargo test -p tui-2d-prototype
 
 # 构建并验证实际 GPU 路径。
 cargo build --release --features ocean --bin ocean
@@ -55,12 +57,13 @@ target\release\ocean.exe --beach --no-settings --frames 600
 - 根据修改范围选择验证。纯文档修改不需要构建；纯布局修改不必重复完整物理验证。
 - `cargo test --features ocean --bin ocean` 不能替代库测试；海洋模块的测试应使用 `--lib`。
 - Rust 编译通过不代表 WGSL 正确。修改着色器、绑定或缓冲区布局时，应运行相关 GPU 验证；无法运行时明确说明。
-- 修改 CPU 共用代码或 feature 边界时，同时用 `--no-default-features` 验证 CPU 构建和测试；运行时需指定 `--bin water-simulation`。
+- 修改 CPU 包或 workspace 边界时，用 `cargo test -p tui-2d-prototype` 和 `cargo clippy -p tui-2d-prototype --all-targets -- -D warnings` 验证 CPU 路径；启动指定 `-p tui-2d-prototype`。目录名和 Cargo 包名均为 `tui-2d-prototype`。根包 `--no-default-features` 不再选择 CPU 程序。
 - 比较视觉结果时固定相机、时间、随机种子、波谱与求解阶数。`--snapshot` 输出渲染画面，不能用于验证参数面板布局。
 - 不为可逆的小型界面修改添加仅复述实现的测试。数值边界、配置兼容、质量输送等行为需要有意义的验证。
 
 ## 模拟与 GPU 约定
 
+- WGSL 文件放在所属模块的 `shaders/` 子目录，使用相对源文件的 `include_str!` / `include_bytes!` 编译期嵌入；跨模块复用时引用实际所属模块，不复制文件。
 - 保留远海 FFT 与近岸 SWE 的分工；当前耦合方向为 FFT → SWE。不要无意中重新引入独立近岸造波器。
 - FFT 输入涉及水位和匹配动量；调整过滤、增益或初始化时，同时检查两者，避免重复应用增益。
 - 保留一阶、二阶 SWE 切换。修改求解器时检查静水平衡、干湿边界、稳定步长及非负水深。

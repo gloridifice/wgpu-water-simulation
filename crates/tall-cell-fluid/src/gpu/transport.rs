@@ -72,12 +72,12 @@ impl<'a> Transport<'a> {
             context,
             pipeline: context.pipeline(
                 "transport and level set",
-                include_str!("transport.wgsl"),
+                include_str!("shaders/transport.wgsl"),
                 "main",
             )?,
             volume_pipeline: context.pipeline(
                 "parallel volume correction",
-                include_str!("volume.wgsl"),
+                include_str!("shaders/volume.wgsl"),
                 "main",
             )?,
             uniform: context.uniform("transport params", &params),

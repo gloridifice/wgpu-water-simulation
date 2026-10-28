@@ -14,7 +14,7 @@ use std::{
     io,
     time::{Duration, Instant},
 };
-use water_simulation::solver::Config;
+use tui_2d_prototype::solver::Config;
 
 pub fn run(config: Config, paused: bool) -> Result<(), Box<dyn std::error::Error>> {
     // 先验证求解参数，再切换终端模式；run 在正常退出/错误/恐慌时恢复终端。

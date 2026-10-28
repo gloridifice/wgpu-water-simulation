@@ -7,7 +7,7 @@ use super::GpuContext;
 use crate::adaptivity::{AdaptiveGrid, AdaptivityConfig};
 use crate::grid::Grid;
 
-const SHADER: &str = include_str!("adaptivity.wgsl");
+const SHADER: &str = include_str!("shaders/adaptivity.wgsl");
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]

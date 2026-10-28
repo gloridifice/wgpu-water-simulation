@@ -23,12 +23,12 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}\n{}\n{}\n{}\n{}",
-                    include_str!("optics.wgsl"),
-                    include_str!("sky.wgsl"),
-                    include_str!("skylight.wgsl"),
-                    include_str!("render.wgsl"),
-                    include_str!("shore.wgsl"),
-                    include_str!("shore_read.wgsl"),
+                    include_str!("shaders/optics.wgsl"),
+                    include_str!("shaders/sky.wgsl"),
+                    include_str!("shaders/skylight.wgsl"),
+                    include_str!("shaders/render.wgsl"),
+                    include_str!("shaders/shore.wgsl"),
+                    include_str!("shaders/shore_read.wgsl"),
                     r#"
 @group(1) @binding(0) var<storage, read_write> nsh_results: array<vec4<f32>>;
 @compute @workgroup_size(64) fn nsh_probe(@builtin(global_invocation_id) id: vec3<u32>) {

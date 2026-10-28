@@ -1,5 +1,5 @@
 use std::time::Duration;
-use water_simulation::solver::{Config, Simulation};
+use tui_2d_prototype::solver::{Config, Simulation};
 
 /// 交互状态只调用求解器的公开接口，不参与通量和 CFL 计算。
 pub struct App {

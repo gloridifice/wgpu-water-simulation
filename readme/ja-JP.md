@@ -34,7 +34,7 @@ GPU Ocean が起動します。アセットはリポジトリに含まれ、初�
 cargo run --release -- --help
 ```
 
-保存した設定を復元するときは、シーンプリセットを指定しないでください。`--beach` と `--model` は保存済みのシーン設定を一部上書きします。操作と設定は [Ocean ガイド](../docs/ocean.md)を参照してください。
+保存した設定を復元するときは、シーンプリセットを指定しないでください。`--beach` と `--model` は保存済みのシーン設定を一部上書きします。操作と設定は [Ocean ガイド](../doco/guides/ocean.md)を参照してください。
 
 ### 更新
 
@@ -52,7 +52,7 @@ cargo run --release
 - 個別に扱う沖合の泡、沿岸の泡の輸送、砂浜の湿潤状態と、任意で有効化できる GPU 飛沫粒子。
 - 水、海底、空の描画と、スキャンした海岸地形への対応。
 - ドッキング可能な egui パラメータパネル、セッション保存、名前付き設定。
-- `ocean` feature なしで動作する CPU 二次元 PIC・一次元浅水ターミナルデモ。
+- GPU に依存しない CPU 二次元 PIC・一次元浅水ターミナルデモ。`crates/tui-2d-prototype` に分離。
 - 独自のデモを備えた別個の[三次元液体シミュレーションライブラリ](../crates/tall-cell-fluid/README.md)。Ocean には未統合。
 
 ## ソースからビルド
@@ -66,10 +66,10 @@ cargo build --release --bin ocean
 GPU 関連の依存関係をコンパイルせずに CPU PIC デモを実行するには：
 
 ```sh
-cargo run --release --no-default-features --bin water-simulation
+cargo run --release -p tui-2d-prototype
 ```
 
-ターミナル操作やその他のモードについては、[PIC ガイド](../docs/pic.md)と[一次元浅水ガイド](../docs/shallow.md)を参照してください。
+ターミナル操作やその他のモードについては、[PIC ガイド](../doco/guides/pic.md)と[一次元浅水ガイド](../doco/guides/shallow.md)を参照してください。
 
 ## ライセンス
 
@@ -79,10 +79,10 @@ cargo run --release --no-default-features --bin water-simulation
 
 詳細ドキュメントは主に中国語です。
 
-- [Ocean の使い方と GPU 検証](../docs/ocean.md)
-- [CPU PIC シミュレーション](../docs/pic.md)
-- [一次元浅水シミュレーション](../docs/shallow.md)
-- [泡の診断とベンチマーク](../docs/foam-lab.md)
+- [Ocean の使い方と GPU 検証](../doco/guides/ocean.md)
+- [CPU PIC シミュレーション](../doco/guides/pic.md)
+- [一次元浅水シミュレーション](../doco/guides/shallow.md)
+- [泡の診断とベンチマーク](../doco/guides/foam-lab.md)
 - [保存設定と実験用設定](../configs/README.md)
 - [現在のアーキテクチャ](../doco/architecture.md)
 - [リポジトリの開発指針](../AGENTS.md)

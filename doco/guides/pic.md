@@ -1,6 +1,6 @@
-> 默认启动三维 GPU 海洋：运行 `cargo run`，性能对比使用 `cargo run --release`。详见 [wgpu FFT 海洋说明](ocean.md)。以下为保留的 CPU 终端程序说明，使用 `--no-default-features --bin water-simulation` 启动。
+> 默认启动三维 GPU 海洋：运行 `cargo run`，性能对比使用 `cargo run --release`。详见 [wgpu FFT 海洋说明](ocean.md)。以下为独立 CPU 包 `crates/tui-2d-prototype` 的说明，使用 `cargo run -p tui-2d-prototype` 启动，无需编译 GPU 依赖。
 
-独立的三维不可压缩液体库位于 [`crates/tall-cell-fluid`](../crates/tall-cell-fluid/README.md)，包含 wgpu 计算后端、CPU 参考实现、自适应光学层、纵长单元压力空间、完整时间推进和表面生成。它提供独立的 `fluid-demo` 可视化程序（启用 `demo` feature，含 egui 控制与模拟 / Mesh / 着色耗时面板）及无窗口 `gpu_verify`，使用自己的 manifest 构建，未接入 Ocean。
+独立的三维不可压缩液体库位于 [`crates/tall-cell-fluid`](../../crates/tall-cell-fluid/README.md)，包含 wgpu 计算后端、CPU 参考实现、自适应光学层、纵长单元压力空间、完整时间推进和表面生成。它提供独立的 `fluid-demo` 可视化程序（启用 `demo` feature，含 egui 控制与模拟 / Mesh / 着色耗时面板）及无窗口 `gpu_verify`，使用自己的 manifest 构建，未接入 Ocean。
 
 # 二维侧视 CPU PIC 水体模拟器
 
@@ -12,29 +12,29 @@ Rust 实现的自由表面液体模拟器。粒子可以向水平和竖直方向
 
 ```powershell
 # 在仓库根目录运行。
-cargo run --release --no-default-features --bin water-simulation
+cargo run --release -p tui-2d-prototype
 ```
 
 建议使用 Windows Terminal，窗口 120×40 或更大；最低支持 70×22。默认 112×64 网格，格宽 0.1 米，6736 个水粒子。默认播放倍率为 0.25×，让最初约 0.2～0.4 秒的翻折过程更容易观察；具体形态随物理步长和分辨率略有变化。
 
 ```powershell
 # 从暂停状态开始，按 N 逐个物理步观察。
-cargo run --release --no-default-features --bin water-simulation -- --paused
+cargo run --release -p tui-2d-prototype -- --paused
 
 # 从静水开始，之后按 B 主动产生一次卷浪，按 W 控制挡板。
-cargo run --release --no-default-features --bin water-simulation -- --no-pulse --no-waves
+cargo run --release -p tui-2d-prototype -- --no-pulse --no-waves
 
 # 较低网格分辨率；改变网格也会改变水槽物理尺寸。
-cargo run --release --no-default-features --bin water-simulation -- --nx 80 --ny 48
+cargo run --release -p tui-2d-prototype -- --nx 80 --ny 48
 
 # 无终端运行，保存每个输出时刻的粒子轨迹；目标文件必须不存在。
-cargo run --release --no-default-features --bin water-simulation -- --headless --time 2 --frames 40 --csv pic-frames.csv
+cargo run --release -p tui-2d-prototype -- --headless --time 2 --frames 40 --csv pic-frames.csv
 
 # 保留原有的一维浅水模拟器和鼠标水面扰动。
-cargo run --release --no-default-features --bin water-simulation -- --shallow --paused
-cargo run --release --no-default-features --bin water-simulation -- --shallow --headless --quiet
+cargo run --release -p tui-2d-prototype -- --shallow --paused
+cargo run --release -p tui-2d-prototype -- --shallow --headless --quiet
 
-cargo run --no-default-features --bin water-simulation -- --help
+cargo run -p tui-2d-prototype -- --help
 ```
 
 在终端中运行默认进入二维 TUI；重定向输入/输出或传入 `--headless` 后使用批处理模式。`--time / --frames / --csv / --quiet / --animate` 也会选择批处理模式。原来的 `--cells 41` 仍会选择一维浅水模式。
@@ -64,7 +64,9 @@ cargo run --no-default-features --bin water-simulation -- --help
 ## 核心代码
 
 ```text
-src/
+crates/tui-2d-prototype/src/
+  main.rs         参数解析和 TUI / 批处理模式选择
+  lib.rs          公开 pic、solver 与一维求解器类型
   pic/
     mod.rs        参数、粒子、步进、造浪、鼠标脉冲、诊断
     grid.rs       MAC 交错网格、空气/水/固体、坡面与边界
@@ -80,7 +82,7 @@ src/
 算法模块只依赖 Rust 标准库，不读取键盘、时钟或终端。Ratatui 与 Crossterm 只用于应用界面。库接口示例：
 
 ```rust
-use water_simulation::pic::{Config, Simulation};
+use tui_2d_prototype::pic::{Config, Simulation};
 
 fn run() -> Result<(), String> {
     let mut water = Simulation::new(Config::default())?;
@@ -96,7 +98,7 @@ fn run() -> Result<(), String> {
 也可独立运行无界面示例：
 
 ```powershell
-cargo run --release --example pic_probe -- 2 frames.csv pulse
+cargo run --release -p tui-2d-prototype --example pic_probe -- 2 frames.csv pulse
 ```
 
 ## 一步 PIC 在做什么
@@ -137,9 +139,9 @@ CFL 根据粒子速度、挡板最大速度和重力尺度自适应选取 dt，�
 ## 验证
 
 ```powershell
-cargo fmt --check
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
+cargo fmt --all --check
+cargo test --locked -p tui-2d-prototype
+cargo clippy --locked -p tui-2d-prototype --all-targets -- -D warnings
 ```
 
 新增检查包括常量速度 PIC 传递、压力投影降低散度、静水、CFL、粒子不丢失及固体边界、实际翻折指标、局部脉冲、暂停/单步/重置、不同刷新频率下的相同步进、鼠标位置映射和终端尺寸。原有一维质量守恒、对称性、稳定性及鼠标扰动测试继续运行。
