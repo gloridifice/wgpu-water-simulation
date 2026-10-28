@@ -30,12 +30,13 @@ pub const FOAM_TEXTURE_NAMES: [&str; 4] = [
     "Crest Foam NSH",
     "Crest Foam2 NSH",
 ];
-pub const FOAM_MATERIAL_VIEWS: [&str; 5] = [
+pub const FOAM_MATERIAL_VIEWS: [&str; 6] = [
     "正常着色",
     "Soft 图案",
     "Height 图案",
     "泡沫法线",
     "不透明度（黑透／白实）",
+    "输运坐标网格",
 ];
 pub const VIEWS: [(u32, &str); 8] = [
     (0, "正常着色"),
@@ -73,6 +74,8 @@ pub struct ShoreConfig {
     pub foam_opacity_scale: f32,
     pub foam_roughness: f32,
     pub foam_material_view: u32,
+    pub foam_prototype: bool,
+    pub foam_texture_period: f32,
     pub breaking_depth: f32,
     pub generation: f32,
     pub foam_generation_threshold: f32,
@@ -122,6 +125,8 @@ impl Default for ShoreConfig {
             foam_opacity_scale: 2.0,
             foam_roughness: 0.85,
             foam_material_view: 0,
+            foam_prototype: false,
+            foam_texture_period: 2.0,
             breaking_depth: 2.0,
             generation: 4.0,
             foam_generation_threshold: 0.25,
@@ -174,6 +179,12 @@ impl ShoreConfig {
             ("SWE filter transition", self.filter_transition, 0.0, 512.0),
             ("shore normal strength", self.normal_strength, 0.0, 3.0),
             ("foam texture size (m)", self.foam_texture_size, 0.25, 64.0),
+            (
+                "foam texture period (s; 0 disables resets)",
+                self.foam_texture_period,
+                0.0,
+                60.0,
+            ),
             ("foam micro normal", self.foam_micro_normal, 0.0, 3.0),
             (
                 "foam opacity density scale",
@@ -285,6 +296,9 @@ impl ShoreConfig {
         }
         if !(1..=2).contains(&self.foam_transport_order) {
             return Err("foam transport order must be 1 or 2".into());
+        }
+        if self.foam_texture_period > 0.0 && self.foam_texture_period < 0.25 {
+            return Err("foam texture period must be 0 or 0.25..=60 seconds".into());
         }
         if self.foam_texture >= FOAM_TEXTURE_NAMES.len() as u32
             || self.foam_material_view >= FOAM_MATERIAL_VIEWS.len() as u32
@@ -754,7 +768,12 @@ impl Shore {
                 c.foam_micro_normal,
                 c.foam_opacity_scale,
             ],
-            foam_shading: [0.0, c.foam_roughness, c.foam_material_view as f32, 0.0],
+            foam_shading: [
+                c.foam_prototype as u32 as f32,
+                c.foam_roughness,
+                c.foam_material_view as f32,
+                c.foam_texture_period,
+            ],
             options: [c.generation, c.view as f32, self.resolution as f32, 0.0],
             collider_meta: [collider_count as f32, 0.0, 0.0, 0.0],
             model: [
@@ -2176,16 +2195,22 @@ fn motion_probe(@builtin(global_invocation_id) id: vec3<u32>) {
     });
     let n = RESOLUTION as usize;
     let cells = n * n;
-    // Follow, response, water speed, initial foam speed, stretching, dt, steps.
-    for (case, (follow, response, water, initial, stretch, dt, steps)) in [
-        (0.5_f32, 0.0_f32, 1.0_f32, 0.0_f32, false, 0.02_f32, 120),
-        (0.0, 0.0, 1.0, 0.0, false, 0.02, 120),
-        (0.8, 0.35, 1.0, 0.0, false, 0.02, 120),
-        (0.8, 0.35, -1.0, 0.8, false, 0.02, 120),
-        (1.0, 0.0, 0.0, 0.0, true, 0.02, 120),
-        (0.8, 0.35, 1.0, 0.0, false, 0.01, 240),
-        (0.5, 0.0, 1.0, 0.0, false, 0.02, 1020),
-        (1.0, 0.0, 0.0, 0.0, true, 0.02, 1020),
+    // Follow, response, water speed, initial foam speed, stretching, dt, steps, reset period.
+    for (case, (follow, response, water, initial, stretch, dt, steps, period)) in [
+        (
+            0.5_f32, 0.0_f32, 1.0_f32, 0.0_f32, false, 0.02_f32, 120, 2.0_f32,
+        ),
+        (0.0, 0.0, 1.0, 0.0, false, 0.02, 120, 2.0),
+        (0.8, 0.35, 1.0, 0.0, false, 0.02, 120, 2.0),
+        (0.8, 0.35, -1.0, 0.8, false, 0.02, 120, 2.0),
+        (1.0, 0.0, 0.0, 0.0, true, 0.02, 120, 2.0),
+        (0.8, 0.35, 1.0, 0.0, false, 0.01, 240, 2.0),
+        (0.5, 0.0, 1.0, 0.0, false, 0.02, 1020, 2.0),
+        (1.0, 0.0, 0.0, 0.0, true, 0.02, 1020, 2.0),
+        (0.5, 0.0, 1.0, 0.0, false, 0.02, 1020, 8.0),
+        (1.0, 0.0, 0.0, 0.0, true, 0.02, 1020, 8.0),
+        (0.5, 0.0, 1.0, 0.0, false, 0.02, 1020, 0.0),
+        (1.0, 0.0, 0.0, 0.0, true, 0.02, 1020, 0.0),
     ]
     .into_iter()
     .enumerate()
@@ -2216,6 +2241,7 @@ fn motion_probe(@builtin(global_invocation_id) id: vec3<u32>) {
         p.domain = [0.0, 0.0, 64.0, 64.0];
         p.timing[1] = dt;
         p.foam_motion = [follow, response, 0.0, 0.0];
+        p.foam_shading[3] = period;
         p.timing[2] = 0.0;
         gpu.queue
             .write_buffer(&shore.uniform, 0, bytemuck::bytes_of(&p));
@@ -2253,9 +2279,14 @@ fn motion_probe(@builtin(global_invocation_id) id: vec3<u32>) {
         let mid = 96 * n + 96;
         let motion = data[3 * cells + mid];
         let texture = data[4 * cells + mid];
-        let age_a = time % 2.0;
-        let age_b = if time < 1.0 { time } else { (time + 1.0) % 2.0 };
-        if (texture[2] - age_a / 2.0).abs() > 0.0001 {
+        let age_a = if period == 0.0 { time } else { time % period };
+        let age_b = if period == 0.0 || time < period * 0.5 {
+            time
+        } else {
+            (time + period * 0.5) % period
+        };
+        let expected_phase = if period == 0.0 { 0.0 } else { age_a / period };
+        if (texture[2] - expected_phase).abs() > 0.0001 {
             return Err(format!(
                 "foam texture phase does not track simulated time: {} vs {time}",
                 texture[2]
@@ -2449,6 +2480,30 @@ mod tests {
         assert_eq!(old.foam_material_view, 4);
         assert_eq!(old.foam_texture, 1);
         assert_eq!(old.foam_texture_size, 12.0);
+        assert!(!old.foam_prototype);
+        assert_eq!(old.foam_texture_period, 2.0);
+        for period in [0.0, 0.25, 8.0, 60.0] {
+            let config = super::ShoreConfig {
+                foam_prototype: true,
+                foam_texture_period: period,
+                foam_material_view: 5,
+                ..old
+            };
+            config.validate().unwrap();
+            let restored: super::ShoreConfig =
+                serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+            assert_eq!(config, restored);
+        }
+        for period in [-1.0, 0.01, 60.1, f32::NAN, f32::INFINITY] {
+            assert!(
+                super::ShoreConfig {
+                    foam_texture_period: period,
+                    ..old
+                }
+                .validate()
+                .is_err()
+            );
+        }
         for source in 0..super::FOAM_TEXTURE_NAMES.len() as u32 {
             let config = super::ShoreConfig {
                 foam_texture: source,
@@ -2466,7 +2521,7 @@ mod tests {
                 ..old
             },
             super::ShoreConfig {
-                foam_material_view: 5,
+                foam_material_view: 6,
                 ..old
             },
             super::ShoreConfig {

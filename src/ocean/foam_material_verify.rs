@@ -39,7 +39,8 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
         let scale=array(0.01,2.0,20.0)[index/(65u*9u)];
         let depth=array(0.0,0.01,1.0)[fixture/3u];
         let opacity=nsh_opacity(density,depth,f32(fixture%3u)*0.5,0.04,2.0,scale);
-        nsh_results[index]=vec4(opacity,0.0,0.0,0.0);
+        let prototype=prototype_opacity(density,depth,f32(fixture%3u)*0.5,0.0,scale);
+        nsh_results[index]=vec4(opacity,prototype,0.0,0.0);
         return;
     }
     if index<1763u {
@@ -130,6 +131,31 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
         return Err("NSH material returned a non-finite value".into());
     }
     verify_opacity(values)?;
+    // Same density/depth sweep also covers prototype pores, including the low
+    // noise values that would leak white at zero density without the gate.
+    for scale in 0..3 {
+        for fixture in 0..FIXTURES {
+            let mut previous = 0.0;
+            for density in 0..DENSITIES {
+                let opacity = values[(scale * FIXTURES + fixture) * DENSITIES + density][1];
+                if !(0.0..=1.0).contains(&opacity)
+                    || ((density == 0 || fixture < 3) && opacity != 0.0)
+                    || opacity + 1e-6 < previous
+                {
+                    return Err("prototype pore opacity lost zero/dry/monotone behavior".into());
+                }
+                previous = opacity;
+            }
+        }
+    }
+    let low_grain = values[(FIXTURES + 6) * DENSITIES + 8][1];
+    let high_grain = values[(FIXTURES + 8) * DENSITIES + 8][1];
+    if low_grain < 0.99 || high_grain != 0.0 {
+        return Err("prototype material lost density-dependent holes".into());
+    }
+    println!(
+        "Prototype pores GPU: zero density/dry invisibility, monotone decay and surviving holes OK"
+    );
     verify_normals(&values[OPACITIES..OPACITIES + NORMALS])?;
     verify_textures(&values[OPACITIES + NORMALS..])?;
     println!(

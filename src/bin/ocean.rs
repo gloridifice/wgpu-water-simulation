@@ -59,6 +59,9 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --foam-view N    Snapshot: 0=water, 1=Jacobian, 2=foam coverage
   --foam-texture N Nearshore: 0=legacy, 1=Shorewaves NSH, 2=Crest foam, 3=Crest Foam2
   --foam-transport-order N  Foam spatial flux: 1=baseline (default), 2=MUSCL (requires --swe-order 2)
+  --foam-prototype Use advected multiscale noise pores (appearance only; default: off)
+  --no-foam-prototype Restore saved texture material
+  --foam-texture-period S Coordinate reset period: 0=continuous, 0.25..60 s (default: 2)
   --foam-ridges    Experimental SWE compression-ridge-only emission (default: off)
   --no-foam-ridges Restore legacy source (for matched-input comparisons)
   --no-foam-emission Stop new foam without clearing transported foam
@@ -66,7 +69,7 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --foam-ridge-width M  Candidate band width, clamped to 1..2 local cells (0.05..10 m)
   --foam-ridge-prominence N Relative compression peak prominence (0..1)
   --foam-opacity-scale N  NSH density for 63% opacity at full coverage (0.01..20, default: 2)
-  --foam-material-view N  0=shaded, 1=Soft, 2=Height, 3=normal, 4=opacity (black/white)
+  --foam-material-view N  0=shaded, 1=pattern, 2=Height, 3=normal, 4=opacity, 5=advected grid
   --time S         Snapshot time, >=0 (default: 3)
   --config PATH    Strict read-only configuration for window OR snapshot; no autosave
   --settings PATH  Writable GUI session (default: configs/ocean-settings.json if present,
@@ -179,6 +182,9 @@ fn run() -> Result<(), Error> {
             "--verify-terrain" => verify_terrain = true,
             "--snapshot" => path = Some(value(&mut args, &arg)?),
             "--foam-view" => foam_view = Some(value(&mut args, &arg)?),
+            "--foam-prototype" => optics.shore.foam_prototype = true,
+            "--no-foam-prototype" => optics.shore.foam_prototype = false,
+            "--foam-texture-period" => optics.shore.foam_texture_period = value(&mut args, &arg)?,
             "--foam-ridges" => optics.shore.foam_ridge_enabled = true,
             "--no-foam-ridges" => optics.shore.foam_ridge_enabled = false,
             "--no-foam-emission" => optics.shore.foam_emission_enabled = false,

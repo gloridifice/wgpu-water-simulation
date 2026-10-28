@@ -21,6 +21,7 @@
 - `src/ocean/spray.rs` 与 `spray*.wgsl`：近岸纹理浪花。Shore 持有 `SpraySource`，每完成 SWE 子步向独立网格 storage buffer 累积发射信号；Renderer 持有 `SprayParticles`，消费信号，维护 GPU 余量、双粒子列表和间接绘制参数。粒子不反作用水体或泡沫，运行时不回读信号/粒子计数。配置放在 `OpticsConfig::spray`，默认关闭。
 - `src/ocean/viewer.rs`：窗口、相机、配置应用和帧调度；正常帧先计算 FFT、远海泡沫和 SWE，再编码粒子更新，最后调用场景、浪花和 GUI 绘制。快照暖机同样推进粒子。
 - `gpu.rs::Renderer` 持有 `Shore`，组织天空、海底、模型与水面绘制。水面写入 `Depth32Float` 深度；主深度具有 `RENDER_ATTACHMENT | TEXTURE_BINDING` 用途，场景 pass 保存深度，后续浪花 pass 只采样，不把该深度同时挂为可写附件。
+- 近岸材质坐标跟随泡沫输运速度，双相位重置周期由 `foam_texture_period` 控制（默认 2 模拟秒，0 为持续输运）；只重置不可见的坐标层，不修改密度／动量。`foam_prototype` 默认关闭，开启后在输运坐标上使用三尺度 value noise 和密度阈值显示孔洞，沿用现有光学、颜色和密度尺度参数；不使用 NSH 微法线。材质调试 5 显示输运坐标网格。此阶段没有新增细波传播、撞岩源或高分辨率泡沫场。
 - `render.wgsl` 的近岸 NSH 泡沫保留双相位孔隙覆盖，使用原始面密度的指数响应控制连续不透明度；`ShoreConfig::foam_opacity_scale` 仅控制外观，不修改密度／动量或重置历史。原灰度和远海泡沫路径独立。
 - `optics*`、`seabed*`、`skylight*`、`render.wgsl`：光学参数、水底、天空照明与水面材质。`terrain*`、`collider*`、`model*` 提供地形、碰撞物与导入模型支持。
 - `sand.rs` 与 `color_mips.wgsl`：沙地和导入模型颜色贴图在 CPU 解码 JPEG、上传原始层后，通过 GPU render pass 在线性空间生成完整 sRGB mip 链，不同步等待 GPU；每级写回 8 位 sRGB。沙地法线／标量贴图保留 CPU 过滤。`sand::verify` 回读实际 GPU mip，检查线性光平均及矩形纹理边界。

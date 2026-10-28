@@ -85,6 +85,6 @@ fn sample_shore_texture(p: vec2<f32>) -> FoamTextureSample {
     let c=clamp(base,vec2(0),vec2(n-1));
     let phase=shore_field[4u*cells+u32(c.y*n+c.x)].z;
     // A is invisible at its reset, B at its half-cycle reset; smooth endpoints.
-    let blend=smoothstep(0.0,1.0,1.0-abs(2.0*phase-1.0));
+    let blend=select(smoothstep(0.0,1.0,1.0-abs(2.0*phase-1.0)),1.0,shore.foam_shading.w==0.0);
     return FoamTextureSample(value/max(weight,0.000001),blend);
 }

@@ -205,7 +205,30 @@ struct FoamAppearance {
     pattern: vec2<f32>,
     normal: vec3<f32>,
 }
-fn nsh_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<f32>, density: f32, depth: f32) -> FoamAppearance {
+// Prototype pores live in advected world coordinates, not screen space.
+fn prototype_noise(p: vec2<f32>) -> f32 {
+    let footprint=max(length(dpdx(p)),length(dpdy(p)));
+    return mix(shore_noise(p),0.5,smoothstep(0.5,2.0,footprint));
+}
+fn prototype_opacity(density: f32, depth: f32, grain: f32, width: f32, scale: f32) -> f32 {
+    let coverage=1.0-exp(-max(density,0.0)/scale);
+    // The original threshold can leak white at zero density for low grain.
+    return smoothstep(grain-0.11-width,grain+0.08+width,coverage)
+        *smoothstep(0.0,0.02,coverage)*smoothstep(0.003,0.02,depth);
+}
+fn material_grid(material: vec2<f32>) -> f32 {
+    let p=material*2.0;
+    let d=abs(fract(p-0.5)-0.5);
+    let line=vec2(1.0)-smoothstep(vec2(0.0),max(fwidth(p),vec2(0.001)),d);
+    return max(line.x,line.y);
+}
+fn foam_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<f32>, density: f32, depth: f32) -> FoamAppearance {
+    if shore.foam_shading.x>0.5 {
+        let grain=0.55*prototype_noise(material*2.5)+0.30*prototype_noise(material*7.0)+0.15*prototype_noise(material*17.0);
+        let opacity=prototype_opacity(density,depth,grain,0.5*fwidth(grain),shore.foam_material.w);
+        let color=shore.water_foam_color.rgb*(0.65+0.35*max(dot(base,camera.sun.xyz),0.0));
+        return FoamAppearance(color*opacity,opacity,vec2(grain,0.0),base);
+    }
     let layer=i32(shore.foam_material.x)-1;
     let uv=material/shore.foam_material.y;
     let coarse=textureSample(foam_nsh,foam_nsh_sampler,uv,layer);
@@ -319,7 +342,7 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     // World coordinates prevent repeated shoreline patterns on the 3x3 tiles.
     var detail = foam_detail(input.grid);
     var foam = camera.misc.x * smoothstep(0.015, 0.25, foam_data.x) * (0.55 + 0.45 * smoothstep(0.15, 0.75, detail));
-    if shore_active(shore) && shore.foam_material.x<0.5 {
+    if shore_active(shore) && shore.foam_material.x<0.5 && shore.foam_shading.x<0.5 {
         let texture_motion=sample_shore_texture(input.world.xz);
         let material_a=input.world.xz-texture_motion.offsets.xy;
         let material_b=input.world.xz-texture_motion.offsets.zw;
@@ -336,12 +359,12 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     }
     let foam_normal = shore_detail_normal(normalize(input.foam_normal), input.grid, input.world, local_depth, detail_footprint);
     let foam_color = shore.water_foam_color.rgb * (0.65 + 0.35 * max(dot(foam_normal, camera.sun.xyz), 0.0));
-    if shore_active(shore) && shore.foam_material.x>0.5 {
+    if shore_active(shore) && (shore.foam_material.x>0.5 || shore.foam_shading.x>0.5) {
         // Each phase is thresholded and shaded before cross-fading. Blending
         // raw Soft/Height first would open/close unrelated holes at handoff.
         let motion=sample_shore_texture(input.world.xz);
-        let a=nsh_phase(input.world.xz-motion.offsets.xy,input.world,foam_normal,view,shore_history.x,local_depth);
-        let b=nsh_phase(input.world.xz-motion.offsets.zw,input.world,foam_normal,view,shore_history.x,local_depth);
+        let a=foam_material_phase(input.world.xz-motion.offsets.xy,input.world,foam_normal,view,shore_history.x,local_depth);
+        let b=foam_material_phase(input.world.xz-motion.offsets.zw,input.world,foam_normal,view,shore_history.x,local_depth);
         let opacity=mix(b.opacity,a.opacity,motion.blend)*camera.misc.x;
         let contribution=mix(b.premultiplied,a.premultiplied,motion.blend)*camera.misc.x;
         // Offshore history retains its existing material.
@@ -355,6 +378,10 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
             if debug==2u { return vec4(vec3(pattern.y),1.0); }
             if debug==3u { return vec4(normalize(mix(b.normal,a.normal,motion.blend))*0.5+vec3(0.5),1.0); }
             if debug==4u { return vec4(vec3(opacity),1.0); }
+            if debug==5u {
+                let grid=mix(material_grid(input.world.xz-motion.offsets.zw),material_grid(input.world.xz-motion.offsets.xy),motion.blend);
+                return vec4(vec3(grid)*smoothstep(0.003,0.02,local_depth),1.0);
+            }
         }
     } else {
         color = mix(color, foam_color, foam);

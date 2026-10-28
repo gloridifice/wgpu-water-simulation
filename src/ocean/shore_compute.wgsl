@@ -131,13 +131,17 @@ fn advance_foam_motion(c: vec2<i32>, q: vec4<f32>, original: vec4<f32>, momentum
     let n=i32(shore.options.z);
     // Advance with actual simulation dt, not wall time (pause/stalls/RK2).
     let phase=initial_shore[u32(4*n*n+c.y*n+c.x)].z;
-    let phase_step=dt/2.0;
-    let next=fract(phase+phase_step);
+    let period=shore.foam_shading.w;
+    var next=phase;
     var a=coords.xy+transport*dt;
     var b=coords.zw+transport*dt;
-    // Reset only the invisible layer, retaining motion after the wrap instant.
-    if phase+phase_step>=1.0 { a=transport*(next*2.0); }
-    if fract(phase+0.5)+phase_step>=1.0 { b=transport*(fract(next+0.5)*2.0); }
+    if period>0.0 {
+        let phase_step=dt/period;
+        next=fract(phase+phase_step);
+        // Reset only the invisible layer, retaining motion after the wrap instant.
+        if phase+phase_step>=1.0 { a=transport*(next*period); }
+        if fract(phase+0.5)+phase_step>=1.0 { b=transport*(fract(next+0.5)*period); }
+    }
     let wet=q.x>shore.density.z;
     return FoamMotionStep(vec4(select(vec2(0.0),momentum,wet),select(vec2(0.0),a,wet)),
         vec4(select(vec2(0.0),b,wet),next,0.0));

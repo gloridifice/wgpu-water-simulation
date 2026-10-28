@@ -135,6 +135,12 @@ impl SavedSettings {
                     self.optics.spray.debug = optics.spray.debug;
                 }
                 "--foam-texture" => self.optics.shore.foam_texture = optics.shore.foam_texture,
+                "--foam-prototype" | "--no-foam-prototype" => {
+                    self.optics.shore.foam_prototype = optics.shore.foam_prototype
+                }
+                "--foam-texture-period" => {
+                    self.optics.shore.foam_texture_period = optics.shore.foam_texture_period
+                }
                 "--foam-ridges" | "--no-foam-ridges" => {
                     self.optics.shore.foam_ridge_enabled = optics.shore.foam_ridge_enabled
                 }
