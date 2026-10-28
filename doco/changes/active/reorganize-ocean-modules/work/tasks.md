@@ -18,7 +18,7 @@ Blocked: none。
   - Dependencies: 2.2
   - Acceptance: 当前路径说明准确；fmt、Clippy、库/工具/CPU 测试与 release GPU 验证通过，固定输入快照一致，有限帧 GUI 检查有实际证据；差异审查确认无算法和配置格式改动。
 
-- [ ] 3.2 提交并推送本次重构
+- [x] 3.2 提交并推送本次重构
   - Dependencies: 3.1
   - Acceptance: 仅包含本变更，提交成功并推送 origin 当前分支；无测试产物或个人配置混入。
 
@@ -33,3 +33,4 @@ Blocked: none。
 - 相同只读暂停配置的迁移前后 cutty 窗口截图已实际查看，默认面板分区、导航、工具栏和海滩视口一致；不声称逐一手工验证所有页签交互。另用 --beach --no-settings --swe-resolution 64 --frames 90 正常退出，个人配置没有改写。
 - 最终格式化后再次运行 fmt --check、全 target 海洋 Clippy、全 workspace/all-targets 测试、CPU Clippy、no-default-features 检查、全部 release 工具构建及两个 --verify，全部通过。最终 release 的五组可重复 PNG 再次与基线字节一致；根 ocean 同层 Rust 文件由 44 减至 3。当前架构、使用说明、浪花规范与 AGENTS 路径已同步；git diff --check 和 doco check 通过（提交任务执行前保持未勾选）。
 - Test audit：保留原有 64 个海洋库测试及工具/CPU 测试；仅调整归属和导入，没有删除断言、测试专用生产出口或新增目录清单测试。测试数量不作为行为等价的唯一证明，另有真实 GPU 和基线对照。
+- 3.2：实现提交 85de9dc（refactor(ocean): organize modules by responsibility）已成功推送 origin/master。提交仅含本变更源码、相关当前文档及本变更包；没有配置、构建产物、截图、日志或其他活动包的修改。执行后补记交付状态；未自动完成/归档本包或其他活动包。
