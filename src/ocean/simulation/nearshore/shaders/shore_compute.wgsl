@@ -47,9 +47,18 @@ fn model_open_outside(q: vec2<i32>) -> bool {
     return shore.model.x>0.5 && ((q.x<0 && shore.edges.x>0.5) || (q.x>=n && shore.edges.y>0.5)
         || (q.y<0 && shore.edges.z>0.5) || (q.y>=n && shore.edges.w>0.5));
 }
+// The uploaded model bed already contains solver cell-center samples.
+// Only arbitrary world-space consumers need model_terrain's interpolation.
+fn cell_bottom(q: vec2<i32>, s: ShoreParams) -> f32 {
+    let n=i32(s.options.z); let c=clamp(q,vec2(0),vec2(n-1));
+    let p=s.domain.xy+(vec2<f32>(c)+vec2(0.5))*s.domain.zw/s.options.z;
+    var base: f32;
+    if s.model.x>0.5 { base=terrain_cell(c,s).x; }
+    else { base=terrain_height(p,s); }
+    return collider_bottom(p,base,s);
+}
 fn bed(q: vec2<i32>) -> f32 {
-    let n = i32(shore.options.z);
-    return bottom_height(world(clamp(q, vec2(0), vec2(n-1))), shore);
+    return cell_bottom(q,shore);
 }
 fn velocity(q: vec4<f32>) -> vec2<f32> {
     return q.yz / max(q.x, 0.005);
@@ -384,34 +393,31 @@ fn first_order_face(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec4<f32> {
     f[axis+1u]+=sign*4.905*(a.x*a.x-ha*ha);
     return f;
 }
-// MUSCL reconstruction of free surface, velocity and bed; foam has its own flux.
-// Revert locally at wet/dry fronts and domain edges; keep both face depths positive.
-fn primitive(c: vec2<i32>) -> vec4<f32> {
-    let q=state(c);
-    return vec4(q.x+bed(c), velocity(q), 0.0);
+// Load the water/bed stencil once per axis; reconstruction and its matching
+// bed source share these values. Foam retains its independent transport flux.
+struct WaterCell { position: vec2<i32>, value: vec4<f32>, depth: f32, bottom: f32 }
+fn water_cell(c: vec2<i32>) -> WaterCell {
+    let q=state(c); let z=bed(c);
+    return WaterCell(c,vec4(q.x+z,velocity(q),0.0),q.x,z);
 }
 fn limited(a: vec4<f32>, b: vec4<f32>) -> vec4<f32> {
     return select(vec4(0.0), sign(a)*min(min(1.3*abs(a),1.3*abs(b)),0.5*abs(a+b)), a*b>vec4(0.0));
 }
 struct Reconstruction { value: vec4<f32>, slope: vec4<f32>, bottom: f32, bed_slope: f32 }
-fn reconstruct(c: vec2<i32>, axis: u32) -> Reconstruction {
+fn reconstruct(left: WaterCell, center: WaterCell, right: WaterCell) -> Reconstruction {
     let n=i32(shore.options.z);
-    let v=primitive(c); let z=bed(c);
+    let v=center.value; let z=center.bottom;
     var r=Reconstruction(v,vec4(0.0),z,0.0);
-    if !second_order_swe() || any(c<=vec2(0)) || any(c>=vec2(n-1)) { return r; }
-    var d=vec2(0); d[axis]=1;
-    if min(state(c).x,min(state(c-d).x,state(c+d).x))<0.02 { return r; }
-    r.slope=limited(v-primitive(c-d),primitive(c+d)-v);
-    r.bed_slope=limited(vec4(z-bed(c-d)),vec4(bed(c+d)-z)).x;
+    if any(center.position<=vec2(0)) || any(center.position>=vec2(n-1)) { return r; }
+    if min(center.depth,min(left.depth,right.depth))<0.02 { return r; }
+    r.slope=limited(v-left.value,right.value-v);
+    r.bed_slope=limited(vec4(z-left.bottom),vec4(right.bottom-z)).x;
     let dh=r.slope.x-r.bed_slope;
-    if state(c).x-0.5*abs(dh)<0.005 { r.slope=vec4(0.0); r.bed_slope=0.0; }
+    if center.depth-0.5*abs(dh)<0.005 { r.slope=vec4(0.0); r.bed_slope=0.0; }
     return r;
 }
 // Outward hydrostatic flux with the one-sided pressure correction.
-fn face(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec4<f32> {
-    if !second_order_swe() { return first_order_face(c,delta,axis); }
-    let a=reconstruct(c,axis); let b=reconstruct(c+delta,axis);
-    let sign=f32(delta[axis]);
+fn reconstructed_face(a: Reconstruction, b: Reconstruction, sign: f32, axis: u32) -> vec4<f32> {
     let va=a.value+0.5*sign*a.slope; let vb=b.value-0.5*sign*b.slope;
     let za=a.bottom+0.5*sign*a.bed_slope; let zb=b.bottom-0.5*sign*b.bed_slope;
     let top=max(za,zb);
@@ -424,12 +430,20 @@ fn face(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec4<f32> {
     f[axis+1u]+=sign*4.905*(raw_h*raw_h-ha*ha);
     return f;
 }
-fn bed_source(c: vec2<i32>, axis: u32) -> f32 {
-    if !second_order_swe() {return 0.0;}
-    let r=reconstruct(c,axis);
+fn bed_source(r: Reconstruction) -> f32 {
     let hl=max(r.value.x-0.5*r.slope.x-r.bottom+0.5*r.bed_slope,0.0);
     let hr=max(r.value.x+0.5*r.slope.x-r.bottom-0.5*r.bed_slope,0.0);
     return -4.905*(hl+hr)*r.bed_slope;
+}
+struct WaterAxis { flux: vec4<f32>, source: f32 }
+fn water_axis(center: WaterCell, axis: u32) -> WaterAxis {
+    var d=vec2(0); d[axis]=1;
+    let a=water_cell(center.position-d); let b=water_cell(center.position+d);
+    let aa=water_cell(center.position-2*d); let bb=water_cell(center.position+2*d);
+    let middle=reconstruct(a,center,b);
+    let left=reconstruct(aa,a,center); let right=reconstruct(center,b,bb);
+    let flux=reconstructed_face(middle,right,1.0,axis)+reconstructed_face(middle,left,-1.0,axis);
+    return WaterAxis(flux,bed_source(middle));
 }
 // Same undeformed world-to-FFT coordinates as the ocean renderer, including half tile.
 @group(0) @binding(3) var<storage, read> fft_now: array<vec2<f32>>;
@@ -550,8 +564,8 @@ fn edit_colliders(@builtin(global_invocation_id) id: vec3<u32>) {
     for(var block=0u;block<5u;block++) {
         new_shore[block*cells+i]=old_shore[block*cells+i];
     }
-    let p=world(vec2<i32>(id.xy));
-    let before=bottom_height(p,previous_bed); let after=bottom_height(p,shore);
+    let c=vec2<i32>(id.xy);
+    let before=cell_bottom(c,previous_bed); let after=bed(c);
     if before==after { return; }
     var q=old_shore[cells+i];
     let old_depth=q.x;
@@ -605,26 +619,36 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let previous=state(c);
     let original=initial_shore[cells+index];
     let spacing=shore.domain.zw/f32(n);
-    var q=previous-dt*((face(c,vec2(1,0),0u)+face(c,vec2(-1,0),0u))/spacing.x
-        +(face(c,vec2(0,1),1u)+face(c,vec2(0,-1),1u))/spacing.y);
+    var flux_x: vec4<f32>; var flux_z: vec4<f32>; var bed_sources=vec2(0.0);
+    if second_order_swe() {
+        let center=WaterCell(c,vec4(previous.x+z,velocity(previous),0.0),previous.x,z);
+        let x=water_axis(center,0u); let z_axis=water_axis(center,1u);
+        flux_x=x.flux; flux_z=z_axis.flux; bed_sources=vec2(x.source,z_axis.source);
+    } else {
+        flux_x=first_order_face(c,vec2(1,0),0u)+first_order_face(c,vec2(-1,0),0u);
+        flux_z=first_order_face(c,vec2(0,1),1u)+first_order_face(c,vec2(0,-1),1u);
+    }
+    var q=previous-dt*(flux_x/spacing.x+flux_z/spacing.y);
     // Amount and momentum share one conservative flux, with no extra growth
     // term for convergence. The 12 m/s speed bound is included in the SWE CFL.
     var foam=vec3(previous.w,0.0,0.0);
     if shore.foam_lifetime.x<0.5 { foam=transport_foam(c); }
     q.w=foam.x;
-    q.y+=dt*bed_source(c,0u)/spacing.x; q.z+=dt*bed_source(c,1u)/spacing.y;
+    q.y+=dt*bed_sources.x/spacing.x; q.z+=dt*bed_sources.y/spacing.y;
     // One-way FFT boundary relaxation; outgoing SWE disturbances are damped here.
     let edge=select(smoothstep(0.80,1.0,(f32(id.x)+0.5)/f32(n)),model_edge_weight(p,shore),shore.model.x>0.5);
-    let incoming=incident(p,max(-z,0.1));
-    let imposed=vec4(max(incoming.x-z,0.0),incoming.yz,0.0);
-    if second_order_swe() {
-        q+=dt*edge*4.0*(imposed-previous);
-        foam.y-=dt*edge*4.0*foam_state(c).y;
-        foam.z-=dt*edge*4.0*foam_state(c).z;
-    } else {
-        let remaining=exp(-dt*edge*4.0);
-        q=mix(q,imposed,1.0-remaining);
-        foam.y*=remaining; foam.z*=remaining;
+    if edge>0.0 {
+        let incoming=incident(p,max(-z,0.1));
+        let imposed=vec4(max(incoming.x-z,0.0),incoming.yz,0.0);
+        if second_order_swe() {
+            q+=dt*edge*4.0*(imposed-previous);
+            foam.y-=dt*edge*4.0*foam_state(c).y;
+            foam.z-=dt*edge*4.0*foam_state(c).z;
+        } else {
+            let remaining=exp(-dt*edge*4.0);
+            q=mix(q,imposed,1.0-remaining);
+            foam.y*=remaining; foam.z*=remaining;
+        }
     }
     q.x=max(q.x,0.0);
     if q.x<0.00001 { q=vec4(0.0,0.0,0.0,q.w); }

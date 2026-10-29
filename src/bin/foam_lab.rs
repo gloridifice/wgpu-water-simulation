@@ -20,7 +20,7 @@ const CFL: f64 = 0.2;
 const HELP: &str = "GPU foam shape laboratory (does not load or save personal settings)
 Usage: cargo run --release --bin foam-lab -- [options]
   --output PATH       New output directory (default: target/foam-lab)
-  --benchmark         Fixed-input full SWE GPU timings (sparse/dense/model/obstacles);
+  --benchmark         Fixed-input full SWE GPU timings (sparse/dense/model/obstacles/dual);
                       uses --resolutions and --output, writes JSON and raw state binaries
   --scenario NAME     all, translation, shear, vortex (default: all)
   --resolutions LIST  Comma-separated: 64,128,256,512,1024 (default: 128,256,512)

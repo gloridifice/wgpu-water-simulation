@@ -13,6 +13,7 @@ struct Variant {
     output: wgpu::Buffer,
     pipeline: wgpu::ComputePipeline,
     bindings: Vec<wgpu::BindGroup>,
+    parameter_fingerprints: Vec<String>,
     timer: Option<(wgpu::QuerySet, wgpu::Buffer)>,
 }
 
@@ -84,18 +85,25 @@ pub(super) fn run(gpu: &Gpu, output: &std::path::Path, resolutions: &[usize]) ->
         };
         let input = make_buffer("fixed benchmark input");
         let stage = make_buffer("fixed benchmark predictor");
-        let fft_before = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("zero previous FFT"),
-            size: 8 * 8 * 3 * 8,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        let fft_buffer = |label, channels: u64| {
+            gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: 8 * 8 * channels * 8,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let fft_now = fft_buffer("fixed current FFT", 6);
+        let fft_before = fft_buffer("fixed previous FFT", 3);
         for fixture in [
             "beach-sparse",
             "beach-dense",
             "model-dense",
             "obstacles-dense",
+            "model-dual-inlet",
         ] {
+            let dual = fixture == "model-dual-inlet";
+            let model = fixture.starts_with("model-");
             let mut p = shore.parameters(&OpticsConfig::beach_scene(), 8.0, false, 0.0);
             p.domain = [-32.0, -32.0, 64.0, 64.0];
             p.terrain = [1.0, 0.02, -150.0, 2.0];
@@ -106,8 +114,37 @@ pub(super) fn run(gpu: &Gpu, output: &std::path::Path, resolutions: &[usize]) ->
             p.timing[2] = 0.3;
             p.foam_motion = [0.8, 0.35, 0.0, 0.0];
             p.foam_inertia = [1.0, 1.0, 1.0, 0.0];
-            p.model = [f32::from(fixture == "model-dense"), -5.0, -2.0, 2.0];
+            p.model = [f32::from(model), -5.0, -2.0, 2.0];
             p.edges = [0.0; 4];
+            let mut fft_current = vec![[0.0_f32; 2]; 6 * 64];
+            let mut fft_previous = vec![[0.0_f32; 2]; 3 * 64];
+            if dual {
+                p.options[0] = 4.0;
+                p.foam_front = [8.0, 1.0, 0.0, 0.15];
+                p.foam_velocity = [0.0, 0.1, 0.5, 0.0];
+                p.foam_lifetime = [
+                    1.0,
+                    std::f32::consts::LN_2 / 1.1,
+                    std::f32::consts::LN_2,
+                    0.14,
+                ];
+                p.foam_shading[3] = 6.0;
+                p.edges = [1.0; 4];
+                p.coupling[2] = 0.48;
+                // Two phases of a small oblique linear wave; matching height/momentum.
+                let speed = (9.81_f32 * 2.0).sqrt() / 2.0_f32.sqrt();
+                for i in 0..64 {
+                    let phase = std::f32::consts::TAU * ((i % 8 + i / 8) as f32 / 8.0);
+                    for (channel, scale) in [1.0, speed, speed].into_iter().enumerate() {
+                        fft_previous[channel * 64 + i][0] = 0.04 * phase.cos() * scale;
+                        fft_current[(3 + channel) * 64 + i][0] = 0.04 * (phase - 0.2).cos() * scale;
+                    }
+                }
+            }
+            gpu.queue
+                .write_buffer(&fft_now, 0, bytemuck::cast_slice(&fft_current));
+            gpu.queue
+                .write_buffer(&fft_before, 0, bytemuck::cast_slice(&fft_previous));
             if fixture == "obstacles-dense" {
                 p.collider_meta[0] = 8.0;
                 for (i, c) in p.colliders.iter_mut().take(8).enumerate() {
@@ -127,7 +164,7 @@ pub(super) fn run(gpu: &Gpu, output: &std::path::Path, resolutions: &[usize]) ->
                 let x = -32.0 + (i % n) as f32 * 64.0 / n as f32 + 32.0 / n as f32;
                 let z = -32.0 + (i / n) as f32 * 64.0 / n as f32 + 32.0 / n as f32;
                 let mut bottom = -0.02 * (x + 150.0);
-                if fixture == "model-dense" {
+                if model {
                     bottom = -2.0
                         + 0.6 * (x * 0.15).sin() * (z * 0.12).cos()
                         + 2.5 * (-((x - 5.0).powi(2) + (z + 3.0).powi(2)) / 25.0).exp();
@@ -159,7 +196,7 @@ pub(super) fn run(gpu: &Gpu, output: &std::path::Path, resolutions: &[usize]) ->
                 seed[cells + i] = [h, h * water[0], h * water[1], amount];
                 seed[2 * cells + i] = [0.0, 0.0, h + bottom, water[1]];
                 seed[3 * cells + i] = [amount * foam[0], amount * foam[1], 0.1, 0.2];
-                seed[4 * cells + i] = [0.3, 0.4, 0.37, 0.0];
+                seed[4 * cells + i] = [0.3, 0.4, 0.37, if dual { 0.4 * amount } else { 0.0 }];
             }
             gpu.queue
                 .write_buffer(&input, 0, bytemuck::cast_slice(&seed));
@@ -170,10 +207,15 @@ pub(super) fn run(gpu: &Gpu, output: &std::path::Path, resolutions: &[usize]) ->
                 let pipeline = shore.solver_pipeline(gpu, order, space).clone();
                 let result = make_buffer("fixed benchmark output");
                 let mut bindings = Vec::new();
+                let mut parameter_fingerprints = Vec::new();
                 p.solver[0] = order as f32;
                 p.foam_inertia[2] = space as f32;
                 for s in 0..order {
                     p.solver[1] = if order == 2 { (s + 1) as f32 } else { 0.0 };
+                    if dual {
+                        p.coupling[3] = if order == 2 && s == 0 { 0.25 } else { 0.75 };
+                    }
+                    parameter_fingerprints.push(fingerprint(bytemuck::bytes_of(&p)));
                     let uniform =
                         gpu.device
                             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -191,7 +233,7 @@ pub(super) fn run(gpu: &Gpu, output: &std::path::Path, resolutions: &[usize]) ->
                         (0, &uniform),
                         (1, from),
                         (2, to),
-                        (3, &ocean.fields),
+                        (3, &fft_now),
                         (4, &fft_before),
                         (5, &input),
                         (7, &shore.terrain_bed),
@@ -234,6 +276,7 @@ pub(super) fn run(gpu: &Gpu, output: &std::path::Path, resolutions: &[usize]) ->
                     output: result,
                     pipeline,
                     bindings,
+                    parameter_fingerprints,
                     timer,
                 });
             }
@@ -297,14 +340,14 @@ pub(super) fn run(gpu: &Gpu, output: &std::path::Path, resolutions: &[usize]) ->
                 let name = format!("{fixture}-n{n}-o{}-s{}", v.order, v.space);
                 fs::write(output.join(format!("{name}.bin")), &bytes)?;
                 println!("{name}: GPU ms/substep {median:?}");
-                results.push(serde_json::json!({"fixture":fixture,"resolution":n,"time_order":v.order,"space_order":v.space,"dt_s":p.timing[1],"gpu_ms_per_substep":median,"gpu_ms_per_simulated_second":median.map(|ms| ms / f64::from(p.timing[1])),"gpu_ms_samples":samples,"input_fnv1a":fingerprint(bytemuck::cast_slice(&seed)),"terrain_fnv1a":fingerprint(bytemuck::cast_slice(&terrain)),"output_fnv1a":fingerprint(&bytes),"state_file":format!("{name}.bin")}));
+                results.push(serde_json::json!({"fixture":fixture,"resolution":n,"time_order":v.order,"space_order":v.space,"dt_s":p.timing[1],"gpu_ms_per_substep":median,"gpu_ms_per_simulated_second":median.map(|ms| ms / f64::from(p.timing[1])),"gpu_ms_samples":samples,"input_fnv1a":fingerprint(bytemuck::cast_slice(&seed)),"terrain_fnv1a":fingerprint(bytemuck::cast_slice(&terrain)),"parameters_fnv1a":v.parameter_fingerprints,"fft_now_fnv1a":fingerprint(bytemuck::cast_slice(&fft_current)),"fft_before_fnv1a":fingerprint(bytemuck::cast_slice(&fft_previous)),"output_fnv1a":fingerprint(&bytes),"state_file":format!("{name}.bin")}));
             }
         }
     }
     fs::write(
         output.join("benchmark.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
-            "gpu":gpu.name,"fixture_version":1,"rounds":ROUNDS,"iterations_per_round":STEPS,"warmup_iterations":8,
+            "gpu":gpu.name,"fixture_version":2,"rounds":ROUNDS,"iterations_per_round":STEPS,"warmup_iterations":8,
             "method":"Full production SWE main entry and specialized pipelines. Immutable initial input; RK2 recomputes predictor each iteration. Fixed dt; alternating variant order. GPU timestamps exclude compilation, uploads, normal-frame state copies, FFT, spray, rendering, readback and inter-round idle. Per-simulated-second cost is extrapolated from repeated fixed inputs, not continuous evolution. No personal settings.",
             "state_format":"Little-endian f32; production five vec4 blocks per cell; output after ONE fixed substep, not a time evolution.",
             "shader_fnv1a":fingerprint(format!("{}\n{}",include_str!("../../ocean/simulation/nearshore/shaders/shore.wgsl"),include_str!("../../ocean/simulation/nearshore/shaders/shore_compute.wgsl")).as_bytes()),

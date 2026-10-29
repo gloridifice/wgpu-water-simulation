@@ -141,9 +141,12 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
         if read(gpu, &shore)? != moving {
             return Err("display-only box edit reset model water".into());
         }
-        optics.model.center[0] = 2.;
-        optics.model.size[0] = 40.;
-        optics.model.size[2] = 24.;
+        // Non-binary origin/spacing catches cell-center round-trip errors;
+        // the analytic sloping lake remains the independent reference.
+        optics.model.center[0] = 2.3;
+        optics.model.center[2] = -1.7;
+        optics.model.size[0] = 39.7;
+        optics.model.size[2] = 23.3;
         shore.prepare_terrain(gpu, &optics, Some(&source))?;
         advance(gpu, &ocean, &mut shore, &optics, 1.0);
         check_lake(&read(gpu, &shore)?, optics.model, 64)?;

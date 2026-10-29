@@ -73,7 +73,10 @@ fn collider_distance(p: vec2<f32>, c: Collider) -> f32 {
     return length(max(d,vec2(0.0)))+min(max(d.x,d.y),0.0);
 }
 fn bottom_height(p: vec2<f32>, s: ShoreParams) -> f32 {
-    var height=terrain_height(p,s);
+    return collider_bottom(p,terrain_height(p,s),s);
+}
+fn collider_bottom(p: vec2<f32>, base: f32, s: ShoreParams) -> f32 {
+    var height=base;
     if !shore_active(s) { return height; }
     for(var i=0u;i<u32(s.collider_meta.x);i++) {
         let c=s.colliders[i];
