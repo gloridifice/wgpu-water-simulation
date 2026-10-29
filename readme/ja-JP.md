@@ -23,8 +23,8 @@ wgpu による海洋描画、FFT 波浪、局所的な浅水シミュレーシ�
 ソースから実行します。最新の安定版 [Rust ツールチェーン](https://rustup.rs/) と、コンピュートシェーダーおよび頂点ステージのストレージバッファに対応した GPU が必要です。
 
 ```sh
-git clone https://github.com/gloridifice/water-simulation.git
-cd water-simulation
+git clone https://github.com/gloridifice/wgpu-water-simulation.git
+cd wgpu-water-simulation
 cargo run --release
 ```
 

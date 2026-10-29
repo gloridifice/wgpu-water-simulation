@@ -23,8 +23,8 @@ Un projet Rust de simulation de l’eau associant un rendu océanique avec wgpu,
 L’exécution se fait depuis les sources. Prévoyez une [chaîne d’outils Rust](https://rustup.rs/) stable et récente, ainsi qu’un GPU prenant en charge les compute shaders et les tampons de stockage dans l’étage de traitement des sommets.
 
 ```sh
-git clone https://github.com/gloridifice/water-simulation.git
-cd water-simulation
+git clone https://github.com/gloridifice/wgpu-water-simulation.git
+cd wgpu-water-simulation
 cargo run --release
 ```
 

@@ -23,8 +23,8 @@ A Rust water simulation project combining a wgpu ocean renderer, FFT waves, and 
 Run from source with a current stable [Rust toolchain](https://rustup.rs/) and a GPU supporting compute shaders and vertex-stage storage buffers.
 
 ```sh
-git clone https://github.com/gloridifice/water-simulation.git
-cd water-simulation
+git clone https://github.com/gloridifice/wgpu-water-simulation.git
+cd wgpu-water-simulation
 cargo run --release
 ```
 

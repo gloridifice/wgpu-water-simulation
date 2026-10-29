@@ -23,8 +23,8 @@ Rust 水体模拟项目，结合 wgpu 海洋渲染、FFT 波浪与局部浅水�
 从源码运行，需要当前稳定版 [Rust 工具链](https://rustup.rs/)，以及支持计算着色器和顶点阶段存储缓冲区的 GPU。
 
 ```sh
-git clone https://github.com/gloridifice/water-simulation.git
-cd water-simulation
+git clone https://github.com/gloridifice/wgpu-water-simulation.git
+cd wgpu-water-simulation
 cargo run --release
 ```
 
