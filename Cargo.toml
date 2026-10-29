@@ -76,6 +76,11 @@ path = "src/bin/foam_lab.rs"
 required-features = ["ocean"]
 
 [[bin]]
+name = "ocean-profile"
+path = "src/bin/ocean_profile.rs"
+required-features = ["ocean"]
+
+[[bin]]
 name = "foam-weight-lab"
 path = "src/bin/foam_weight_lab.rs"
 required-features = ["ocean"]
