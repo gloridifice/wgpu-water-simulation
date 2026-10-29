@@ -127,7 +127,7 @@ pub struct SpraySource {
     pub field: wgpu::Buffer,
     uniform: wgpu::Buffer,
     pipeline: wgpu::ComputePipeline,
-    bind: wgpu::BindGroup,
+    bind: [wgpu::BindGroup; 2],
     cells: u32,
     pub config: SprayConfig,
     pub dt: f32,
@@ -173,18 +173,20 @@ impl SpraySource {
             ),
         });
         let pipeline = pipeline(device, &shader, "emit_source");
-        let bind = bindings(
-            device,
-            &pipeline.get_bind_group_layout(0),
-            &[
-                (0, &uniform),
-                (1, &shore.uniform),
-                (2, &shore.field),
-                (3, previous),
-                (4, &shore.terrain_bed),
-                (5, &field),
-            ],
-        );
+        let bind = [(&shore.field, previous), (previous, &shore.field)].map(|(current, old)| {
+            bindings(
+                device,
+                &pipeline.get_bind_group_layout(0),
+                &[
+                    (0, &uniform),
+                    (1, &shore.uniform),
+                    (2, current),
+                    (3, old),
+                    (4, &shore.terrain_bed),
+                    (5, &field),
+                ],
+            )
+        });
         Ok(Self {
             field,
             uniform,
@@ -215,12 +217,20 @@ impl SpraySource {
         encoder: &mut wgpu::CommandEncoder,
         timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
+        self.encode_substep_direction(encoder, false, timestamp_writes);
+    }
+    pub(in crate::ocean) fn encode_substep_direction(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        reverse: bool,
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
+    ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("SWE spray source"),
             timestamp_writes,
         });
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind, &[]);
+        pass.set_bind_group(0, &self.bind[usize::from(reverse)], &[]);
         pass.dispatch_workgroups(self.cells.div_ceil(64), 1, 1);
     }
 }

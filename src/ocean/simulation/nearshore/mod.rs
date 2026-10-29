@@ -26,6 +26,9 @@ pub struct Shore {
     bind: wgpu::BindGroup,
     predictor_bind: wgpu::BindGroup,
     corrector_bind: wgpu::BindGroup,
+    reverse_bind: wgpu::BindGroup,
+    reverse_predictor_bind: wgpu::BindGroup,
+    reverse_corrector_bind: wgpu::BindGroup,
     pub substeps: u32,
     pub simulated_dt: f32,
     pub spray: Option<crate::ocean::simulation::spray::SpraySource>,
@@ -108,7 +111,7 @@ impl Shore {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let make_bind = |input: &wgpu::Buffer, output: &wgpu::Buffer| {
+        let make_bind = |input: &wgpu::Buffer, output: &wgpu::Buffer, initial: &wgpu::Buffer| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SWE stage bindings"),
                 layout: &pipeline.get_bind_group_layout(0),
@@ -139,14 +142,17 @@ impl Shore {
                     },
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: previous.as_entire_binding(),
+                        resource: initial.as_entire_binding(),
                     },
                 ],
             })
         };
-        let bind = make_bind(&previous, &field);
-        let predictor_bind = make_bind(&previous, &stage);
-        let corrector_bind = make_bind(&stage, &field);
+        let bind = make_bind(&previous, &field, &previous);
+        let predictor_bind = make_bind(&previous, &stage, &previous);
+        let corrector_bind = make_bind(&stage, &field, &previous);
+        let reverse_bind = make_bind(&field, &previous, &field);
+        let reverse_predictor_bind = make_bind(&field, &stage, &field);
+        let reverse_corrector_bind = make_bind(&stage, &previous, &field);
         let mut reader = png::Decoder::new(std::io::Cursor::new(include_bytes!(
             "../../../../assets/shorewaves/voronoi_lace.png"
         )))
@@ -202,6 +208,9 @@ impl Shore {
             bind,
             predictor_bind,
             corrector_bind,
+            reverse_bind,
+            reverse_predictor_bind,
+            reverse_corrector_bind,
             substeps: 0,
             simulated_dt: 0.0,
             spray: None,
@@ -697,12 +706,14 @@ impl Shore {
                     }),
                 });
                 pass.set_pipeline(&pipeline);
-                let bind = if stages == 1 {
-                    &self.bind
-                } else if i % 2 == 0 {
-                    &self.predictor_bind
-                } else {
-                    &self.corrector_bind
+                let reverse = (i / stages) % 2 == 1;
+                let bind = match (stages, i % stages, reverse) {
+                    (1, _, false) => &self.bind,
+                    (1, _, true) => &self.reverse_bind,
+                    (_, 0, false) => &self.predictor_bind,
+                    (_, 0, true) => &self.reverse_predictor_bind,
+                    (_, _, false) => &self.corrector_bind,
+                    (_, _, true) => &self.reverse_corrector_bind,
                 };
                 pass.set_bind_group(0, bind, &[]);
                 pass.dispatch_workgroups(
@@ -711,26 +722,33 @@ impl Shore {
                     1,
                 );
             }
-            if (i + 1) % stages == 0 {
-                if step.options[3] == 0.0
-                    && let Some(source) = &self.spray
-                {
-                    source.encode_substep(
-                        encoder,
-                        if timed && i + 1 == count * stages {
-                            Some(wgpu::ComputePassTimestampWrites {
-                                query_set: &self.timer.as_ref().unwrap().queries,
-                                beginning_of_pass_write_index: None,
-                                end_of_pass_write_index: Some(1),
-                            })
-                        } else {
-                            None
-                        },
-                    );
-                }
-                encoder.copy_buffer_to_buffer(&self.field, 0, &self.previous, 0, self.field.size());
+            if (i + 1) % stages == 0
+                && step.options[3] == 0.0
+                && let Some(source) = &self.spray
+            {
+                source.encode_substep_direction(
+                    encoder,
+                    (i / stages) % 2 == 1,
+                    if timed && i + 1 == count * stages {
+                        Some(wgpu::ComputePassTimestampWrites {
+                            query_set: &self.timer.as_ref().unwrap().queries,
+                            beginning_of_pass_write_index: None,
+                            end_of_pass_write_index: Some(1),
+                        })
+                    } else {
+                        None
+                    },
+                );
             }
         }
+        // Keep both public/current and initial history synchronized at frame boundaries.
+        // Within a frame the full-step outputs alternate; the RK predictor stays separate.
+        let (from, to) = if count % 2 == 1 {
+            (&self.field, &self.previous)
+        } else {
+            (&self.previous, &self.field)
+        };
+        encoder.copy_buffer_to_buffer(from, 0, to, 0, self.field.size());
         if timed {
             self.timer
                 .as_mut()

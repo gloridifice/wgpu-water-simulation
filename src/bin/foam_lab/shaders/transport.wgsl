@@ -21,7 +21,7 @@ fn lab_step(@builtin(global_invocation_id) id: vec3<u32>) {
         new_shore[3u*cells+i]=vec4(foam.yz,initial_shore[3u*cells+i].zw);
         new_shore[4u*cells+i]=initial_shore[4u*cells+i];
     } else {
-        let motion=advance_foam_motion(c,q,original,foam.yz);
+        let motion=advance_foam_motion(c,q,foam.yz,foam_advection(c,original));
         new_shore[3u*cells+i]=motion.motion;
         new_shore[4u*cells+i]=motion.texture;
     }

@@ -78,7 +78,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), Error> {
         ("flat retreat", 0.0, -1.0, 3.0, false),
         ("rising front", 0.4, 1.0, 3.0, true),
     ] {
-        for pieces in [1, 4] {
+        for (pieces, reverse) in [(1, true), (4, true), (1, false), (4, false)] {
             let dt = 0.04 / pieces as f32;
             let mut current = vec![[0.0f32; 4]; cells * 5];
             let mut previous = current.clone();
@@ -96,10 +96,15 @@ pub fn verify(gpu: &Gpu) -> Result<(), Error> {
                     previous[cells + i] = [h - rise * dt, h, 0.0, 100.0];
                 }
             }
+            let (current_buffer, previous_buffer) = if reverse {
+                (&old, &shore.field)
+            } else {
+                (&shore.field, &old)
+            };
             gpu.queue
-                .write_buffer(&shore.field, 0, bytemuck::cast_slice(&current));
+                .write_buffer(current_buffer, 0, bytemuck::cast_slice(&current));
             gpu.queue
-                .write_buffer(&old, 0, bytemuck::cast_slice(&previous));
+                .write_buffer(previous_buffer, 0, bytemuck::cast_slice(&previous));
             p.timing[1] = dt;
             gpu.queue
                 .write_buffer(&shore.uniform, 0, bytemuck::bytes_of(&p));
@@ -107,7 +112,7 @@ pub fn verify(gpu: &Gpu) -> Result<(), Error> {
             submit(gpu, |e| {
                 source.begin_frame(e);
                 for _ in 0..pieces {
-                    source.encode_substep(e, None);
+                    source.encode_substep_direction(e, reverse, None);
                 }
             });
             let result = floats(gpu, &source.field)?;
@@ -127,7 +132,10 @@ pub fn verify(gpu: &Gpu) -> Result<(), Error> {
             let amount = result[center * 8 + 3];
             let target = if expected { 0.4 } else { 0.0 };
             if (amount - target).abs() > 0.00001 {
-                return Err(format!("spray source {name}/{pieces}: {amount} != {target}").into());
+                return Err(format!(
+                    "spray source {name}/{pieces}/reverse={reverse}: {amount} != {target}"
+                )
+                .into());
             }
         }
     }

@@ -1085,7 +1085,7 @@ fn motion_probe(@builtin(global_invocation_id) id: vec3<u32>) {
     new_shore[index]=vec4(q.w,1.0,q.x,velocity(q).x);
     new_shore[cells+index]=q;
     new_shore[2u*cells+index]=initial_shore[2u*cells+index];
-    let motion=advance_foam_motion(c,q,original,foam.yz);
+    let motion=advance_foam_motion(c,q,foam.yz,foam_advection(c,original));
     new_shore[3u*cells+index]=motion.motion;
     new_shore[4u*cells+index]=motion.texture;
 }"#

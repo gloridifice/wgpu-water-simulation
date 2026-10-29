@@ -6,6 +6,8 @@
 // Fifth block: texture B displacement X/Z, shared cycle phase, waterborne R.
 // In dual mode q.w is N+R (for shared height/debug consumers); N=q.w-R.
 // Legacy mode keeps R=0. Neither concentration is clipped to 1.
+// RK predictor supplies only conservative state and foam momentum (block 3 xy).
+// Corrector history/texture reads must use initial_shore, not predictor history.
 // Zero keeps uniform-driven diagnostic entries; production specializes the
 // three supported combinations so inactive high-order paths cannot inflate
 // register pressure or retain terrain work in a cheaper solver variant.
@@ -129,22 +131,26 @@ fn sample_initial_texture(grid: vec2<f32>) -> vec4<f32> {
     }}
     return value/max(weight,0.000001);
 }
-struct FoamMotionStep { motion: vec4<f32>, texture: vec4<f32> }
-fn advance_foam_motion(c: vec2<i32>, q: vec4<f32>, original: vec4<f32>, momentum: vec2<f32>) -> FoamMotionStep {
+struct FoamAdvection { grid: vec2<f32>, transport: vec2<f32> }
+fn foam_advection(c: vec2<i32>, original: vec4<f32>) -> FoamAdvection {
     let dt=shore.timing.y;
     let spacing=shore.domain.zw/shore.options.z;
+    if shore.foam_lifetime.x>0.5 {
+        let grid=dual_backtrace(c,dual_transport_velocity(c));
+        return FoamAdvection(grid,(vec2<f32>(c)-grid)*spacing/dt);
+    }
     var transport=foam_transport_velocity(c);
     if shore.solver.y>1.5 {
         let initial_speed=foam_speed(original.w,initial_motion_at(c).xy,velocity(original));
         transport=0.5*(transport+foam_response(initial_speed,velocity(original),dt*0.5));
     }
-    var grid=vec2<f32>(c)-transport*dt/spacing;
-    if shore.foam_lifetime.x>0.5 {
-        transport=dual_transport_velocity(c);
-        grid=dual_backtrace(c,transport);
-        transport=(vec2<f32>(c)-grid)*spacing/dt;
-    }
-    let coords=sample_initial_texture(grid);
+    return FoamAdvection(vec2<f32>(c)-transport*dt/spacing,transport);
+}
+struct FoamMotionStep { motion: vec4<f32>, texture: vec4<f32> }
+fn advance_foam_motion(c: vec2<i32>, q: vec4<f32>, momentum: vec2<f32>, advection: FoamAdvection) -> FoamMotionStep {
+    let dt=shore.timing.y; let transport=advection.transport;
+    // Share the departure point, not the concentration's donor/weight rules.
+    let coords=sample_initial_texture(advection.grid);
     let n=i32(shore.options.z);
     // Advance with actual simulation dt, not wall time (pause/stalls/RK2).
     let phase=initial_shore[u32(4*n*n+c.y*n+c.x)].z;
@@ -331,8 +337,7 @@ fn dual_backtrace(c: vec2<i32>, speed: vec2<f32>) -> vec2<f32> {
     if dual_closed_face(c,c+vec2(0,step.y)) { offset.y=0.0; }
     return vec2<f32>(c)-offset;
 }
-fn transport_dual_foam(c: vec2<i32>, divergence: f32) -> vec2<f32> {
-    let grid=dual_backtrace(c,dual_transport_velocity(c));
+fn transport_dual_foam(c: vec2<i32>, grid: vec2<f32>, divergence: f32) -> vec2<f32> {
     let base=vec2<i32>(floor(grid)); let f=fract(grid);
     let n=i32(shore.options.z); let cells=u32(n*n);
     var amounts=vec2(0.0);
@@ -668,10 +673,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let speed=length(velocity(q));
     q.y=q.y*min(1.0,12.0/max(speed,0.00001)); q.z=q.z*min(1.0,12.0/max(speed,0.00001));
     if shore.solver.y>0.5 && shore.solver.y<1.5 {
-        new_shore[index]=initial_shore[index]; new_shore[cells+index]=q;
-        new_shore[2u*cells+index]=initial_shore[2u*cells+index];
-        new_shore[3u*cells+index]=vec4(foam.yz,initial_shore[3u*cells+index].zw);
-        new_shore[4u*cells+index]=initial_shore[4u*cells+index]; return;
+        new_shore[cells+index]=q;
+        new_shore[3u*cells+index]=vec4(foam.yz,0.0,0.0);
+        return;
     }
     let wave_speed=sqrt(9.81*max(q.x,0.001));
     let rising=max(0.0,(q.x-original.x)/dt);
@@ -697,8 +701,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var source=(background+front_source)*smoothstep(0.003,0.03,q.x)*(1.0-edge);
     if shore.foam_ridge.w<0.5 { source=0.0; }
     var residual=0.0;
+    let advection=foam_advection(c,original);
     if shore.foam_lifetime.x>0.5 {
-        let transported=transport_dual_foam(c,divergence)*exp(-dt*edge*4.0);
+        let transported=transport_dual_foam(c,advection.grid,divergence)*exp(-dt*edge*4.0);
         let amounts=dual_foam_sources(transported,source,dt,shore.foam_lifetime.yzw);
         residual=amounts.y;
         foam=vec3(amounts.x+amounts.y,(amounts.x+amounts.y)*velocity(q));
@@ -709,7 +714,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let old=initial_shore[index];
     // Foam exists only on water; drying removes it without leaving sand residue.
     if q.x<=shore.density.z { q.w=0.0; foam.y=0.0; foam.z=0.0; residual=0.0; }
-    var motion=advance_foam_motion(c,q,original,foam.yz);
+    var motion=advance_foam_motion(c,q,foam.yz,advection);
     motion.texture.w=residual;
     new_shore[3u*cells+index]=motion.motion;
     new_shore[4u*cells+index]=motion.texture;
