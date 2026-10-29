@@ -121,9 +121,8 @@ fn water_vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) inst
 }
 @vertex
 fn local_water_vertex(@builtin(vertex_index) index: u32) -> WaterOut {
-    let n=u32(shore.options.z); let cell=index/6u;
-    let corners=array<vec2<f32>,6>(vec2(0.0,0.0),vec2(0.0,1.0),vec2(1.0,0.0),vec2(1.0,0.0),vec2(0.0,1.0),vec2(1.0,1.0));
-    let uv=(vec2<f32>(f32(cell%n),f32(cell/n))+corners[index%6u])/f32(n);
+    let n=u32(shore.options.z);
+    let uv=vec2<f32>(f32(index%(n+1u)),f32(index/(n+1u)))/f32(n);
     let world=shore.domain.xy+uv*shore.domain.zw;
     return water_from_grid((world/camera.ocean.y+vec2(0.5))*camera.ocean.x,vec2(0.0),1u);
 }

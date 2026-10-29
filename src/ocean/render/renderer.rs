@@ -18,6 +18,7 @@ pub struct Renderer {
     sky: wgpu::RenderPipeline,
     water: wgpu::RenderPipeline,
     local_water: wgpu::RenderPipeline,
+    local_indices: wgpu::Buffer,
     model_active: bool,
     pub(crate) model_assets: Option<std::sync::Arc<crate::ocean::render::model::ModelAssets>>,
     bind: wgpu::BindGroup,
@@ -35,6 +36,24 @@ pub struct Renderer {
     spray: Option<crate::ocean::simulation::spray::SprayParticles>,
     spray_depth_dirty: bool,
     format: wgpu::TextureFormat,
+}
+
+fn grid_indices(device: &wgpu::Device, n: u32) -> wgpu::Buffer {
+    let mut indices = Vec::with_capacity((n * n * 6) as usize);
+    for z in 0..n {
+        for x in 0..n {
+            let a = z * (n + 1) + x;
+            let b = a + 1;
+            let c = a + n + 1;
+            indices.extend_from_slice(&[a, c, b, b, c, c + 1]);
+        }
+    }
+    buffer(
+        device,
+        "water grid indices",
+        &indices,
+        wgpu::BufferUsages::INDEX,
+    )
 }
 
 impl Renderer {
@@ -312,27 +331,15 @@ impl Renderer {
         let water = pipeline("water_vertex", "water_fragment", true);
         let local_water = pipeline("local_water_vertex", "water_fragment", true);
         let n = ocean.config.mesh_resolution;
-        let mut indices = Vec::with_capacity((n * n * 6) as usize);
-        for z in 0..n {
-            for x in 0..n {
-                let a = z * (n + 1) + x;
-                let b = a + 1;
-                let c = a + n + 1;
-                indices.extend_from_slice(&[a, c, b, b, c, c + 1]);
-            }
-        }
-        let index_count = indices.len() as u32;
-        let indices = buffer(
-            device,
-            "water grid indices",
-            &indices,
-            wgpu::BufferUsages::INDEX,
-        );
+        let index_count = n * n * 6;
+        let indices = grid_indices(device, n);
+        let local_indices = grid_indices(device, shore.resolution);
         Self {
             shore,
             sky,
             water,
             local_water,
+            local_indices,
             model_active: false,
             model_assets: None,
             bind,
@@ -368,6 +375,7 @@ impl Renderer {
         let mut model = self.seabed.model.take();
         self.spray = None;
         self.shore = Shore::with_resolution(gpu, ocean, resolution);
+        self.local_indices = grid_indices(&gpu.device, resolution);
         self.shore.timer = crate::ocean::gpu::timer::GpuTimer::new(gpu);
         self.seabed = Seabed::new(
             gpu,
@@ -594,7 +602,8 @@ impl Renderer {
         pass.draw_indexed(0..self.index_count, 0, 0..9);
         if self.model_active {
             pass.set_pipeline(&self.local_water);
-            pass.draw(0..6 * self.shore.resolution.pow(2), 0..1);
+            pass.set_index_buffer(self.local_indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..6 * self.shore.resolution.pow(2), 0, 0..1);
         }
         if let Some(model) = &self.seabed.model {
             model.draw_bounds(&mut pass);
