@@ -1,4 +1,4 @@
-<!-- doco:lifecycle v=1 created-at=2026-10-27T03:56:21Z completed-at=- archived-at=- -->
+<!-- doco:lifecycle v=1 created-at=2026-10-27T03:56:21Z completed-at=2026-10-29T06:25:42Z archived-at=2026-10-29T06:25:50Z -->
 # GPU 驱动的近岸浪花纹理粒子
 
 ## Purpose
@@ -41,6 +41,6 @@
 
 ## Result
 
-Pending — 实现与验证已执行，等待评审及明确的完成操作；变更仍为 active，未归档。
+已完成。用户已明确授权完成及归档；以下为既有交付与验证结论，本次未重跑运行验证。
 
 已接通 GPU 信号积分、固定容量粒子池、间接纹理绘制、软交界、参数面板和配置保存。库测试、CPU feature 边界、RTX 3070/Vulkan 上的完整 GPU 验证及有界窗口预览通过。首版保留纯 SWE 区域、无透明排序和高度场碰撞的限制；未验证其他设备及真实显存耗尽。

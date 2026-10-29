@@ -6,6 +6,7 @@
 
 - Rust 2024 workspace，根包 `water-simulation` 默认启用 `ocean` feature；默认成员只有根包，`cargo run` 启动 GPU Ocean。
 - `src/bin/ocean.rs` 提供 GPU 海洋入口、验证与预览参数。
+- `src/bin/ocean_profile.rs` 提供只读配置的离屏生产路径剖析：固定 1/60 模拟秒推进，预热后分开记录 FFT、远海泡沫、完整 SWE（含浪花源与复制）、粒子和绘制的 GPU timestamp；末尾回读状态／图像作 A/B，不包含 UI 或呈现。运行说明同见 [泡沫诊断与基准测试](guides/foam-lab.md#生产路径离屏剖析)。
 - `src/bin/foam_lab.rs` 提供独立离线泡沫输送对照：默认诊断入口调用生产泡沫通量／源项／纹理运动，在固定解析水流下输出密度快照及误差；`foam_lab/benchmark.rs` 的 `--benchmark` 模式则调用生产 SWE 管线，在固定稀疏／密集／模型地形／障碍物及模型双浓度＋非零入射波输入下预热并重复计时、导出单步状态。两者均不读写个人配置，见 [泡沫诊断与基准测试](guides/foam-lab.md)。
 - `crates/tui-2d-prototype/` 是独立 CPU 包：`src/main.rs` 统一选择二维 PIC／一维浅水及 TUI／批处理，`src/pic/`、`src/solver.rs` 提供不依赖终端的求解器，`src/tui/`、`src/shallow_tui/` 负责交互。测试与 `pic_probe` 示例归该包所有，Cargo 包名为 `tui-2d-prototype`，库名为 `tui_2d_prototype`，二进制仍名为 `water-simulation`；从根目录用 `cargo run -p tui-2d-prototype` 启动。
 - 根包不依赖 CPU 包、Ratatui 或 Crossterm，两包共用根 `Cargo.lock` 和构建目录；`cargo test --workspace` 覆盖两包。`crates/tall-cell-fluid/` 保持独立 workspace，不纳入此工作区。
@@ -18,16 +19,16 @@
 
 - WGSL 文件归所属模块的 `shaders/` 子目录：FFT/远海泡沫在 `simulation/offshore/`，SWE 公共定义/计算/读取在 `simulation/nearshore/`，浪花在 `simulation/spray/`，绘制与光学在 `render/`，颜色 mip 在 `render/textures/`，泡沫权重实验在 `labs/foam_weight_lab/`。离线输送诊断保留 `src/bin/foam_lab/shaders/`；独立液体库分别使用 `src/gpu/shaders/` 和 `src/demo/shaders/`。Rust 相对源文件使用 `include_str!` / `include_bytes!` 编译期嵌入；跨模块引用唯一原件，保留字节内容和拼接顺序，不依赖运行目录或外部着色器文件。
 - `simulation/offshore/spectrum.rs` 与 `fft.rs::Ocean`：波谱初始化、GPU 演化、逆 FFT，以及向近岸提供过滤后的波浪输入。
-- `simulation/nearshore/mod.rs::Shore` 与所属 `shore*.wgsl`：局部二维 SWE、一阶/二阶求解、水面泡沫输送和沙滩湿润历史。耦合方向为 FFT → SWE；`uniform.rs` 保留原 CPU → WGSL 布局。二阶水体按轴复用五格邻域、三份重构及匹配床面源项，不增加 pass 或网格缓冲。模型单元中心床面直接索引上传网格，与碰撞体编辑共用同一查询；渲染任意世界坐标仍插值。正常推进只在 FFT 松弛带读取入射波，重置仍全域初始化；CFL、RK2 阶段和状态复制不变。
+- `simulation/nearshore/mod.rs::Shore` 与所属 `shore*.wgsl`：局部二维 SWE、一阶/二阶求解、水面泡沫输送和沙滩湿润历史。耦合方向为 FFT → SWE；`uniform.rs` 保留原 CPU → WGSL 布局。二阶水体按轴复用五格邻域、三份重构及匹配床面源项，不增加 pass 或网格缓冲。模型单元中心床面直接索引上传网格，与碰撞体编辑共用同一查询；渲染任意世界坐标仍插值。正常推进只在 FFT 松弛带读取入射波，重置仍全域初始化；CFL 与 RK2 阶段不变。
 - 默认单浓度模式的近岸泡沫量与动量共用守恒 Rusanov 通量；`foam_transport_order` 默认 1，在二阶 SWE 下可启用受限 MUSCL 空间重构。密度与动量共享正性／速度约束，干湿、障碍物和域边缘局部退回一阶；不改变源项、拖曳或材质。`foam-lab` 独立选择空间／时间阶数并用相同 CFL 对照，设备支持时记录 GPU timestamp。
 - MUSCL 泡沫按轴复用五格邻域的水深、密度、动量和地形阻挡，中心斜率供两侧共用，不增加生产网格缓冲区或计算 pass。`Shore::solver_pipeline` 按水体／泡沫阶数惰性编译并缓存三个共享绑定布局的管线，用 WGSL override 去掉未启用的求解分支；首次使用可能有编译开销。诊断入口可保留 uniform 动态选择。
 - 近岸源项保留旧前沿／背景路径；默认关闭的 `foam_ridge_enabled` 实验在同一 SWE 阶段沿局部流向读取五点速度，只向局部压缩峰窄带发射，并禁用背景源。它不是 FFT/J 调制，也不改动水动力、输送、拖曳、衰减或材质。`foam_emission_enabled` 停发但不清空历史；状态第三块的 x/y 在实验或诊断视图下存最近子步实际源率／权重，z/w 保持水面高程／速度含义。`simulation/nearshore/verification/foam_ridge.rs` 通过完整 GPU 求解调度验证窄带、切向连通、矩形网格／旋转、干湿保护、两阶注入和停发后的守恒输送。尚无自动波前追踪／滞回，不保证网状形态。
-- `foam_dual_phase` 是默认关闭的双浓度实验，和默认惯性／守恒路径互斥。现有密度槽保存新鲜 N + 水面残余 R，第五块 w 保存 R，五块 storage 大小不变；R 不属于沙地。开启后两者共用 SWE 粗速度与半拉格朗日回溯，并同时应用面积压缩／膨胀响应，不再叠加旧通量、拖曳或单浓度衰减。所有现有源只直接注入 N，每个完整子步联合解析积分生成、N→R 转化与独立衰减；默认半衰期 1.4／9 模拟秒，退出转化比例 0.65。切换模式重置 SWE 历史，寿命参数实时更新；暂停、干湿、重置和碰撞体编辑覆盖 R。`simulation/nearshore/verification/foam_dual.rs` 检查实际 GPU 解析解、两阶调度和输运／边界行为。此 SL 路径不承诺严格质量守恒或整体帧率无关。
-- `Shore::encode` 按稳定步长拆分子步；二阶有预测与校正阶段。`simulated_dt` 是本次实际推进量，长帧可能被限制，不能直接用墙钟时间替代。
+- `foam_dual_phase` 是默认关闭的双浓度实验，和默认惯性／守恒路径互斥。现有密度槽保存新鲜 N + 水面残余 R，第五块 w 保存 R，五块 storage 大小不变；R 不属于沙地。开启后两者共用 SWE 粗速度与半拉格朗日回溯，并同时应用面积压缩／膨胀响应，不再叠加旧通量、拖曳或单浓度衰减。密度输送与纹理运动复用同一回溯位置和实际输运速度，但浓度的障碍物通路检查、纹理的湿贡献者归一化仍独立。所有现有源只直接注入 N，每个完整子步联合解析积分生成、N→R 转化与独立衰减；默认半衰期 1.4／9 模拟秒，退出转化比例 0.65。切换模式重置 SWE 历史，寿命参数实时更新；暂停、干湿、重置和碰撞体编辑覆盖 R。`simulation/nearshore/verification/foam_dual.rs` 检查实际 GPU 解析解、两阶调度和输运／边界行为。此 SL 路径不承诺严格质量守恒或整体帧率无关。
+- `Shore::encode` 按稳定步长拆分子步；二阶有预测与校正阶段。预测缓冲仍分配五块空间，但正常预测只写守恒量块及泡沫动量块（每格共 32 字节，动量块 zw 清零），校正所需显示／纹理／湿润历史从子步初始状态读取；完整结果仍写五块。完整子步在 field／previous 间交替输出，预测、校正及初始历史绑定随角色切换，帧末只复制一次，使两个完整场重新一致；渲染、暂停和碰撞体编辑仍消费固定的公共 field。`simulated_dt` 是本次实际推进量，长帧可能被限制，不能直接用墙钟时间替代。
 - `simulation/offshore/foam.rs` 与所属 `foam.wgsl`：远海泡沫与当前位移雅可比，独立于近岸泡沫。
-- `simulation/spray/mod.rs` 与所属 `spray*.wgsl`：近岸纹理浪花。Shore 持有 `SpraySource`，每完成 SWE 子步向独立网格 storage buffer 累积发射信号；Renderer 持有 `SprayParticles`，消费信号，维护 GPU 余量、双粒子列表和间接绘制参数。粒子不反作用水体或泡沫，运行时不回读信号/粒子计数。配置放在 `OpticsConfig::spray`，默认关闭。
+- `simulation/spray/mod.rs` 与所属 `spray*.wgsl`：近岸纹理浪花。Shore 持有 `SpraySource`，每完成 SWE 子步按当前／初始场角色选择绑定，向独立网格 storage buffer 累积发射信号；Renderer 持有 `SprayParticles`，消费信号，维护 GPU 余量、双粒子列表和间接绘制参数。粒子不反作用水体或泡沫，运行时不回读信号/粒子计数。配置放在 `OpticsConfig::spray`，默认关闭。
 - `app/viewer.rs`：窗口、配置应用和帧调度；正常帧先计算 FFT、远海泡沫和 SWE，再编码粒子更新，最后调用场景、浪花和 GUI 绘制。`app/snapshot.rs` 保留离屏暖机与调度，同样推进粒子；两条路径没有合并或重排。
-- `render/renderer.rs::Renderer` 持有 `Shore`，组织天空、海底、模型与水面绘制。水面写入 `Depth32Float` 深度；主深度具有 `RENDER_ATTACHMENT | TEXTURE_BINDING` 用途，场景 pass 保存深度，后续浪花 pass 只采样，不把该深度同时挂为可写附件。
+- `render/renderer.rs::Renderer` 持有 `Shore`，组织天空、海底、模型与水面绘制。远海和局部 SWE 水面都使用索引网格；局部索引随 SWE 分辨率重建，网格密度、三角形绕序和顶点采样不变。水面写入 `Depth32Float` 深度；主深度具有 `RENDER_ATTACHMENT | TEXTURE_BINDING` 用途，场景 pass 保存深度，后续浪花 pass 只采样，不把该深度同时挂为可写附件。
 - 近岸材质坐标跟随泡沫输运速度，双相位重置周期由 `foam_texture_period` 控制（默认 2 模拟秒，0 为持续输运）；只重置不可见的坐标层，不修改密度／动量。`foam_prototype` 默认关闭，开启后在输运坐标上使用三尺度 value noise 和密度阈值显示孔洞，沿用现有光学、颜色和密度尺度参数；不使用 NSH 微法线。材质调试 5 显示输运坐标网格。此阶段没有新增细波传播、撞岩源或高分辨率泡沫场。
 - 双浓度实验开启时，`render.wgsl` 使用共享输运坐标显示两尺度三角格梯度噪声的亮白 N 与多尺度窄带、稍暗的 R；N 的细噪声层旋转并错开坐标，减少稀疏白沫的方格排列，不改变密度响应或模拟，覆盖原 NSH／原型选择；仍使用同一水面几何，没有细尺度湍流或单气泡。密度调试 6／9／10 分别读取 N+R／N／R，不经过材质阈值；双坐标重置周期继续有效。参数及启用方式见 [Ocean 使用说明](guides/ocean.md)。
 - `render.wgsl` 的近岸 NSH 泡沫保留双相位孔隙覆盖，使用原始面密度的指数响应控制连续不透明度；`ShoreConfig::foam_opacity_scale` 仅控制外观，不修改密度／动量或重置历史。原灰度和远海泡沫路径独立。
@@ -36,7 +37,7 @@
 
 ## 界面、配置与验证
 
-- `ui/gui.rs` 使用 egui_dock，`ui/panels/` 按职责拆分面板，共用 `ui/controls.rs` 的网格和控件；操作按钮显式使用 `PanelButton` 填满所属单元格：保留原生 egui 按钮的边框与交互，文字在沿用主题 padding 的内容区居中；margin 固定为上下各 4 pt、左右 0，不参与点击，不写入参数或布局文件。`action_row` 等宽排列并在每按钮扣除 margin 后不足 96 pt 时整组纵向排列，不改变全局按钮样式；`ui/workspace/{mod,store}.rs` 管理工作区与独立布局 sidecar。`settings/{session,library,store}.rs` 分别管理当前参数快照、命名库与加载/原子保存/自动保存。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
+- `ui/gui.rs` 使用 egui_dock，顶部常驻工具栏及性能摘要，左侧固定“场景、浅水、远海、着色、配置”导航；五套独立布局默认参数靠左、渲染视图靠右，共享模拟、草稿与相机。`ui/workspace/` 维护包含临时隐藏面板的规范布局；各布局及当前分类独立保存到可写会话旁的 `.workspaces.json` sidecar，只读／无保存模式不隐式读写。界面合约见 [工作区界面规范](specs/workspace-ui.md)。`ui/panels/` 按职责拆分面板，共用 `ui/controls.rs` 的网格和控件；操作按钮显式使用 `PanelButton` 填满所属单元格：保留原生 egui 按钮的边框与交互，文字在沿用主题 padding 的内容区居中；margin 固定为上下各 4 pt、左右 0，不参与点击，不写入参数或布局文件。`action_row` 等宽排列并在每按钮扣除 margin 后不足 96 pt 时整组纵向排列，不改变全局按钮样式；`ui/workspace/{mod,store}.rs` 管理工作区与独立布局 sidecar。`settings/{session,library,store}.rs` 分别管理当前参数快照、命名库与加载/原子保存/自动保存。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
 - `verify.rs` 只组织完整 GPU 行为检查；DFT/耦合、近岸、浪花及渲染验证归各自 `verification.rs` 或 `verification/`，仍编译到非测试程序供 CLI 调用，不通过暴露私有字段来迁移。`gpu/timer.rs` 使用设备支持的 GPU timestamp；功能运行不能依赖同步回读。
 - 配置、特性边界、参数面板和资源许可约束见根目录 `AGENTS.md`；使用与算法指南集中在 `doco/guides/`，包括 [Ocean](guides/ocean.md)、[CPU PIC](guides/pic.md)、[一维浅水](guides/shallow.md) 和 [泡沫诊断](guides/foam-lab.md)。根目录 `README.md` 提供项目入口，`doco/specs/` 保留精确行为合约。
 

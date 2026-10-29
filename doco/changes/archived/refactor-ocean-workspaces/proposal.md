@@ -1,4 +1,4 @@
-<!-- doco:lifecycle v=1 created-at=2026-10-28T08:08:07Z completed-at=- archived-at=- -->
+<!-- doco:lifecycle v=1 created-at=2026-10-28T08:08:07Z completed-at=2026-10-29T06:25:42Z archived-at=2026-10-29T06:25:50Z -->
 # GPU Ocean 五分类 Dock 工作区
 
 ## Purpose
@@ -61,4 +61,6 @@
 
 ## Result
 
-Pending — not completed. 图标方案已确认，变更执行中。
+已交付五分类固定 SVG 导航、独立 Dock 工作区、参数重组与条件隐藏、独立布局 sidecar，以及常驻工具栏性能摘要。各工作区共享模拟、草稿与相机；布局与模拟会话、命名配置分离。当前合约见 [工作区界面规范](../../../specs/workspace-ui.md)，使用方式见 [Ocean 指南](../../../guides/ocean.md#dock-参数工作区)。
+
+用户明确确认本变更已经完成，授权全部任务标记完成并归档。本次核对现有导航、工作区、布局保存和异步 GPU 计时代码并同步当前文档；后续模块重组的既有记录包含默认工作区窗口冒烟和回归通过。本次未重跑构建、测试或逐项 GUI 交互验收，不把用户完成确认或机械检查等同于新增运行验证。
