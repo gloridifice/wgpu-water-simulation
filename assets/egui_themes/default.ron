@@ -309,7 +309,12 @@
         compact_menu_style: true,
     ),
     dock_style: (
-        dock_area_padding: None,
+        dock_area_padding: Some((
+            left: 4,
+            right: 4,
+            top: 0,
+            bottom: 4,
+        )),
         main_surface_border_stroke: (
             width: 0.0,
             color: ((0, 0, 0, 0)),
@@ -450,10 +455,10 @@
             ),
             tab_body: (
                 inner_margin: (
-                    left: 6,
-                    right: 6,
-                    top: 6,
-                    bottom: 6,
+                    left: 10,
+                    right: 10,
+                    top: 10,
+                    bottom: 10,
                 ),
                 stroke: (
                     width: 0.0,

@@ -2,7 +2,7 @@
 use crate::ocean::camera::Camera;
 use crate::ocean::parameters::model::ModelConfig;
 use crate::ocean::parameters::optics::OpticsConfig;
-use crate::ocean::ui::controls::{parameter, parameter_table};
+use crate::ocean::ui::controls::{PanelButton, action_row, parameter, parameter_table};
 #[derive(Default)]
 pub struct ModelPanel {
     draft: ModelConfig,
@@ -23,7 +23,7 @@ impl ModelPanel {
             self.draft = optics.model;
             self.applied = Some(optics.model);
         }
-        if ui.button("载入岩岸模型场景").clicked() {
+        if ui.add(PanelButton::new("载入岩岸模型场景")).clicked() {
             *optics = OpticsConfig::model_scene();
             *camera = Camera::model(length);
             self.draft = optics.model;
@@ -166,7 +166,7 @@ impl ModelPanel {
             if ui
                 .add_enabled(
                     self.source_bounds.is_some(),
-                    egui::Button::new("按模型范围自动覆盖"),
+                    PanelButton::new("按模型范围自动覆盖"),
                 )
                 .clicked()
             {
@@ -211,22 +211,27 @@ impl ModelPanel {
                 );
             });
         }
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("应用模型与区域").clicked() {
-                match self.draft.validate() {
-                    Ok(()) => {
-                        optics.model = self.draft;
-                        self.applied = Some(self.draft);
-                        self.error = None;
-                    }
-                    Err(error) => self.error = Some(error),
+        let [apply, cancel] = action_row(
+            ui,
+            [
+                PanelButton::new("应用模型与区域"),
+                PanelButton::new("撤销待应用修改"),
+            ],
+        );
+        if apply.clicked() {
+            match self.draft.validate() {
+                Ok(()) => {
+                    optics.model = self.draft;
+                    self.applied = Some(self.draft);
+                    self.error = None;
                 }
+                Err(error) => self.error = Some(error),
             }
-            if ui.button("撤销待应用修改").clicked() {
-                self.draft = optics.model;
-                self.error = None;
-            }
-        });
+        }
+        if cancel.clicked() {
+            self.draft = optics.model;
+            self.error = None;
+        }
         if self.draft != optics.model {
             ui.label("存在待应用修改");
         }

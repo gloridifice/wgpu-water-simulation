@@ -1,5 +1,6 @@
 //! Compact single-selection configuration controls.
 use crate::ocean::settings::{ConfigurationLibrary, DEFAULT_CONFIGURATION_NAME, SavedSettings};
+use crate::ocean::ui::controls::{PanelButton, action_row};
 
 #[derive(Clone, Copy)]
 enum Editor {
@@ -122,35 +123,36 @@ impl ConfigurationPanel {
         }
 
         ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(persistence_enabled, egui::Button::new("新配置"))
-                .on_hover_text("将当前全部参数另存为新配置。")
-                .on_disabled_hover_text("本地保存已禁用")
-                .clicked()
-            {
-                self.editor = Some(Editor::New);
-                self.name.clear();
-                self.focus_name = true;
-                self.error = None;
-            }
-            if ui
-                .add_enabled(
-                    persistence_enabled && self.selected.is_some(),
-                    egui::Button::new("删除配置"),
-                )
-                .on_disabled_hover_text(if persistence_enabled {
-                    "默认配置不可删除"
-                } else {
-                    "本地保存已禁用"
-                })
-                .clicked()
-                && let Some(index) = self.selected
-            {
-                self.editor = Some(Editor::Delete(index));
-                self.error = None;
-            }
-        });
+        let [new, delete] = action_row(
+            ui,
+            [
+                PanelButton::new("新配置").enabled(persistence_enabled),
+                PanelButton::new("删除配置")
+                    .enabled(persistence_enabled && self.selected.is_some()),
+            ],
+        );
+        if new
+            .on_hover_text("将当前全部参数另存为新配置。")
+            .on_disabled_hover_text("本地保存已禁用")
+            .clicked()
+        {
+            self.editor = Some(Editor::New);
+            self.name.clear();
+            self.focus_name = true;
+            self.error = None;
+        }
+        if delete
+            .on_disabled_hover_text(if persistence_enabled {
+                "默认配置不可删除"
+            } else {
+                "本地保存已禁用"
+            })
+            .clicked()
+            && let Some(index) = self.selected
+        {
+            self.editor = Some(Editor::Delete(index));
+            self.error = None;
+        }
 
         if let Some(editor) = self.editor {
             ui.push_id("configuration editor", |ui| {
@@ -172,37 +174,39 @@ impl ConfigurationPanel {
                         ));
                     }
                 }
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(persistence_enabled, egui::Button::new("确定"))
-                        .clicked()
-                    {
-                        let result = match editor {
-                            Editor::New => self
-                                .library
-                                .save_as(&self.name, current.clone())
-                                .map(|index| self.selected = Some(index)),
-                            Editor::Rename(index) => self.library.rename(Some(index), &self.name),
-                            Editor::Delete(index) => self.library.delete(Some(index)).map(|()| {
-                                self.selected = None;
-                                // Vec::remove shifts later indices; restore the default after deletion.
-                                self.previous_selection = Some(None);
-                                load = self.library.get(None).ok().cloned();
-                            }),
-                        };
-                        if result.is_ok() {
-                            self.editor = None;
-                            self.name.clear();
-                            self.save_now = true;
-                        }
-                        self.error = result.err();
-                    }
-                    if ui.button("取消").clicked() {
+                let [confirm, cancel] = action_row(
+                    ui,
+                    [
+                        PanelButton::new("确定").enabled(persistence_enabled),
+                        PanelButton::new("取消"),
+                    ],
+                );
+                if confirm.clicked() {
+                    let result = match editor {
+                        Editor::New => self
+                            .library
+                            .save_as(&self.name, current.clone())
+                            .map(|index| self.selected = Some(index)),
+                        Editor::Rename(index) => self.library.rename(Some(index), &self.name),
+                        Editor::Delete(index) => self.library.delete(Some(index)).map(|()| {
+                            self.selected = None;
+                            // Vec::remove shifts later indices; restore the default after deletion.
+                            self.previous_selection = Some(None);
+                            load = self.library.get(None).ok().cloned();
+                        }),
+                    };
+                    if result.is_ok() {
                         self.editor = None;
                         self.name.clear();
-                        self.error = None;
+                        self.save_now = true;
                     }
-                });
+                    self.error = result.err();
+                }
+                if cancel.clicked() {
+                    self.editor = None;
+                    self.name.clear();
+                    self.error = None;
+                }
             });
         }
 
@@ -212,7 +216,7 @@ impl ConfigurationPanel {
                     && self.selected.is_some()
                     && self.editor.is_none()
                     && load.is_none(),
-                egui::Button::new("保存配置"),
+                PanelButton::new("保存配置"),
             )
             .on_hover_text("用当前全部参数覆盖所选命名配置；自动保存仅记录工作状态。")
             .on_disabled_hover_text(if persistence_enabled {

@@ -95,6 +95,7 @@ pub struct Gui {
     pub workspace_store: Option<WorkspaceStore>,
     icons: [egui::Image<'static>; 5],
     dock_style: egui_dock::Style,
+    show_dock_padding: bool,
     pub viewport_size: [u32; 2],
     pub viewport_view: wgpu::TextureView,
     viewport_texture: wgpu::Texture,
@@ -170,6 +171,7 @@ impl Gui {
             workspace_store: None,
             icons,
             dock_style,
+            show_dock_padding: false,
             viewport_size: [1, 1],
             viewport_texture,
             viewport_view,
@@ -253,6 +255,10 @@ impl Gui {
                                         }
                                     }
                                     ui.separator();
+                                    if ui.button("Dock 边距调试").clicked() {
+                                        self.show_dock_padding = true;
+                                        ui.close();
+                                    }
                                     if ui.button("重置当前布局").clicked() {
                                         workspaces.reset_current();
                                         if let Some(store) = &mut self.workspace_store {
@@ -367,6 +373,7 @@ impl Gui {
                         }
                     });
                 });
+            self.dock_padding_window(ctx);
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| {
@@ -403,6 +410,45 @@ impl Gui {
         });
         self.workspaces = workspaces;
         (output, apply)
+    }
+
+    fn dock_padding_window(&mut self, ctx: &egui::Context) {
+        let mut body_padding = self.dock_style.tab.tab_body.inner_margin.left;
+        let mut area_padding = self.dock_style.dock_area_padding.unwrap_or_default().left;
+        egui::Window::new("Dock 边距调试")
+            .open(&mut self.show_dock_padding)
+            .default_pos(egui::pos2(520.0, 80.0))
+            .default_width(380.0)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                super::controls::parameter_table(ui, "dock padding", |ui| {
+                    super::controls::parameter(
+                        ui,
+                        "面板内容 padding",
+                        "每个 Dock 面板内容区的四边留白，包括渲染视图；0～32 逻辑点（pt），实时生效，不重置模拟。",
+                        |ui| ui.add(egui::Slider::new(&mut body_padding, 0..=32).suffix(" pt")),
+                    );
+                    super::controls::parameter(
+                        ui,
+                        "Dock 区域 padding",
+                        "整个 Dock 区域外围的左、右、底部留白，顶部固定为 0，不是面板间距；0～32 逻辑点（pt），实时生效，不重置模拟。",
+                        |ui| ui.add(egui::Slider::new(&mut area_padding, 0..=32).suffix(" pt")),
+                    );
+                });
+                ui.label("仅本次运行，不保存；100% 缩放时 1 pt = 1 px。");
+            });
+        if body_padding != self.dock_style.tab.tab_body.inner_margin.left {
+            self.dock_style.tab.tab_body.inner_margin = egui::Margin::same(body_padding);
+        }
+        if area_padding != self.dock_style.dock_area_padding.unwrap_or_default().left {
+            self.dock_style.dock_area_padding = (area_padding != 0).then_some(egui::Margin {
+                left: area_padding,
+                right: area_padding,
+                top: 0,
+                bottom: area_padding,
+            });
+        }
     }
 
     fn panel(

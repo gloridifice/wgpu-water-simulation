@@ -1,7 +1,5 @@
 use super::controls::{list, number, toggle};
-use crate::ocean::ui::controls::choices;
-use crate::ocean::ui::controls::group;
-use crate::ocean::ui::controls::parameter;
+use crate::ocean::ui::controls::{PanelButton, action_row, choices, group, parameter};
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
 
@@ -88,18 +86,23 @@ impl Gui {
                 );
             }
         });
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("默认 12～24 米").clicked() {
-                shore.filter_enabled = true;
-                shore.filter_cutoff = 12.0;
-                shore.filter_transition = 12.0;
-            }
-            if ui.button("3～6 米").clicked() {
-                shore.filter_enabled = true;
-                shore.filter_cutoff = 3.0;
-                shore.filter_transition = 3.0;
-            }
-        });
+        let [default_filter, short_filter] = action_row(
+            ui,
+            [
+                PanelButton::new("默认 12～24 米"),
+                PanelButton::new("3～6 米"),
+            ],
+        );
+        if default_filter.clicked() {
+            shore.filter_enabled = true;
+            shore.filter_cutoff = 12.0;
+            shore.filter_transition = 12.0;
+        }
+        if short_filter.clicked() {
+            shore.filter_enabled = true;
+            shore.filter_cutoff = 3.0;
+            shore.filter_transition = 3.0;
+        }
         group(ui, "沙地历史与诊断", |ui| {
             if self.optics.beach {
                 number(
@@ -117,7 +120,7 @@ impl Gui {
                 &crate::ocean::simulation::nearshore::VIEWS,
             );
         });
-        if ui.button("重置浅水、泡沫和沙地").clicked() {
+        if ui.add(PanelButton::new("重置浅水、泡沫和沙地")).clicked() {
             self.clear_foam = true;
         }
     }
@@ -280,7 +283,7 @@ impl Gui {
                     false,
                 );
                 parameter(ui, "物理参考起点", help("物理参考起点"), |ui| {
-                    if ui.button("应用推荐值").clicked() {
+                    if ui.add(PanelButton::new("应用推荐值")).clicked() {
                         shore.apply_foam_reference();
                     }
                 });
@@ -301,13 +304,18 @@ impl Gui {
                 &crate::ocean::simulation::nearshore::VIEWS,
             );
         });
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("密度调试：低绿／高红").clicked() {
-                shore.view = 6;
-            }
-            if ui.button("重置浅水历史").clicked() {
-                self.clear_foam = true;
-            }
-        });
+        let [debug, reset] = action_row(
+            ui,
+            [
+                PanelButton::new("密度调试：低绿／高红"),
+                PanelButton::new("重置浅水历史"),
+            ],
+        );
+        if debug.clicked() {
+            shore.view = 6;
+        }
+        if reset.clicked() {
+            self.clear_foam = true;
+        }
     }
 }

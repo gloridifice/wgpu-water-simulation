@@ -4,7 +4,7 @@ use crate::ocean::parameters::optics::VIEW_NAMES;
 use crate::ocean::render::skylight::incident_reference;
 use crate::ocean::ui::controls::parameter;
 use crate::ocean::ui::controls::parameter_table;
-use crate::ocean::ui::controls::{choices, group};
+use crate::ocean::ui::controls::{PanelButton, choices, group};
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
 
@@ -103,7 +103,7 @@ impl Gui {
             }
         });
         if ui
-            .button("重置光学参数")
+            .add(PanelButton::new("重置光学参数"))
             .on_hover_text(
                 "沿用原操作：恢复整个光学配置（含场景、SWE、材质、浪花），会重置相应模拟历史。",
             )

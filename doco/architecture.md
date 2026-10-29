@@ -36,7 +36,7 @@
 
 ## 界面、配置与验证
 
-- `ui/gui.rs` 使用 egui_dock，`ui/panels/` 按职责拆分面板，共用 `ui/controls.rs` 的网格和控件；`ui/workspace/{mod,store}.rs` 管理工作区与独立布局 sidecar。`settings/{session,library,store}.rs` 分别管理当前参数快照、命名库与加载/原子保存/自动保存。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
+- `ui/gui.rs` 使用 egui_dock，`ui/panels/` 按职责拆分面板，共用 `ui/controls.rs` 的网格和控件；操作按钮显式使用 `PanelButton` 填满所属单元格：保留原生 egui 按钮的边框与交互，文字在沿用主题 padding 的内容区居中；margin 固定为上下各 4 pt、左右 0，不参与点击，不写入参数或布局文件。`action_row` 等宽排列并在每按钮扣除 margin 后不足 96 pt 时整组纵向排列，不改变全局按钮样式；`ui/workspace/{mod,store}.rs` 管理工作区与独立布局 sidecar。`settings/{session,library,store}.rs` 分别管理当前参数快照、命名库与加载/原子保存/自动保存。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
 - `verify.rs` 只组织完整 GPU 行为检查；DFT/耦合、近岸、浪花及渲染验证归各自 `verification.rs` 或 `verification/`，仍编译到非测试程序供 CLI 调用，不通过暴露私有字段来迁移。`gpu/timer.rs` 使用设备支持的 GPU timestamp；功能运行不能依赖同步回读。
 - 配置、特性边界、参数面板和资源许可约束见根目录 `AGENTS.md`；使用与算法指南集中在 `doco/guides/`，包括 [Ocean](guides/ocean.md)、[CPU PIC](guides/pic.md)、[一维浅水](guides/shallow.md) 和 [泡沫诊断](guides/foam-lab.md)。根目录 `README.md` 提供项目入口，`doco/specs/` 保留精确行为合约。
 

@@ -1,9 +1,7 @@
 use super::controls::{number, toggle};
 use crate::ocean::camera::Camera;
 use crate::ocean::parameters::ocean::OceanConfig;
-use crate::ocean::ui::controls::choices;
-use crate::ocean::ui::controls::group;
-use crate::ocean::ui::controls::parameter;
+use crate::ocean::ui::controls::{PanelButton, action_row, choices, group, parameter};
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
 
@@ -70,27 +68,28 @@ impl Gui {
             });
         });
         let mut apply = None;
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(self.draft != current, egui::Button::new("应用更改"))
-                .clicked()
-            {
-                match self.draft.validate() {
-                    Ok(()) => {
-                        apply = Some(self.draft);
-                        self.error = None;
-                    }
-                    Err(e) => self.error = Some(e),
+        let [apply_button, defaults] = action_row(
+            ui,
+            [
+                PanelButton::new("应用更改").enabled(self.draft != current),
+                PanelButton::new("恢复默认"),
+            ],
+        );
+        if apply_button.clicked() {
+            match self.draft.validate() {
+                Ok(()) => {
+                    apply = Some(self.draft);
+                    self.error = None;
                 }
+                Err(e) => self.error = Some(e),
             }
-            if ui
-                .button("恢复默认")
-                .on_hover_text("只恢复待应用的波谱参数，点击应用后生效。")
-                .clicked()
-            {
-                self.draft = OceanConfig::default();
-            }
-        });
+        }
+        if defaults
+            .on_hover_text("只恢复待应用的波谱参数，点击应用后生效。")
+            .clicked()
+        {
+            self.draft = OceanConfig::default();
+        }
         ui.label(if self.draft == current {
             "参数已应用"
         } else {
@@ -147,7 +146,7 @@ impl Gui {
             });
         });
         if ui
-            .button("清空泡沫历史")
+            .add(PanelButton::new("清空泡沫历史"))
             .on_hover_text("沿用全局历史重置，同时重置浅水、泡沫和沙地历史。")
             .clicked()
         {

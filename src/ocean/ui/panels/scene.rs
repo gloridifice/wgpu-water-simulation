@@ -1,8 +1,7 @@
 use super::controls::{number, toggle};
 use crate::ocean::camera::Camera;
 use crate::ocean::parameters::optics::OpticsConfig;
-use crate::ocean::ui::controls::group;
-use crate::ocean::ui::controls::parameter;
+use crate::ocean::ui::controls::{PanelButton, action_row, group, parameter};
 use crate::ocean::ui::gui::Gui;
 
 impl Gui {
@@ -12,24 +11,27 @@ impl Gui {
         camera: &mut Camera,
         length: f32,
     ) {
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .button("沙滩场景")
-                .on_hover_text("载入完整沙滩预设并重置近岸历史，不只是切换地形。")
-                .clicked()
-            {
-                self.optics = OpticsConfig::beach_scene();
-                *camera = Camera::beach(length);
-            }
-            if ui
-                .button("岩岸模型场景")
-                .on_hover_text("载入完整岩岸预设并重置近岸历史。")
-                .clicked()
-            {
-                self.optics = OpticsConfig::model_scene();
-                *camera = Camera::model(length);
-            }
-        });
+        let [beach, model] = action_row(
+            ui,
+            [
+                PanelButton::new("沙滩场景"),
+                PanelButton::new("岩岸模型场景"),
+            ],
+        );
+        if beach
+            .on_hover_text("载入完整沙滩预设并重置近岸历史，不只是切换地形。")
+            .clicked()
+        {
+            self.optics = OpticsConfig::beach_scene();
+            *camera = Camera::beach(length);
+        }
+        if model
+            .on_hover_text("载入完整岩岸预设并重置近岸历史。")
+            .clicked()
+        {
+            self.optics = OpticsConfig::model_scene();
+            *camera = Camera::model(length);
+        }
         group(ui, "地形与水底", |ui| {
             if !self.optics.model.enabled {
                 toggle(ui, "倾斜沙滩", &mut self.optics.beach);

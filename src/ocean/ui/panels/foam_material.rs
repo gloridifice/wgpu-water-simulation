@@ -1,7 +1,6 @@
 use super::controls::{list, number, toggle};
 use crate::ocean::camera::Camera;
-use crate::ocean::ui::controls::group;
-use crate::ocean::ui::controls::parameter;
+use crate::ocean::ui::controls::{PanelButton, group, parameter};
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
 
@@ -24,7 +23,7 @@ impl Gui {
                 ui.color_edit_button_rgb(&mut shore.water_foam_color)
             });
         });
-        if ui.button("恢复默认泡沫颜色").clicked() {
+        if ui.add(PanelButton::new("恢复默认泡沫颜色")).clicked() {
             shore.water_foam_color = [0.87, 0.92, 0.90];
         }
         if !swe {

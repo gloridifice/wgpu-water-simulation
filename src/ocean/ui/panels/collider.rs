@@ -1,7 +1,7 @@
 use crate::ocean::parameters::optics::OpticsConfig;
 use crate::ocean::scene::collider::Collider;
 use crate::ocean::scene::collider::Shape;
-use crate::ocean::ui::controls::{parameter, parameter_table};
+use crate::ocean::ui::controls::{PanelButton, action_row, parameter, parameter_table};
 
 pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
     let resolution = optics.shore.resolution;
@@ -59,33 +59,34 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
             "添加",
             "最多 8 个。默认放在岸线向海 8 米处。编辑即时生效并自动保存，不重置 SWE；仅调整底面变化处的水体，保留其他历史。不是连续移动的刚体。",
             |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    for (name, shape) in [("圆柱", Shape::Cylinder), ("长方体", Shape::Box)] {
-                        if ui
-                            .add_enabled(
-                                optics.shore.colliders.iter().any(Option::is_none),
-                                egui::Button::new(name),
-                            )
-                            .clicked()
-                            && let Some((index, slot)) = optics
-                                .shore
-                                .colliders
-                                .iter_mut()
-                                .enumerate()
-                                .find(|(_, c)| c.is_none())
-                        {
-                            *slot = Some(Collider {
-                                shape,
-                                position: if model.enabled {
-                                    [model.center[0], model.center[2] + index as f32 * 8.0]
-                                } else {
-                                    [optics.shore_x + 8.0, index as f32 * 8.0]
-                                },
-                                ..Default::default()
-                            });
-                        }
+                let can_add = optics.shore.colliders.iter().any(Option::is_none);
+                let responses = action_row(
+                    ui,
+                    [
+                        PanelButton::new("圆柱").enabled(can_add),
+                        PanelButton::new("长方体").enabled(can_add),
+                    ],
+                );
+                for (response, shape) in responses.into_iter().zip([Shape::Cylinder, Shape::Box]) {
+                    if response.clicked()
+                        && let Some((index, slot)) = optics
+                            .shore
+                            .colliders
+                            .iter_mut()
+                            .enumerate()
+                            .find(|(_, c)| c.is_none())
+                    {
+                        *slot = Some(Collider {
+                            shape,
+                            position: if model.enabled {
+                                [model.center[0], model.center[2] + index as f32 * 8.0]
+                            } else {
+                                [optics.shore_x + 8.0, index as f32 * 8.0]
+                            },
+                            ..Default::default()
+                        });
                     }
-                });
+                }
             },
         );
     });
@@ -120,7 +121,7 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
                     let inside=if model.enabled {(0..2).all(|a|c.position[a]-extent[a]>=interior[a] && c.position[a]+extent[a]<=interior[a+2])} else {c.in_domain(domain,resolution)};
                     ui.label(if !c.enabled { "已关闭" } else if !inside { "超出有效区域" } else { "范围内" });
                 });
-                parameter(ui, "操作", "删除即时生效并保存，不重置 SWE；空出的区域在继续运行后由周围水流回填。", |ui| { if ui.button("删除").clicked() { remove = Some(index); } });
+                parameter(ui, "操作", "删除即时生效并保存，不重置 SWE；空出的区域在继续运行后由周围水流回填。", |ui| { if ui.add(PanelButton::new("删除")).clicked() { remove = Some(index); } });
             });
             let size = if c.shape == Shape::Cylinder { c.radius * 2.0 } else { c.size[0].min(c.size[1]) };
             if size < 3.0 * domain[2].max(domain[3]) / resolution as f32 {
