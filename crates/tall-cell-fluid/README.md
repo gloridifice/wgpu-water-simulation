@@ -24,6 +24,8 @@ cargo run --release --manifest-path crates/tall-cell-fluid/Cargo.toml --features
 | 环绕 / 缩放 | 鼠标左键拖动 / 滚轮 |
 | 恢复相机 / 退出 | Home / Esc |
 
+标题复用相邻 `charming_egui` crate 的 h3（默认 14 pt、高对比色、不加粗），保留本 demo 的整体主题和字体。该依赖仅在 `demo` feature 下启用，不影响独立 workspace 或核心求解器。
+
 窗口使用 egui + egui_dock：中央为液体视图，右侧为耗时和控制面板；标签与分隔线可以拖动，顶部可恢复布局。面板可以播放/暂停、单步、重置、切换场景和显示方式、恢复相机。鼠标环绕与缩放仅在液体视图中生效。数值失败会暂停并显示错误，可按 R 重置。场景切换或暂停指令会在当前在途子步完成后确认。
 
 | 耗时块 | 单位与范围 |

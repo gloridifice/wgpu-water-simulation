@@ -1,5 +1,5 @@
-use crate::ocean::ui::controls::parameter;
 use crate::ocean::ui::help::help;
+use charming_egui::{ParameterSlider, parameter};
 use std::ops::RangeInclusive;
 pub(super) fn number(
     ui: &mut egui::Ui,
@@ -10,7 +10,7 @@ pub(super) fn number(
 ) {
     parameter(ui, name, help(name), |ui| {
         ui.add(
-            egui::Slider::new(value, range)
+            ParameterSlider::new(value, range)
                 .logarithmic(log)
                 .smallest_positive(0.000001)
                 .clamping(egui::SliderClamping::Edits)

@@ -1,4 +1,5 @@
 //! A native egui linear-RGB picker plus an independent radiometric strength.
+use charming_egui::{parameter, parameter_table};
 #[derive(Clone, Debug)]
 pub struct CoefficientEditor {
     last_rgb: [f32; 3],
@@ -33,19 +34,19 @@ impl CoefficientEditor {
             *self = Self::new(*rgb, self.zero_strength);
         }
         ui.push_id(label, |ui| {
-            ui.label(egui::RichText::new(label).strong()).on_hover_text(
+            charming_egui::h3(ui, label).on_hover_text(
                 "线性 RGB 系数等于颜色乘以强度；消光为零时使用散射源乘以距离的解析极限。",
             );
             let mut changed = false;
-            super::controls::parameter_table(ui, "coefficient table", |ui| {
-                changed |= super::controls::parameter(
+            parameter_table(ui, "coefficient table", |ui| {
+                changed |= parameter(
                     ui,
                     "颜色",
                     "线性 RGB 颜色；实际系数等于颜色乘以强度。",
                     |ui| ui.color_edit_button_rgb(&mut self.tint),
                 )
                 .changed();
-                changed |= super::controls::parameter(
+                changed |= parameter(
                     ui,
                     "强度",
                     "独立调整系数大小，支持高动态范围数值。",
@@ -65,21 +66,16 @@ impl CoefficientEditor {
                 self.last_rgb = *rgb;
             }
             ui.collapsing("RGB 精确值", |ui| {
-                super::controls::parameter_table(ui, "RGB table", |ui| {
+                parameter_table(ui, "RGB table", |ui| {
                     for (channel, name) in ["R", "G", "B"].into_iter().enumerate() {
-                        super::controls::parameter(
-                            ui,
-                            name,
-                            "线性 RGB 系数的精确值。",
-                            |ui| {
-                                ui.add(
-                                    egui::DragValue::new(&mut rgb[channel])
-                                        .range(0.0..=10.0)
-                                        .speed(self.zero_strength * 0.02)
-                                        .max_decimals(7),
-                                );
-                            },
-                        );
+                        parameter(ui, name, "线性 RGB 系数的精确值。", |ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut rgb[channel])
+                                    .range(0.0..=10.0)
+                                    .speed(self.zero_strength * 0.02)
+                                    .max_decimals(7),
+                            );
+                        });
                     }
                 });
             });

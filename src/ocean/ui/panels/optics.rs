@@ -2,11 +2,9 @@ use super::controls::{list, number, toggle};
 use crate::ocean::parameters::optics::OpticsConfig;
 use crate::ocean::parameters::optics::VIEW_NAMES;
 use crate::ocean::render::skylight::incident_reference;
-use crate::ocean::ui::controls::parameter;
-use crate::ocean::ui::controls::parameter_table;
-use crate::ocean::ui::controls::{PanelButton, choices, group};
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
+use charming_egui::{PanelButton, choices, group, parameter, parameter_table};
 
 impl Gui {
     pub(in crate::ocean::ui) fn optics_panel(&mut self, ui: &mut egui::Ui) {

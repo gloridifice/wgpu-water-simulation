@@ -19,11 +19,12 @@ egui = { version = "0.33.3", optional = true }
 egui-winit = { version = "0.33.3", optional = true }
 egui-wgpu = { version = "0.33.3", optional = true }
 egui_dock = { version = "0.18", optional = true }
+charming_egui = { path = "../charming_egui", optional = true }
 
 [features]
 default = ["gpu"]
 gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
-demo = ["gpu", "dep:winit", "dep:glam", "dep:png", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:egui_dock"]
+demo = ["gpu", "dep:winit", "dep:glam", "dep:png", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:egui_dock", "dep:charming_egui"]
 
 [[bin]]
 name = "fluid-demo"

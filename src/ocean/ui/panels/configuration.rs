@@ -1,6 +1,6 @@
 //! Compact single-selection configuration controls.
 use crate::ocean::settings::{ConfigurationLibrary, DEFAULT_CONFIGURATION_NAME, SavedSettings};
-use crate::ocean::ui::controls::{PanelButton, action_row};
+use charming_egui::{PanelButton, SelectionList, action_row};
 
 #[derive(Clone, Copy)]
 enum Editor {
@@ -55,54 +55,37 @@ impl ConfigurationPanel {
 
         let mut clicked = None;
         let mut rename = None;
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("configuration buttons")
-                .max_height(260.0)
-                .show(ui, |ui| {
-                    let row_size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
-                    if ui
-                        .add_sized(
-                            row_size,
-                            egui::Button::selectable(
-                                self.selected.is_none(),
-                                DEFAULT_CONFIGURATION_NAME,
-                            )
-                            .wrap(),
-                        )
-                        .on_hover_text("只读默认配置。点击恢复全部参数并重置模拟历史。")
-                        .clicked()
-                    {
-                        clicked = Some(None);
+        SelectionList::new("configuration buttons")
+            .max_height(260.0)
+            .show(ui, |list| {
+                if list
+                    .item(
+                        None::<usize>,
+                        self.selected.is_none(),
+                        DEFAULT_CONFIGURATION_NAME,
+                    )
+                    .on_hover_text("只读默认配置。点击恢复全部参数并重置模拟历史。")
+                    .clicked()
+                {
+                    clicked = Some(None);
+                }
+                for (index, profile) in self.library.profiles().iter().enumerate() {
+                    let response = list
+                        .item(Some(index), self.selected == Some(index), profile.name())
+                        .on_hover_text("点击载入全部参数并重置模拟历史；右键可重命名。");
+                    if response.clicked() {
+                        clicked = Some(Some(index));
                     }
-                    for (index, profile) in self.library.profiles().iter().enumerate() {
-                        let response = ui
-                            .push_id(index, |ui| {
-                                ui.add_sized(
-                                    row_size,
-                                    egui::Button::selectable(
-                                        self.selected == Some(index),
-                                        profile.name(),
-                                    )
-                                    .wrap(),
-                                )
-                            })
-                            .inner
-                            .on_hover_text("点击载入全部参数并重置模拟历史；右键可重命名。");
-                        if response.clicked() {
-                            clicked = Some(Some(index));
-                        }
-                        if persistence_enabled {
-                            response.context_menu(|ui| {
-                                if ui.button("重命名").clicked() {
-                                    rename = Some(index);
-                                    ui.close();
-                                }
-                            });
-                        }
+                    if persistence_enabled {
+                        response.context_menu(|ui| {
+                            if ui.button("重命名").clicked() {
+                                rename = Some(index);
+                                ui.close();
+                            }
+                        });
                     }
-                });
-        });
+                }
+            });
         if let Some(index) = clicked {
             match self.library.get(index) {
                 Ok(settings) => {
@@ -253,7 +236,8 @@ mod tests {
     impl Harness {
         fn new(enabled: bool) -> Self {
             let context = egui::Context::default();
-            crate::ocean::ui::theme::install(&context);
+            charming_egui::Theme::default().apply(&context);
+            crate::ocean::ui::fonts::install(&context);
             let initial = SavedSettings::default();
             Self {
                 context,

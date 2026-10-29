@@ -1,8 +1,8 @@
 use super::controls::{number, toggle};
 use crate::ocean::camera::Camera;
 use crate::ocean::parameters::optics::OpticsConfig;
-use crate::ocean::ui::controls::{PanelButton, action_row, group, parameter};
 use crate::ocean::ui::gui::Gui;
+use charming_egui::{PanelButton, action_row, group, parameter};
 
 impl Gui {
     pub(in crate::ocean::ui) fn scene_panel(

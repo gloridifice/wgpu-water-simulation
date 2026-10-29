@@ -1,10 +1,10 @@
 use crate::ocean::parameters::spray::SprayConfig;
-use crate::ocean::ui::controls::{group, parameter};
+use charming_egui::{ParameterSlider, group, parameter};
 
 fn sliders(ui: &mut egui::Ui, rows: &[(&str, &str)], values: &mut [(&mut f32, f32, f32)]) {
     for ((name, tip), (value, min, max)) in rows.iter().zip(values) {
         parameter(ui, name, tip, |ui| {
-            ui.add(egui::Slider::new(*value, *min..=*max).max_decimals(3))
+            ui.add(ParameterSlider::new(*value, *min..=*max).max_decimals(3))
         });
     }
 }
@@ -116,13 +116,13 @@ pub fn appearance(ui: &mut egui::Ui, config: &mut SprayConfig) {
             ui,
             "随机尺寸倍率下限",
             "无量纲，0～2，默认 0.65，不能超过上限。新生粒子在上下限之间均匀随机；上下限相同则为固定倍率。实时生效并保存，不重置模拟。",
-            |ui| ui.add(egui::Slider::new(&mut *minimum, 0.0..=*maximum).max_decimals(3)),
+            |ui| ui.add(ParameterSlider::new(&mut *minimum, 0.0..=*maximum).max_decimals(3)),
         );
         parameter(
             ui,
             "随机尺寸倍率上限",
             "无量纲，0～2，默认 1.35，不能低于下限。例如尺寸 2 米、倍率 0.5～1，实际为 1～2 米。只影响新生粒子，实时生效并保存。",
-            |ui| ui.add(egui::Slider::new(&mut *maximum, *minimum..=2.0).max_decimals(3)),
+            |ui| ui.add(ParameterSlider::new(&mut *maximum, *minimum..=2.0).max_decimals(3)),
         );
     });
 }

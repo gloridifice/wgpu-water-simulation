@@ -10,6 +10,7 @@ use crate::ocean::{
     parameters::{foam::FoamConfig, ocean::OceanConfig, optics::OpticsConfig},
     settings::{ConfigurationLibrary, SavedSettings},
 };
+use charming_egui::{ParameterSlider, parameter, parameter_table};
 use winit::window::Window;
 
 struct PanelViewer<F>(F);
@@ -112,7 +113,10 @@ impl Gui {
         config: OceanConfig,
     ) -> Self {
         let context = egui::Context::default();
-        let dock_style = crate::ocean::ui::theme::install(&context);
+        let theme = charming_egui::Theme::default();
+        theme.apply(&context);
+        super::fonts::install(&context);
+        let dock_style = theme.dock_style().clone();
         egui_extras::install_image_loaders(&context);
         let sources = [
             include_str!("../../../assets/ui/workspaces/scene.svg"),
@@ -202,7 +206,10 @@ impl Gui {
                         let toolbar_bounds = ui.available_rect_before_wrap();
                         let controls = ui
                             .horizontal_wrapped(|ui| {
-                                ui.strong(format!("{}工作区", workspaces.active.name()));
+                                charming_egui::h3(
+                                    ui,
+                                    format!("{}工作区", workspaces.active.name()),
+                                );
                                 ui.separator();
                                 if ui.button(if *paused { "继续" } else { "暂停" }).clicked() {
                                     *paused = !*paused;
@@ -422,18 +429,18 @@ impl Gui {
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
-                super::controls::parameter_table(ui, "dock padding", |ui| {
-                    super::controls::parameter(
+                parameter_table(ui, "dock padding", |ui| {
+                    parameter(
                         ui,
                         "面板内容 padding",
                         "每个 Dock 面板内容区的四边留白，包括渲染视图；0～32 逻辑点（pt），实时生效，不重置模拟。",
-                        |ui| ui.add(egui::Slider::new(&mut body_padding, 0..=32).suffix(" pt")),
+                        |ui| ui.add(ParameterSlider::new(&mut body_padding, 0..=32).suffix(" pt")),
                     );
-                    super::controls::parameter(
+                    parameter(
                         ui,
                         "Dock 区域 padding",
                         "整个 Dock 区域外围的左、右、底部留白，顶部固定为 0，不是面板间距；0～32 逻辑点（pt），实时生效，不重置模拟。",
-                        |ui| ui.add(egui::Slider::new(&mut area_padding, 0..=32).suffix(" pt")),
+                        |ui| ui.add(ParameterSlider::new(&mut area_padding, 0..=32).suffix(" pt")),
                     );
                 });
                 ui.label("仅本次运行，不保存；100% 缩放时 1 pt = 1 px。");

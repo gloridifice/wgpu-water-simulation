@@ -137,7 +137,7 @@ impl Gui {
         let output = self.context.run(input, |ctx| {
             egui::TopBottomPanel::top("demo toolbar").show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Tall Cell Fluid").strong());
+                    charming_egui::h3(ui, "Tall Cell Fluid");
                     ui.label("独立液体实验");
                     if ui.button("恢复布局").clicked() {
                         self.dock = default_dock();
@@ -364,7 +364,7 @@ fn performance_panel(
     let frame = data.frame.filter(|_| !data.resetting);
     let metric =
         |value: Option<f64>| value.map_or_else(|| "等待样本".into(), |v| format!("{v:.2}"));
-    ui.label(egui::RichText::new("模拟耗时").strong());
+    charming_egui::h3(ui, "模拟耗时");
     table(ui, "simulation timing", |ui, widths| {
         value_row(
             ui,
@@ -375,7 +375,7 @@ fn performance_panel(
         );
     });
     ui.separator();
-    ui.label(egui::RichText::new("Mesh 耗时").strong());
+    charming_egui::h3(ui, "Mesh 耗时");
     table(ui, "mesh timing", |ui, widths| {
         value_row(
             ui,
@@ -386,7 +386,7 @@ fn performance_panel(
         );
     });
     ui.separator();
-    ui.label(egui::RichText::new("着色耗时").strong());
+    charming_egui::h3(ui, "着色耗时");
     table(ui, "shading timing", |ui, widths| {
         let text = if !timing.supported {
             "设备不支持".into()
@@ -404,7 +404,7 @@ fn performance_panel(
         );
     });
     ui.separator();
-    ui.label(egui::RichText::new("运行状态").strong());
+    charming_egui::h3(ui, "运行状态");
     table(ui, "demo status", |ui, widths| {
         let state = if data.error.is_some() {
             "计算失败"
@@ -459,7 +459,7 @@ fn performance_panel(
         ui.colored_label(egui::Color32::LIGHT_RED, error);
     }
     ui.separator();
-    ui.label(egui::RichText::new("演示控制").strong());
+    charming_egui::h3(ui, "演示控制");
     table(ui, "demo controls", |ui, widths| {
         row(
             ui,

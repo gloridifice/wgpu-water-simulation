@@ -80,6 +80,7 @@ Aucune licence générale du projet n’est actuellement fournie. Les ressources
 Les guides détaillés sont principalement en chinois.
 
 - [Utilisation d’Ocean et vérification GPU](../doco/guides/ocean.md)
+- [Composants et thèmes charming_egui](../doco/guides/charming-egui.md)
 - [Simulation CPU PIC](../doco/guides/pic.md)
 - [Simulation en eau peu profonde 1D](../doco/guides/shallow.md)
 - [Diagnostics et benchmarks de l’écume](../doco/guides/foam-lab.md)

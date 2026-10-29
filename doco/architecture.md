@@ -6,10 +6,11 @@
 
 - Rust 2024 workspace，根包 `water-simulation` 默认启用 `ocean` feature；默认成员只有根包，`cargo run` 启动 GPU Ocean。
 - `src/bin/ocean.rs` 提供 GPU 海洋入口、验证与预览参数。
+- `src/bin/slider_lab.rs` 与 `src/ocean/labs/slider_lab/` 提供独立矩形滑块外观窗口，与正式面板共用 `charming_egui::ParameterSlider`，复用现有主题与参数网格；实验调节仅影响本窗口，不运行模拟、不读写配置。启动与交互见 [滑块外观实验](guides/slider-lab.md)。
 - `src/bin/ocean_profile.rs` 提供只读配置的离屏生产路径剖析：固定 1/60 模拟秒推进，预热后分开记录 FFT、远海泡沫、完整 SWE（含浪花源与复制）、粒子和绘制的 GPU timestamp；末尾回读状态／图像作 A/B，不包含 UI 或呈现。运行说明同见 [泡沫诊断与基准测试](guides/foam-lab.md#生产路径离屏剖析)。
 - `src/bin/foam_lab.rs` 提供独立离线泡沫输送对照：默认诊断入口调用生产泡沫通量／源项／纹理运动，在固定解析水流下输出密度快照及误差；`foam_lab/benchmark.rs` 的 `--benchmark` 模式则调用生产 SWE 管线，在固定稀疏／密集／模型地形／障碍物及模型双浓度＋非零入射波输入下预热并重复计时、导出单步状态。两者均不读写个人配置，见 [泡沫诊断与基准测试](guides/foam-lab.md)。
 - `crates/tui-2d-prototype/` 是独立 CPU 包：`src/main.rs` 统一选择二维 PIC／一维浅水及 TUI／批处理，`src/pic/`、`src/solver.rs` 提供不依赖终端的求解器，`src/tui/`、`src/shallow_tui/` 负责交互。测试与 `pic_probe` 示例归该包所有，Cargo 包名为 `tui-2d-prototype`，库名为 `tui_2d_prototype`，二进制仍名为 `water-simulation`；从根目录用 `cargo run -p tui-2d-prototype` 启动。
-- 根包不依赖 CPU 包、Ratatui 或 Crossterm，两包共用根 `Cargo.lock` 和构建目录；`cargo test --workspace` 覆盖两包。`crates/tall-cell-fluid/` 保持独立 workspace，不纳入此工作区。
+- 根包不依赖 CPU 包、Ratatui 或 Crossterm；根包、CPU 包与 `crates/charming_egui/` 共用根 `Cargo.lock` 和构建目录，`cargo test --workspace` 覆盖三包。`crates/tall-cell-fluid/` 保持独立 workspace，不纳入此工作区。
 
 ## GPU 海洋
 
@@ -37,7 +38,11 @@
 
 ## 界面、配置与验证
 
-- `ui/gui.rs` 使用 egui_dock，顶部常驻工具栏及性能摘要，左侧固定“场景、浅水、远海、着色、配置”导航；五套独立布局默认参数靠左、渲染视图靠右，共享模拟、草稿与相机。`ui/workspace/` 维护包含临时隐藏面板的规范布局；各布局及当前分类独立保存到可写会话旁的 `.workspaces.json` sidecar，只读／无保存模式不隐式读写。界面合约见 [工作区界面规范](specs/workspace-ui.md)。`ui/panels/` 按职责拆分面板，共用 `ui/controls.rs` 的网格和控件；操作按钮显式使用 `PanelButton` 填满所属单元格：保留原生 egui 按钮的边框与交互，文字在沿用主题 padding 的内容区居中；margin 固定为上下各 4 pt、左右 0，不参与点击，不写入参数或布局文件。`action_row` 等宽排列并在每按钮扣除 margin 后不足 96 pt 时整组纵向排列，不改变全局按钮样式；`ui/workspace/{mod,store}.rs` 管理工作区与独立布局 sidecar。`settings/{session,library,store}.rs` 分别管理当前参数快照、命名库与加载/原子保存/自动保存。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
+- `crates/charming_egui/` 是不依赖窗口、GPU 或海洋业务的 egui 组件库，提供参数列表、选择列表、滑块、面板按钮、互斥选项与基于 RichText 的 h1／h2／h3。标题颜色继承 egui 高对比色，字号和上下 margin 归组件主题；业务界面的原加粗标题／强调文字统一使用默认 14 pt、不加粗的 h3。独立 `tall-cell-fluid` 仅在 `demo` feature 下依赖该库复用标题，不改变其整体主题、字体、求解器或 workspace 边界。`src/theme/default/` 内的 `egui.toml`、`egui_dock.toml`、`charming_egui.toml` 编译期内嵌，也支持显式外部目录／字符串加载；按文件替换，缺文件使用内嵌默认，错误返回且不修改当前界面。`dock` feature 默认关闭，控制 Dock 依赖和主题读取。样式按 Context 隔离，MiSans 仍由主程序 `ui/fonts.rs` 安装；Ocean 和两个界面实验使用默认主题，不隐式读取外部主题。接口及加载约定见 [charming_egui](guides/charming-egui.md)。
+
+- `ui/gui.rs` 使用 egui_dock，顶部常驻工具栏及性能摘要，左侧固定“场景、浅水、远海、着色、配置”导航；五套独立布局默认参数靠左、渲染视图靠右，共享模拟、草稿与相机。`ui/workspace/` 维护包含临时隐藏面板的规范布局；各布局及当前分类独立保存到可写会话旁的 `.workspaces.json` sidecar，只读／无保存模式不隐式读写。界面合约见 [工作区界面规范](specs/workspace-ui.md)。`ui/panels/` 按职责拆分面板，共用 `charming_egui` 的参数列表和控件；操作按钮显式使用 `PanelButton` 填满所属单元格：保留原生 egui 按钮的边框与交互，文字在沿用主题 padding 的内容区居中；margin 在内嵌组件主题中默认为上下各 4 pt、左右 0，不参与点击，不写入参数或布局文件。`action_row` 等宽排列并在每按钮扣除 margin 后不足 96 pt 时整组纵向排列，不改变全局按钮样式；`ui/workspace/{mod,store}.rs` 管理工作区与独立布局 sidecar。`settings/{session,library,store}.rs` 分别管理当前参数快照、命名库与加载/原子保存/自动保存。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
+- `charming_egui::ParameterSlider` 给面板原生 egui Slider 增加等高圆角背景与窄竖条皮肤，悬浮／拖动改变竖条宽高和亮度，不绘制描边。输入、数值编辑、整数／步长、对数及 clamping 继续由 egui 处理；独立显示映射仅支持当前面板的有限线性范围和非负对数范围，不改参数默认值或配置格式。
+- 配置面板使用 `charming_egui::SelectionList`，容器只负责滚动、全宽条目和原生响应；配置加载、选中状态、失败回滚及增删改仍归 `ui/panels/configuration.rs` 和 `settings/`。点击已选项仍可重新载入，无保存模式仍允许选择。参数列表的布局与滑块交互测试归组件库，配置业务和 Dock／相机测试保留在根包。
 - `verify.rs` 只组织完整 GPU 行为检查；DFT/耦合、近岸、浪花及渲染验证归各自 `verification.rs` 或 `verification/`，仍编译到非测试程序供 CLI 调用，不通过暴露私有字段来迁移。`gpu/timer.rs` 使用设备支持的 GPU timestamp；功能运行不能依赖同步回读。
 - 配置、特性边界、参数面板和资源许可约束见根目录 `AGENTS.md`；使用与算法指南集中在 `doco/guides/`，包括 [Ocean](guides/ocean.md)、[CPU PIC](guides/pic.md)、[一维浅水](guides/shallow.md) 和 [泡沫诊断](guides/foam-lab.md)。根目录 `README.md` 提供项目入口，`doco/specs/` 保留精确行为合约。
 

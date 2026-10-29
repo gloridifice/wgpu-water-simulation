@@ -25,7 +25,8 @@
 | `src/ocean/simulation/spray/` | 近岸浪花源、粒子及所属着色器 |
 | `src/ocean/scene/` | 模型几何、地形高度场与碰撞体 |
 | `src/ocean/render/` | 水面、海底、模型、天空光学、纹理及所属着色器 |
-| `src/ocean/ui/` | Dock、参数控件、面板、颜色编辑、主题与布局保存 |
+| `src/ocean/ui/` | Dock、业务面板、颜色编辑、应用字体与布局保存 |
+| `crates/charming_egui/` | 通用 egui 控件、参数／选择列表、三份 TOML 主题；可选 `dock` feature，不依赖窗口或 GPU |
 | `src/ocean/settings/`、`ui/panels/configuration.rs` | 会话、命名配置库、原子保存及配置管理界面 |
 | `src/ocean/verify.rs`、各领域的 `verification/` 或 `verification.rs` | 真实 GPU 验证总入口与所属行为检查 |
 | `src/ocean/labs/foam_weight_lab/` | 独立泡沫权重实验 |
@@ -84,10 +85,11 @@ target\release\ocean.exe --beach --no-settings --frames 600
 
 - 使用 egui_dock；左侧固定“场景、浅水、远海、着色、配置”五分类导航，各分类有独立 Dock 布局。默认参数靠左、渲染视图靠右；顶部工具栏常驻。切换只改 UI，不重置模拟、草稿或相机。
 - 各布局保留一个不可关闭的渲染视图；参数面板可关闭、跨分类添加。布局 sidecar 独立于模拟会话与命名配置，遵守只读／无保存模式；界面合约见 `doco/specs/workspace-ui.md`。
+- 通用组件与主题位于 `crates/charming_egui/`；海洋业务面板直接依赖该库，不复制控件实现。三份默认 TOML 编译期内嵌，也允许显式外部加载；MiSans 由主程序安装，主题应用不得覆盖字体。
 - 每个逻辑参数组使用一个共享的两列网格，让同组多行实际对齐；不要每行创建独立网格。
 - 左列为名称，右列为参数控件；复用统一布局辅助方法。扣除列间距后，名称列占 42%，参数列占 58%。
 - 长名称允许换行；控件不得撑大列宽，导致不同参数组的列边界错位。
-- 分组标题使用普通字号的加粗 `Label`，不使用标题组件。
+- 分组标题和普通强调文字统一使用 `charming_egui::h3`（默认 14 pt、高对比色、不加粗）；更高层级可用 h1（20 pt、加粗）与 h2（16 pt、加粗）。标题自带上下 margin，分组不重复叠加；错误／警告保留语义颜色。
 - 参数解释放在名称的 hover 提示中，不常驻显示介绍小字。保留必要的操作按钮、当前状态及错误提示。
 - 参数提示说明作用、单位、范围，以及修改后实时生效还是重置模拟。
 - 只调整面板时，不顺带修改模拟、着色或参数默认值。

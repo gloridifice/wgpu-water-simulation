@@ -80,6 +80,7 @@ No project-level license is currently provided. Bundled assets have separate ter
 Detailed guides are primarily in Chinese.
 
 - [Ocean usage and GPU verification](doco/guides/ocean.md)
+- [charming_egui components and themes](doco/guides/charming-egui.md)
 - [CPU PIC simulation](doco/guides/pic.md)
 - [1D shallow-water simulation](doco/guides/shallow.md)
 - [Foam diagnostics and benchmarks](doco/guides/foam-lab.md)

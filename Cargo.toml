@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/tui-2d-prototype"]
+members = [".", "crates/tui-2d-prototype", "crates/charming_egui"]
 default-members = ["."]
 exclude = ["crates/tall-cell-fluid"]
 resolver = "3"
@@ -12,7 +12,7 @@ default-run = "ocean"
 
 [features]
 default = ["ocean"]
-ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_extras", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:ron", "dep:gltf", "dep:sha2"]
+ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_extras", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:charming_egui", "dep:gltf", "dep:sha2"]
 
 [dependencies.wgpu]
 version = "27.0.1"
@@ -85,6 +85,11 @@ name = "foam-weight-lab"
 path = "src/bin/foam_weight_lab.rs"
 required-features = ["ocean"]
 
+[[bin]]
+name = "slider-lab"
+path = "src/bin/slider_lab.rs"
+required-features = ["ocean"]
+
 [dependencies.egui]
 version = "0.33.3"
 features = ["serde"]
@@ -118,6 +123,7 @@ version = "0.18.0"
 features = ["serde"]
 optional = true
 
-[dependencies.ron]
-version = "0.8"
+[dependencies.charming_egui]
+path = "crates/charming_egui"
+features = ["dock"]
 optional = true

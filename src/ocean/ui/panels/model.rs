@@ -2,7 +2,7 @@
 use crate::ocean::camera::Camera;
 use crate::ocean::parameters::model::ModelConfig;
 use crate::ocean::parameters::optics::OpticsConfig;
-use crate::ocean::ui::controls::{PanelButton, action_row, parameter, parameter_table};
+use charming_egui::{PanelButton, action_row, parameter, parameter_table};
 #[derive(Default)]
 pub struct ModelPanel {
     draft: ModelConfig,
@@ -30,7 +30,7 @@ impl ModelPanel {
             self.applied = Some(optics.model);
             self.error = None;
         }
-        ui.label(egui::RichText::new("Challaborough Pillbox").strong());
+        charming_egui::h3(ui, "Challaborough Pillbox");
         parameter_table(ui, "model asset status", |ui| {
             parameter(
                 ui,
@@ -52,7 +52,7 @@ impl ModelPanel {
             );
         });
         if self.draft.enabled {
-            ui.label(egui::RichText::new("模型变换与水位").strong());
+            charming_egui::h3(ui, "模型变换与水位");
             parameter_table(ui, "model transform", |ui| {
                 for (a, name) in ["位置 X（米）", "位置 Y（米）", "位置 Z（米）"]
                     .into_iter()
@@ -108,7 +108,7 @@ impl ModelPanel {
                     },
                 );
             });
-            ui.label(egui::RichText::new("SWE 包围盒").strong());
+            charming_egui::h3(ui, "SWE 包围盒");
             parameter_table(ui, "model domain", |ui| {
                 for (a, name) in ["中心 X（米）", "中心 Y（米）", "中心 Z（米）"]
                     .into_iter()
@@ -172,7 +172,7 @@ impl ModelPanel {
             {
                 self.draft.fit(self.source_bounds.unwrap());
             }
-            ui.label(egui::RichText::new("边界与补充海床").strong());
+            charming_egui::h3(ui, "边界与补充海床");
             parameter_table(ui, "model boundaries", |ui| {
                 for (a, name) in ["−X 开放", "+X 开放", "−Z 开放", "+Z 开放"]
                     .into_iter()

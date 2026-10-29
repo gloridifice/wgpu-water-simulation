@@ -1,9 +1,10 @@
 use super::controls::{number, toggle};
 use crate::ocean::camera::Camera;
 use crate::ocean::parameters::ocean::OceanConfig;
-use crate::ocean::ui::controls::{PanelButton, action_row, choices, group, parameter};
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
+use charming_egui::ParameterSlider;
+use charming_egui::{PanelButton, action_row, choices, group, parameter};
 
 impl Gui {
     pub(in crate::ocean::ui) fn ocean_panel(
@@ -23,7 +24,7 @@ impl Gui {
             );
             let mut angle = self.draft.wind_angle.to_degrees();
             if parameter(ui, "风向（度）", help("风向（度）"), |ui| {
-                ui.add(egui::Slider::new(&mut angle, -180.0..=180.0))
+                ui.add(ParameterSlider::new(&mut angle, -180.0..=180.0))
             })
             .changed()
             {
@@ -64,7 +65,10 @@ impl Gui {
                     });
             });
             parameter(ui, "每轴网格数", help("每轴网格数"), |ui| {
-                ui.add(egui::Slider::new(&mut self.draft.mesh_resolution, 8..=512))
+                ui.add(ParameterSlider::new(
+                    &mut self.draft.mesh_resolution,
+                    8..=512,
+                ))
             });
         });
         let mut apply = None;

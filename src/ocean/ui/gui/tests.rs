@@ -1,53 +1,11 @@
 use super::*;
-use crate::ocean::ui::controls::{
-    PARAMETER_COLUMN_GAP, PARAMETER_NAME_RATIO, parameter, parameter_table,
-};
-
-#[test]
-fn parameter_groups_share_ratio_even_with_oversized_controls() {
-    let ctx = egui::Context::default();
-    for width in [240.0, 400.0] {
-        for _ in 0..2 {
-            let _ = ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(width + 16.0, 800.0),
-                    )),
-                    ..Default::default()
-                },
-                |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        ui.set_width(width);
-                        let start = ui.cursor().left();
-                        let expected = start
-                            + (width - PARAMETER_COLUMN_GAP) * PARAMETER_NAME_RATIO
-                            + PARAMETER_COLUMN_GAP;
-                        let mut positions = Vec::new();
-                        for group in ["short group", "long group"] {
-                            parameter_table(ui, group, |ui| {
-                                for name in ["A", "A much longer name which wraps"] {
-                                    parameter(ui, name, "Tooltip", |ui| {
-                                        positions.push(ui.cursor().left());
-                                        ui.allocate_space(egui::vec2(500.0, 20.0));
-                                    });
-                                }
-                            });
-                        }
-                        for x in positions {
-                            assert!((x - expected).abs() < 1.0, "{x} != {expected}");
-                        }
-                    });
-                },
-            );
-        }
-    }
-}
-
 #[test]
 fn default_workspace_keeps_view_right_of_controls_and_resizes() {
     let ctx = egui::Context::default();
-    let dock_style = crate::ocean::ui::theme::install(&ctx);
+    let theme = charming_egui::Theme::default();
+    theme.apply(&ctx);
+    crate::ocean::ui::fonts::install(&ctx);
+    let dock_style = theme.dock_style().clone();
     let mut dock = Workspaces::default().items.into_iter().next().unwrap().dock;
     let mut previous_width = 0.0;
     for width in [1200.0, 1600.0] {

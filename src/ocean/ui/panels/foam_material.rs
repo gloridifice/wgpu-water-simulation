@@ -1,8 +1,9 @@
 use super::controls::{list, number, toggle};
 use crate::ocean::camera::Camera;
-use crate::ocean::ui::controls::{PanelButton, group, parameter};
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
+use charming_egui::ParameterSlider;
+use charming_egui::{PanelButton, group, parameter};
 
 impl Gui {
     pub(in crate::ocean::ui) fn foam_material_panel(
@@ -47,7 +48,8 @@ impl Gui {
                 help("坐标重置周期（秒）"),
                 |ui| {
                     ui.add(
-                        egui::Slider::new(&mut shore.foam_texture_period, 0.0..=60.0).step_by(0.25),
+                        ParameterSlider::new(&mut shore.foam_texture_period, 0.0..=60.0)
+                            .step_by(0.25),
                     )
                 },
             );

@@ -1,7 +1,9 @@
 use crate::ocean::parameters::optics::OpticsConfig;
 use crate::ocean::scene::collider::Collider;
 use crate::ocean::scene::collider::Shape;
-use crate::ocean::ui::controls::{PanelButton, action_row, parameter, parameter_table};
+use charming_egui::{
+    PanelButton, ParameterSlider, action_row, choices, parameter, parameter_table,
+};
 
 pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
     let resolution = optics.shore.resolution;
@@ -16,7 +18,7 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
             domain[1] + domain[3],
         ]
     };
-    ui.label(egui::RichText::new("静态碰撞体").strong());
+    charming_egui::h3(ui, "静态碰撞体");
     parameter_table(ui, "collider actions", |ui| {
         parameter(
             ui,
@@ -97,11 +99,11 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
         };
         ui.separator();
         ui.push_id(index, |ui| {
-            ui.label(egui::RichText::new(format!("碰撞体 {}", index + 1)).strong());
+            charming_egui::h3(ui, format!("碰撞体 {}", index + 1));
             parameter_table(ui, "collider parameters", |ui| {
                 parameter(ui, "启用", "开启或关闭；即时生效并保存，不重置 SWE，暂停时也会应用。", |ui| ui.checkbox(&mut c.enabled, ""));
                 parameter(ui, "形状", "圆柱或可旋转长方体，底部连接海底；即时生效并保存，不重置 SWE。", |ui| {
-                    crate::ocean::ui::controls::choices(ui, &mut c.shape, &[(Shape::Cylinder, "圆柱"), (Shape::Box, "长方体")]);
+                    choices(ui, &mut c.shape, &[(Shape::Cylinder, "圆柱"), (Shape::Box, "长方体")]);
                 });
                 for (axis, label) in [(0, "位置 X（米）"), (1, "位置 Z（米）")] {
                     parameter(ui, label, "世界坐标，范围 ±1000 米。X 增大朝向外海，Z 沿岸；即时生效并保存，不重置 SWE。整个形状须在有效范围内。", |ui| ui.add(egui::DragValue::new(&mut c.position[axis]).speed(0.1).range(-1000.0..=1000.0)));
@@ -112,7 +114,7 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
                     for (axis, label) in [(0, "宽度（米）"), (1, "长度（米）")] {
                         parameter(ui, label, "完整尺寸，范围 0.5～60 米；即时生效并保存，不重置 SWE。", |ui| ui.add(egui::DragValue::new(&mut c.size[axis]).speed(0.1).range(0.5..=60.0)));
                     }
-                    parameter(ui, "旋转（度）", "绕竖直轴旋转，范围 ±180 度；即时生效并保存，不重置 SWE。", |ui| ui.add(egui::Slider::new(&mut c.angle, -180.0..=180.0)));
+                    parameter(ui, "旋转（度）", "绕竖直轴旋转，范围 ±180 度；即时生效并保存，不重置 SWE。", |ui| ui.add(ParameterSlider::new(&mut c.angle, -180.0..=180.0)));
                 }
                 parameter(ui, "高度（米）", "范围 0.1～30 米，从中心处原海底向上量到水平顶面。水面超过顶面可以漫过；即时生效并保存，不重置 SWE。", |ui| ui.add(egui::DragValue::new(&mut c.height).speed(0.1).range(0.1..=30.0)));
                 parameter(ui, "顶面海拔（米）", "中心海底高度加碰撞体高度，相对海平面。模型场景使用重采样床面，不使用沙坡公式。", |ui| ui.label(if model.enabled {"烘焙床面 + 高度".to_string()} else {format!("{:.2}", -optics.beach_slope * (c.position[0] - optics.shore_x) + c.height)}));

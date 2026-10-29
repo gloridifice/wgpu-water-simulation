@@ -80,6 +80,7 @@ cargo run --release -p tui-2d-prototype
 详细文档主要使用中文。
 
 - [Ocean 使用与 GPU 验证](../doco/guides/ocean.md)
+- [charming_egui 组件与主题](../doco/guides/charming-egui.md)
 - [CPU PIC 模拟](../doco/guides/pic.md)
 - [一维浅水模拟](../doco/guides/shallow.md)
 - [泡沫诊断与基准测试](../doco/guides/foam-lab.md)

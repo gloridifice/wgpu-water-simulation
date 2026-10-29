@@ -1,6 +1,5 @@
 use crate::ocean::gpu::timer::Sample;
-use crate::ocean::ui::controls::parameter;
-use crate::ocean::ui::controls::parameter_table;
+use charming_egui::{parameter, parameter_table};
 use std::time::{Duration, Instant};
 
 pub(super) const SUMMARY_HELP: &str = "最近 1 秒统计。FPS 包含垂直同步与事件等待；CPU 为绘制入口到 submit/present 返回的帧处理时间，含交换链等待。GPU 是主命令缓冲的真实时间戳，含模拟、场景和 GUI，不含 CPU 编码、呈现等待或额外回调缓冲。SWE 是其中的 GPU 子区间（含泡沫及浪花源，不含粒子更新/绘制），不应与总 GPU 相加；关闭 SWE 时隐藏，暂停无子步时显示空闲。";
@@ -198,7 +197,7 @@ impl Performance {
                 ui,
                 "指标",
                 "每 1 秒刷新一次，CPU 数据取该窗口内每帧平均值；GPU 数据只统计新读回的采样。",
-                |ui| ui.strong("数值"),
+                |ui| charming_egui::h3(ui, "数值"),
             );
             parameter(
                 ui,
