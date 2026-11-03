@@ -23,6 +23,28 @@
 *.workspaces.json
 .ocean-workspaces-*.tmp
 
+# Local AI agent state and tooling; keep the versioned doco skill.
+.pi/
+.agent/
+.agents/
+!.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/doco/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.github/copilot-instructions.md
+.opencode/
+.qoder/
+.qwen/
+.roo/
+.windsurf/
+AGENTS.local.md
+CLAUDE.local.md
+
 # Local IDE state and editor temporary files
 /.idea/
 /.vs/
