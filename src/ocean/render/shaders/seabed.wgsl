@@ -1,22 +1,7 @@
+@group(0) @binding(11) var caustic_map: texture_2d<f32>;
+@group(0) @binding(12) var caustic_sampler: sampler;
+@group(0) @binding(13) var<storage, read> fields: array<vec2<f32>>;
 @group(0) @binding(4) var<storage, read> shore_lace: array<f32>;
-struct Camera {
-    view_projection: mat4x4<f32>,
-    inverse_view_projection: mat4x4<f32>,
-    eye: vec4<f32>,
-    sun: vec4<f32>,
-    ocean: vec4<f32>,
-    misc: vec4<f32>,
-}
-struct Optics {
-    sigma_depth: vec4<f32>,
-    source_view: vec4<f32>,
-    options: vec4<f32>,
-    sky_color: vec4<f32>,
-    sky_albedo_enabled: vec4<f32>,
-    sky_quality: vec4<f32>,
-    beach: vec4<f32>,
-    sand_mapping: vec4<f32>, // cos(rotation), sin(rotation), reserved
-}
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<uniform> optics: Optics;
 @group(0) @binding(2) var<storage, read> shore_field: array<vec4<f32>>;
@@ -115,7 +100,26 @@ fn ground_fragment(input: GroundOut) -> @location(0) vec4<f32> {
         if normal.y<0.0 { normal=-normal; }
     }
     let ndotl = max(dot(normal, camera.sun.xyz), 0.0);
-    let lighting = 0.35 * ambient_occlusion + 0.65 * ndotl;
+    var sunlight=vec3(ndotl);
+    var transmitted=vec3(0.0);
+    if optics.caustics.x>0.5 && shore.model.x<0.5 {
+        let grid=(input.world.xz/camera.ocean.y+vec2(0.5))*camera.ocean.x;
+        let height=surface(grid,vec2(0.0)).y;
+        let depth=height-input.world.y;
+        var wet=smoothstep(0.008,0.04,depth);
+        if shore_active(shore) && ocean_weight(input.world.xz,shore)<0.01 {
+            wet*=smoothstep(0.008,0.04,sample_shore_history(input.world.xz).z);
+        }
+        let focused=caustic_light(input.world,height);
+        transmitted=focused*wet;
+        // The map already includes receiver orientation; preserve only the
+        // sand normal-map modulation here, without applying the cosine twice.
+        let ray=refract(-normalize(camera.sun.xyz),vec3(0.0,1.0,0.0),1.0/optics.refraction.y);
+        let detail=max(dot(normal,-ray),0.0)/max(dot(water_bed_normal(),-ray),0.05);
+        sunlight=mix(sunlight,focused*detail*max(optics.caustics.y,1.0),wet*min(optics.caustics.y,1.0));
+    }
+    if u32(optics.source_view.w)==12u { return vec4(transmitted,1.0); }
+    let lighting = vec3(0.35 * ambient_occlusion) + 0.65 * sunlight;
     var color = albedo * lighting;
     if optics.beach.x > 0.5 {
         let view = normalize(camera.eye.xyz - input.world);

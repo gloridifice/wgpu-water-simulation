@@ -10,3 +10,4 @@ pub(in crate::ocean) mod optics;
 mod scene;
 pub(in crate::ocean) mod spray;
 mod surface;
+mod water_effects;

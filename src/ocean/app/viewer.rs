@@ -108,15 +108,17 @@ impl State {
         }
     }
 
-    fn persist(&mut self, force: bool) {
+    fn persist_layout(&mut self, force: bool) {
         if let Some(store) = &mut self.gui.workspace_store {
             store.update(&self.gui.workspaces, Instant::now(), force);
         }
+    }
+
+    fn update_settings(&mut self, save_requested: bool) {
         let current = self.saved_settings();
         if let Some(store) = &mut self.settings {
-            let now = Instant::now();
-            store.set_configurations(&self.gui.configuration_panel.library, now);
-            store.update(current, now, force);
+            store.set_configurations(&self.gui.configuration_panel.library);
+            store.update(current, save_requested);
             self.gui.save_status = store.status.clone();
             self.gui.save_failed = store.failed;
         }
@@ -157,7 +159,6 @@ impl State {
         self.time = 0.0;
         self.gui.clear_foam = true;
         self.gui.error = None;
-        self.gui.save_now = true;
         Ok(())
     }
 
@@ -291,8 +292,9 @@ impl State {
             .as_ref()
             .map(|a| a.height.metadata.bounds);
         self.gui.model_panel.bed_range = self.renderer.shore.terrain_height_range();
-        let force_save = std::mem::take(&mut self.gui.save_now);
-        self.persist(force_save);
+        self.persist_layout(false);
+        let save_requested = std::mem::take(&mut self.gui.save_now);
+        self.update_settings(save_requested);
         self.renderer.update_optics(&self.gpu, &self.gui.optics);
         let simulation_start = Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
@@ -476,7 +478,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::Focused(false) => {
-                state.persist(true);
+                state.persist_layout(true);
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.physical_key {
@@ -529,7 +531,7 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
         if let Some(state) = &mut self.state {
-            state.persist(true);
+            state.persist_layout(true);
         }
     }
 

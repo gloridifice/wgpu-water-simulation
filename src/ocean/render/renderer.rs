@@ -27,6 +27,9 @@ pub struct Renderer {
     index_count: u32,
     depth: wgpu::TextureView,
     seabed: Seabed,
+    caustics: super::caustics::Caustics,
+    screen_depth: super::screen_depth::ScreenDepth,
+    model_refraction: std::cell::Cell<bool>,
     optics: wgpu::Buffer,
     sky_lut: SkyLut,
     layout: wgpu::BindGroupLayout,
@@ -81,10 +84,47 @@ impl Renderer {
         let sky_lut = SkyLut::new(gpu);
         let foam_textures = FoamTextures::new(gpu);
         let shore = Shore::new(gpu, ocean);
-        let seabed = Seabed::new(gpu, &uniform, &optics, &shore, format, width, height);
+        let caustics =
+            super::caustics::Caustics::new(gpu, &uniform, &optics, &ocean.fields, &shore);
+        let seabed = Seabed::new(
+            gpu,
+            &uniform,
+            &optics,
+            &shore,
+            &caustics,
+            format,
+            [width, height],
+        );
+        let screen_depth = super::screen_depth::ScreenDepth::new(gpu, &seabed.depth, width, height);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ocean render layout"),
             entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 wgpu::BindGroupLayoutEntry {
                     binding: 13,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -218,6 +258,18 @@ impl Renderer {
             layout: &layout,
             entries: &[
                 wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: wgpu::BindingResource::TextureView(&caustics.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: wgpu::BindingResource::Sampler(&caustics.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: wgpu::BindingResource::TextureView(&screen_depth.view),
+                },
+                wgpu::BindGroupEntry {
                     binding: 13,
                     resource: shore.terrain_bed.as_entire_binding(),
                 },
@@ -284,7 +336,21 @@ impl Renderer {
                     include_str!("shaders/optics.wgsl"),
                     include_str!("shaders/sky.wgsl"),
                     include_str!("shaders/skylight.wgsl"),
-                    include_str!("shaders/render.wgsl"),
+                    concat!(
+                        include_str!("shaders/scene_types.wgsl"),
+                        "\n",
+                        include_str!("shaders/surface.wgsl"),
+                        "\n",
+                        include_str!("shaders/water_light.wgsl"),
+                        "\n",
+                        include_str!("shaders/caustic_sample.wgsl"),
+                        "\n",
+                        include_str!("shaders/screen_trace.wgsl"),
+                        "\n",
+                        include_str!("shaders/fast_refraction.wgsl"),
+                        "\n",
+                        include_str!("shaders/render.wgsl")
+                    ),
                     include_str!("../simulation/nearshore/shaders/shore.wgsl"),
                     include_str!("../simulation/nearshore/shaders/shore_read.wgsl")
                 )
@@ -348,6 +414,9 @@ impl Renderer {
             index_count,
             depth: Self::depth_view(device, width, height),
             seabed,
+            caustics,
+            screen_depth,
+            model_refraction: std::cell::Cell::new(false),
             optics,
             sky_lut,
             layout,
@@ -377,14 +446,21 @@ impl Renderer {
         self.shore = Shore::with_resolution(gpu, ocean, resolution);
         self.local_indices = grid_indices(&gpu.device, resolution);
         self.shore.timer = crate::ocean::gpu::timer::GpuTimer::new(gpu);
+        self.caustics = super::caustics::Caustics::new(
+            gpu,
+            &self.uniform,
+            &self.optics,
+            &self.fields,
+            &self.shore,
+        );
         self.seabed = Seabed::new(
             gpu,
             &self.uniform,
             &self.optics,
             &self.shore,
+            &self.caustics,
             format,
-            size[0],
-            size[1],
+            size,
         );
         if let Some(model) = &mut model {
             model.rebind(gpu, &self.uniform, &self.shore);
@@ -457,10 +533,28 @@ impl Renderer {
         self.depth = Self::depth_view(device, width, height);
         self.spray_depth_dirty = true;
         self.seabed.resize(device, width, height);
+        self.screen_depth = super::screen_depth::ScreenDepth::from_device(
+            device,
+            &self.seabed.depth,
+            width,
+            height,
+        );
         self.bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("resized ocean scene bindings"),
             layout: &self.layout,
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: wgpu::BindingResource::TextureView(&self.caustics.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: wgpu::BindingResource::Sampler(&self.caustics.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: wgpu::BindingResource::TextureView(&self.screen_depth.view),
+                },
                 wgpu::BindGroupEntry {
                     binding: 13,
                     resource: self.shore.terrain_bed.as_entire_binding(),
@@ -552,6 +646,13 @@ impl Renderer {
 
     pub fn update_optics(&self, gpu: &Gpu, optics: &OpticsConfig) {
         self.shore.configure(gpu, optics);
+        self.caustics.configure(optics);
+        self.model_refraction.set(
+            optics.model.enabled
+                && optics.refraction
+                && optics.refraction_method
+                    == crate::ocean::parameters::optics::OpticalMethod::Physical,
+        );
         self.sky_lut.update(gpu, &optics.sky);
         let value: OpticsUniform = optics.uniform();
         gpu.queue
@@ -565,10 +666,37 @@ impl Renderer {
         target: &wgpu::TextureView,
         camera: &CameraUniform,
     ) {
+        self.encode_with_timing(gpu, encoder, target, camera, None);
+    }
+
+    /// Same draws and passes; detailed queries require RenderTiming::FEATURES.
+    /// Normal frames pass None and perform no additional queries or readbacks.
+    pub fn encode_with_timing(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        camera: &CameraUniform,
+        timing: Option<super::RenderTiming<'_>>,
+    ) {
+        let mark = |encoder: &mut wgpu::CommandEncoder, boundary| {
+            if let Some(t) = timing {
+                t.mark(encoder, boundary);
+            }
+        };
         gpu.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(camera));
+        mark(encoder, 0);
         self.sky_lut.encode(encoder);
+        mark(encoder, 1);
+        self.caustics.encode(encoder, timing);
+        mark(encoder, 4);
         self.seabed.encode(encoder);
+        mark(encoder, 5);
+        if self.model_refraction.get() {
+            self.screen_depth.encode(encoder);
+        }
+        mark(encoder, 6);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sky, seabed and integrated water"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -596,6 +724,9 @@ impl Renderer {
         pass.set_pipeline(&self.sky);
         pass.draw(0..3, 0..1);
         self.seabed.draw(&mut pass);
+        if let Some(t) = timing {
+            t.draw_mark(&mut pass, 7);
+        }
         pass.set_bind_group(0, &self.bind, &[]);
         pass.set_pipeline(&self.water);
         pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -606,6 +737,9 @@ impl Renderer {
             pass.set_index_buffer(self.local_indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..6 * self.shore.resolution.pow(2), 0, 0..1);
         }
+        if let Some(t) = timing {
+            t.draw_mark(&mut pass, 8);
+        }
         if let Some(model) = &self.seabed.model {
             model.draw_bounds(&mut pass);
         }
@@ -613,5 +747,6 @@ impl Renderer {
         if let (Some(particles), Some(source)) = (&self.spray, &self.shore.spray) {
             particles.render(encoder, target, source);
         }
+        mark(encoder, 9);
     }
 }

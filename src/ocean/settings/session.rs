@@ -122,6 +122,25 @@ impl SavedSettings {
                 "--scattering-albedo" => self.optics.sky.albedo = optics.sky.albedo,
                 "--sky-steps" => self.optics.sky.steps = optics.sky.steps,
                 "--no-skylight" | "--skylight" => self.optics.sky.enabled = optics.sky.enabled,
+                "--caustics-mode" => self.optics.caustics = optics.caustics,
+                "--refraction-mode" => {
+                    self.optics.refraction = optics.refraction;
+                    if optics.refraction {
+                        self.optics.refraction_method = optics.refraction_method;
+                    }
+                }
+                "--caustics" | "--no-caustics" => self.optics.caustics = optics.caustics,
+                "--caustics-strength" => self.optics.caustics_strength = optics.caustics_strength,
+                "--caustics-extent" => self.optics.caustics_extent = optics.caustics_extent,
+                "--caustics-softness" => self.optics.caustics_softness = optics.caustics_softness,
+                "--caustics-resolution" => {
+                    self.optics.caustics_resolution = optics.caustics_resolution
+                }
+                "--refraction" | "--no-refraction" => self.optics.refraction = optics.refraction,
+                "--water-ior" => self.optics.water_ior = optics.water_ior,
+                "--refraction-distance" => {
+                    self.optics.refraction_distance = optics.refraction_distance
+                }
                 "--water-view" => self.optics.view = optics.view,
                 "--shore-view" => self.optics.shore.view = optics.shore.view,
                 "--spray" => self.optics.spray.enabled = optics.spray.enabled,

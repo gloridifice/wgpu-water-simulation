@@ -42,6 +42,8 @@ cargo run --release --features ocean --bin foam-lab -- --benchmark --resolutions
 
 ```powershell
 cargo run --release --features ocean --bin ocean-profile -- --config configs/ocean-settings.json --output target/ocean-profile
+# 同进程、同一模拟状态交错测量光学开关组合。
+cargo run --release --features ocean --bin ocean-profile -- --config configs/experiments/reef-front-ridge.json --output target/optics-ab --optics-ab
 # 冻结已生效参数复测，避免个人配置在两次运行之间改变。
 cargo run --release --features ocean --bin ocean-profile -- --config target/ocean-profile/effective.json --resolution 512 --output target/ocean-profile-512
 ```
@@ -51,13 +53,17 @@ cargo run --release --features ocean --bin ocean-profile -- --config target/ocea
 输出目录必须不存在且父目录已存在。输出包括：
 
 - `effective.json`：实际使用的配置副本。
-- `profile.json`：设备、逐帧实际子步数／推进量、五段 GPU 毫秒及各段中位数。顺序为 FFT、远海泡沫、完整 SWE、浪花粒子、绘制。完整 SWE 包含子步参数复制、浪花源、帧末状态同步和 FFT 历史复制；绘制包含场景及浪花叠加。
+- `profile.json`：设备、逐帧实际子步数／推进量、五段 GPU 毫秒及各段中位数。顺序为 FFT、远海泡沫、完整 SWE、浪花粒子、绘制。完整 SWE 包含子步参数复制、浪花源、帧末状态同步和 FFT 历史复制；绘制包含场景及浪花叠加。支持 encoder／pass 内时间戳的设备还输出 `render_components`、`render_median_gpu_ms` 及逐帧 `render_gpu_ms`，细分天空 LUT、高度场层级更新、焦散追踪、焦散光栅化、不透明预绘制、屏幕深度层级、天空／不透明最终绘制、水面着色、线框／浪花叠加；不支持时保留原五段统计。初始化帧另外存入 `initial_frame_gpu_ms`／`initial_frame_render_gpu_ms`，不混入预热后的中位数。静态高度场层级普通帧复用，重建成本查看初始化帧。
 - `final-state.bin`：最后完整五块 SWE 状态，小端 f32，每格 80 字节。
 - `final.rgba`：最后画面的原始 RGBA8 sRGB 像素，1280×800，无文件头和行填充；不是 PNG。
 
-工具要求设备支持 GPU timestamp，边界使用空 compute pass，因此有少量测量开销；只在全部帧提交后回读。其干块统计仅检查末帧 16×16 块及两格邻域是否全干，不证明该块在两个 RK 阶段或之后可以安全停算。泡沫密度为零也不等于水动力不活跃。
+工具要求设备支持 GPU timestamp，大段边界使用空 compute pass；详细绘制计时直接写时间戳，不拆分生产 render pass，因此仍有少量测量开销。按设备 query 数量上限分批存储，支持 1～1000 个采样帧；只在全部帧提交后回读。水面着色包含折射追踪、光学积分和泡沫材质，使用相同配置的折射开／关对照估计折射增量，不把整段水面着色都归为折射。其干块统计仅检查末帧 16×16 块及两格邻域是否全干，不证明该块在两个 RK 阶段或之后可以安全停算。泡沫密度为零也不等于水动力不活跃。
 
 A/B 先核对生效配置、实际子步数与推进量，再比较状态和计时。带浪花的图像可能受 GPU 原子粒子压紧顺序影响，在透明重叠处存在少量像素差异；验证水面绘制时另用 `--no-spray` 固定对照。后台 GPU 负载会影响时间戳区间，需交错复测，不将受干扰的首次结果当作收益。
+
+`--optics-methods` 使用同一交错计时流程，对照“全关、物理焦散搭配快速折射、物理焦散搭配物理折射、配置原值”，输出顺序见 `optics_ab_variants`；`gpu_ms` 中的 render 项对应配置原值。可用于比较快速／物理模式，也可在原配置中选择混合模式作第四组对照。未启用的 pass 只剩时间戳边界开销，不应解读为实际求交耗时。
+
+`--optics-ab` 要求设备支持 encoder／pass 内时间戳。每个模拟帧只推进一次物理，然后在相同状态上交错绘制“全关、仅焦散、仅折射、全开”，逐帧轮换绘制顺序以减少缓存／频率偏差。`optics_ab_median_gpu_ms` 与 `optics_ab_render_median_ms` 分别记录四组分项及绘制总计中位数；`samples[].optics_ab_gpu_ms` 保留配对样本，`initial_frame_optics_ab_gpu_ms` 保留首次运行四组的明细（高度场第一次构建发生在首先启用焦散的组合）。五段 `gpu_ms` 中的 render 项选用配置指定的那组，不是四次绘制合计，因此这组数据不能直接当成实际窗口帧率。最后图像所属组合见 `final_image_variant`（0～3 顺序同上）。A/B 不保存参数、不推进额外物理步；与普通模式的同一末帧状态可逐字节比较。
 
 面板 SWE 计时止于最后求解／浪花源 pass，不包含帧末同步；此工具的 SWE 段覆盖整个 `Shore::encode`，两者不能直接当作同一指标。固定输入 `foam-lab --benchmark` 不运行生产调度，不能用于衡量帧末复制优化。
 

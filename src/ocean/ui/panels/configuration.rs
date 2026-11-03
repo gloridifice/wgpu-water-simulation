@@ -115,7 +115,7 @@ impl ConfigurationPanel {
             ],
         );
         if new
-            .on_hover_text("将当前全部参数另存为新配置。")
+            .on_hover_text("将当前全部参数另存为新配置；再点击顶部保存或按 Ctrl+S 写入本地。")
             .on_disabled_hover_text("本地保存已禁用")
             .clicked()
         {
@@ -181,7 +181,6 @@ impl ConfigurationPanel {
                     if result.is_ok() {
                         self.editor = None;
                         self.name.clear();
-                        self.save_now = true;
                     }
                     self.error = result.err();
                 }
@@ -201,7 +200,7 @@ impl ConfigurationPanel {
                     && load.is_none(),
                 PanelButton::new("保存配置"),
             )
-            .on_hover_text("用当前全部参数覆盖所选命名配置；自动保存仅记录工作状态。")
+            .on_hover_text("用当前全部参数覆盖所选命名配置并写入本地；顶部保存或 Ctrl+S 只记录工作状态，不覆盖命名快照。")
             .on_disabled_hover_text(if persistence_enabled {
                 "默认配置只读；请先新建或选择一个命名配置"
             } else {
@@ -331,10 +330,11 @@ mod tests {
 
         h.create("沙滩方案");
         assert_eq!(h.panel.library.get(Some(0)).unwrap(), &h.current);
-        assert!(std::mem::take(&mut h.panel.save_now));
+        assert!(!h.panel.save_now);
         h.current.speed = 0.5;
         h.frame(vec![]);
         h.click("保存配置");
+        assert!(std::mem::take(&mut h.panel.save_now));
         let saved = h.current.clone();
         assert_eq!(h.panel.library.get(Some(0)).unwrap(), &saved);
 
@@ -356,6 +356,7 @@ mod tests {
         ]);
         h.click("确定");
         assert_eq!(h.panel.library.profiles()[0].name(), "浅水方案");
+        assert!(!h.panel.save_now);
 
         h.click(DEFAULT_CONFIGURATION_NAME);
         assert_eq!(h.loaded.take().unwrap(), default);
@@ -374,6 +375,7 @@ mod tests {
         assert_eq!(h.panel.library.profiles().len(), 1);
         assert_eq!(h.panel.library.profiles()[0].name(), "保留的配置");
         assert_eq!(h.current, default);
+        assert!(!h.panel.save_now);
         h.click("保留的配置");
         assert_eq!(h.loaded.take().unwrap(), saved);
         assert_eq!(h.panel.selected, Some(0));

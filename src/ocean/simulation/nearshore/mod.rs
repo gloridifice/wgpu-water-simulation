@@ -481,6 +481,13 @@ impl Shore {
                 std::f32::consts::LN_2 / c.foam_residual_half_life,
                 c.foam_conversion,
             ],
+            foam_fresh_threshold: [
+                c.foam_fresh_threshold_mode as f32,
+                c.foam_fresh_threshold,
+                c.foam_fresh_noise_frequency,
+                c.foam_fresh_noise_detail_frequency,
+            ],
+            foam_fresh_noise: [c.foam_fresh_noise_detail_weight, 0.0, 0.0, 0.0],
             options: [c.generation, c.view as f32, self.resolution as f32, 0.0],
             collider_meta: [collider_count as f32, 0.0, 0.0, 0.0],
             model: [

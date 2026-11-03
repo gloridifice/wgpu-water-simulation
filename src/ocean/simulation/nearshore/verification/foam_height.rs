@@ -31,7 +31,21 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                     include_str!("../../../render/shaders/optics.wgsl"),
                     include_str!("../../../render/shaders/sky.wgsl"),
                     include_str!("../../../render/shaders/skylight.wgsl"),
-                    include_str!("../../../render/shaders/render.wgsl"),
+                    concat!(
+                        include_str!("../../../render/shaders/scene_types.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/surface.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/water_light.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/caustic_sample.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/screen_trace.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/fast_refraction.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/render.wgsl")
+                    ),
                     include_str!("../shaders/shore.wgsl"),
                     include_str!("../shaders/shore_read.wgsl"),
                     r#"

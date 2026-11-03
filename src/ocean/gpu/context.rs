@@ -24,7 +24,10 @@ impl Gpu {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("FFT ocean device"),
-                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_features: adapter.features()
+                    & (wgpu::Features::TIMESTAMP_QUERY
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
                 ..Default::default()
             })
             .await?;

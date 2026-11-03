@@ -56,7 +56,7 @@ fn ocean_view(
             (camera.distance * (-amount * 0.1).exp()).clamp(length * 0.12, length * 0.95);
         if !ui.ctx().egui_wants_keyboard_input() {
             ui.input(|input| {
-                if input.focused {
+                if input.focused && !input.modifiers.ctrl && !input.modifiers.command {
                     let right = i32::from(input.key_down(egui::Key::D))
                         - i32::from(input.key_down(egui::Key::A));
                     let forward = i32::from(input.key_down(egui::Key::W))
@@ -199,6 +199,13 @@ impl Gui {
         // Move just the UI layouts out during callbacks, not shared editor state.
         let mut workspaces = std::mem::take(&mut self.workspaces);
         let output = context.run_ui(input, |root_ui| {
+            let save_shortcut = root_ui.input_mut(|input| {
+                input.consume_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND,
+                    egui::Key::S,
+                ))
+            });
+            self.save_now |= save_shortcut && self.settings_path.is_some();
             egui::Panel::top("workspace header")
                 .frame(egui::Frame::NONE)
                 .show_inside(root_ui, |ui| {
@@ -237,6 +244,37 @@ impl Gui {
                                     {
                                         *camera = Camera::model(current.length);
                                         ui.close();
+                                    }
+                                });
+                                if ui
+                                    .add_enabled(
+                                        self.settings_path.is_some(),
+                                        egui::Button::new("保存"),
+                                    )
+                                    .on_hover_text(
+                                        "保存当前工作状态和配置库（Ctrl+S），不覆盖命名配置快照。",
+                                    )
+                                    .on_disabled_hover_text(
+                                        "本地保存已禁用（只读配置或 --no-settings）",
+                                    )
+                                    .clicked()
+                                {
+                                    self.save_now = true;
+                                }
+                                let status =
+                                    self.save_status.split('：').next().unwrap_or_default();
+                                ui.colored_label(
+                                    if self.save_failed {
+                                        egui::Color32::LIGHT_RED
+                                    } else {
+                                        ui.visuals().text_color()
+                                    },
+                                    status,
+                                )
+                                .on_hover_ui(|ui| {
+                                    ui.label(&self.save_status);
+                                    if let Some(path) = &self.settings_path {
+                                        ui.label(path.display().to_string());
                                     }
                                 });
                                 ui.menu_button("面板", |ui| {
@@ -481,6 +519,8 @@ impl Gui {
             }
             Panel::OffshoreFoam => self.offshore_foam_panel(ui, camera),
             Panel::Optics => self.optics_panel(ui),
+            Panel::Caustics => self.caustics_panel(ui),
+            Panel::Refraction => self.refraction_panel(ui),
             Panel::FoamMaterial => self.foam_material_panel(ui, camera),
             Panel::Surface => self.surface_panel(ui),
             Panel::SprayAppearance => {

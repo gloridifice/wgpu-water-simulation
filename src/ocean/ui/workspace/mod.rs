@@ -47,6 +47,8 @@ pub enum Panel {
     Ocean,
     OffshoreFoam,
     Optics,
+    Caustics,
+    Refraction,
     FoamMaterial,
     Surface,
     SprayAppearance,
@@ -56,7 +58,7 @@ pub enum Panel {
     Unknown,
 }
 impl Panel {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 17] = [
         Self::View,
         Self::Scene,
         Self::Model,
@@ -67,6 +69,8 @@ impl Panel {
         Self::Ocean,
         Self::OffshoreFoam,
         Self::Optics,
+        Self::Caustics,
+        Self::Refraction,
         Self::FoamMaterial,
         Self::Surface,
         Self::SprayAppearance,
@@ -85,6 +89,8 @@ impl Panel {
             Self::Ocean => "波谱与波形",
             Self::OffshoreFoam => "远海泡沫",
             Self::Optics => "水体与天空",
+            Self::Caustics => "焦散",
+            Self::Refraction => "折射",
             Self::FoamMaterial => "泡沫外观",
             Self::Surface => "表面与沙地",
             Self::SprayAppearance => "浪花外观",
@@ -145,6 +151,26 @@ impl Layout {
         match self {
             Self::Tabs { tabs, .. } => tabs.clone(),
             Self::Split { first, second, .. } => [first.panels(), second.panels()].concat(),
+        }
+    }
+    /// One-time migration keeps existing splits, active tabs and closed panels.
+    fn add_water_effect_tabs(&mut self) {
+        fn insert(layout: &mut Layout, panel: Panel) -> bool {
+            match layout {
+                Layout::Tabs { tabs, .. } if tabs.contains(&Panel::Optics) => {
+                    tabs.push(panel);
+                    true
+                }
+                Layout::Split { first, second, .. } => {
+                    insert(first, panel) || insert(second, panel)
+                }
+                _ => false,
+            }
+        }
+        for panel in [Panel::Caustics, Panel::Refraction] {
+            if !self.contains(panel) && !insert(self, panel) {
+                self.add(panel);
+            }
         }
     }
     fn contains(&self, panel: Panel) -> bool {
@@ -441,10 +467,15 @@ pub fn default_layout(id: WorkspaceId) -> Layout {
         WorkspaceId::Scene => stacked(Panel::Scene, vec![Panel::Model, Panel::Colliders], 0.32),
         WorkspaceId::Shallow => stacked(Panel::Shore, vec![Panel::ShoreFoam, Panel::Spray], 0.48),
         WorkspaceId::Offshore => stacked(Panel::Ocean, vec![Panel::OffshoreFoam], 0.68),
-        WorkspaceId::Shading => stacked(
-            Panel::Optics,
-            vec![Panel::FoamMaterial, Panel::Surface, Panel::SprayAppearance],
+        WorkspaceId::Shading => Layout::split(
+            Axis::Vertical,
             0.58,
+            Layout::tabs(vec![Panel::Optics, Panel::Caustics, Panel::Refraction]),
+            Layout::tabs(vec![
+                Panel::FoamMaterial,
+                Panel::Surface,
+                Panel::SprayAppearance,
+            ]),
         ),
         WorkspaceId::Configurations => Layout::tabs(vec![Panel::Configurations]),
     };

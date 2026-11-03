@@ -14,7 +14,7 @@ impl NamedConfiguration {
     }
 }
 
-/// The original configuration is a snapshot, never an autosave target.
+/// The original configuration is immutable, independent of the working session.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ConfigurationLibrary {
     default: SavedSettings,

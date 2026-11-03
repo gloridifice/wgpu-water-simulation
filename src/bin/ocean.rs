@@ -19,6 +19,7 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --mesh-resolution N  Mesh cells per axis, 8..512 (default: 128)
   --seed N         Deterministic ocean seed (default: 42)
   --verify         Headless GPU IFFT vs independent direct DFT; then exit
+  --verify-optics  Headless caustics/refraction GPU checks only
   --verify-terrain Headless GPU model-bed/lake/conservation/regrid checks only
   --spray          Enable nearshore GPU textured spray (place after scene preset)
   --spray-debug    Show normalized spray emission intensity (also enables spray)
@@ -53,9 +54,20 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --sky-steps N    Piecewise analytic sky integration: 8, 16, 32
   --no-skylight    Disable the sky source (keep background/reflection)
   --skylight       Enable the sky source
+  --caustics / --no-caustics  Dynamic seabed/model caustics (default: off)
+  --caustics-mode MODE  off, physical
+  --refraction-mode MODE  off, fast, physical
+  --caustics-strength N  Direct-light strength, 0..4 (default: 1)
+  --caustics-extent M    Receiver width in meters, 8..512 (default: 128)
+  --caustics-softness N  Filter radius in texels, 0..4 (default: 1)
+  --caustics-resolution N  Light grid: 128, 256, 512 (default: 256)
+  --refraction / --no-refraction  Seabed/model screen refraction (default: off)
+  --water-ior N         Water index, 1..1.6 (default: 1.333)
+  --refraction-distance M  Maximum water ray, 1..500 (default: 100)
   --water-view N   0=shaded, 1=path, 2=T, 3=attenuated bottom, 4=in-scattering,
                    5=extinction loss, 6=raw bottom, 7=medium sum,
-                   8=local sky source, 9=integrated sky, 10=manual, 11=total local source
+                   8=local sky source, 9=integrated sky, 10=manual, 11=total local source,
+                   12=caustic irradiance, 13=water ray direction, 14=refraction hit
   --foam-view N    Snapshot: 0=water, 1=Jacobian, 2=foam coverage
   --foam-texture N Nearshore: 0=legacy, 1=Shorewaves NSH, 2=Crest foam, 3=Crest Foam2
   --foam-transport-order N  Foam spatial flux: 1=baseline (default), 2=MUSCL (requires --swe-order 2)
@@ -76,7 +88,7 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --foam-opacity-scale N  NSH density for 63% opacity at full coverage (0.01..20, default: 2)
   --foam-material-view N  0=shaded, 1=pattern, 2=Height, 3=normal, 4=opacity, 5=advected grid
   --time S         Snapshot time, >=0 (default: 3)
-  --config PATH    Strict read-only configuration for window OR snapshot; no autosave
+  --config PATH    Strict read-only configuration for window OR snapshot; no saving
   --settings PATH  Writable GUI session (default: configs/ocean-settings.json if present,
                    otherwise LOCALAPPDATA/water-simulation/ocean-settings.json)
   --no-settings    Disable loading/saving local GUI settings
@@ -84,7 +96,7 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   -h, --help       Show help
 
 Drag left mouse: orbit | Wheel: zoom | Space: pause | R: reset
-C: horizontal choppiness | F: foam | Up/Down: amplitude | Esc/Q: quit
+C: horizontal choppiness | F: foam | Up/Down: amplitude | Ctrl+S: save | Esc/Q: quit
 
 The FFT and spectral evolution run on the GPU. This is a periodic ocean
 surface. The beach preset adds local 2D shallow-water waves, transported foam and
@@ -114,6 +126,7 @@ fn run() -> Result<(), Error> {
     let mut optics = OpticsConfig::default();
     let mut verify = false;
     let mut verify_terrain = false;
+    let mut verify_optics = false;
     let mut path: Option<PathBuf> = None;
     let mut time = 3.0_f32;
     let mut foam_view: Option<u32> = None;
@@ -183,6 +196,35 @@ fn run() -> Result<(), Error> {
             "--no-skylight" => optics.sky.enabled = false,
             "--skylight" => optics.sky.enabled = true,
             "--water-view" => optics.view = value(&mut args, &arg)?,
+            "--caustics-mode" => {
+                let mode: String = value(&mut args, &arg)?;
+                optics.caustics = match mode.as_str() {
+                    "off" => false,
+                    "physical" => true,
+                    _ => return Err("caustics mode must be off or physical".into()),
+                };
+            }
+            "--refraction-mode" => {
+                let mode:String=value(&mut args,&arg)?;
+                let (enabled,method)=(&mut optics.refraction, &mut optics.refraction_method);
+                match mode.as_str() {
+                    "off"=>*enabled=false,
+                    "fast"=>{*enabled=true;*method=water_simulation::ocean::parameters::optics::OpticalMethod::Fast;},
+                    "physical"=>{*enabled=true;*method=water_simulation::ocean::parameters::optics::OpticalMethod::Physical;},
+                    _=>return Err("optical mode must be off, fast or physical".into()),
+                }
+            }
+            "--caustics" => optics.caustics = true,
+            "--no-caustics" => optics.caustics = false,
+            "--caustics-strength" => optics.caustics_strength = value(&mut args,&arg)?,
+            "--caustics-extent" => optics.caustics_extent = value(&mut args,&arg)?,
+            "--caustics-softness" => optics.caustics_softness = value(&mut args,&arg)?,
+            "--caustics-resolution" => optics.caustics_resolution = value(&mut args,&arg)?,
+            "--refraction" => optics.refraction = true,
+            "--no-refraction" => optics.refraction = false,
+            "--water-ior" => optics.water_ior = value(&mut args,&arg)?,
+            "--refraction-distance" => optics.refraction_distance = value(&mut args,&arg)?,
+            "--verify-optics" => verify_optics = true,
             "--verify" => verify = true,
             "--verify-terrain" => verify_terrain = true,
             "--snapshot" => path = Some(value(&mut args, &arg)?),
@@ -219,7 +261,7 @@ fn run() -> Result<(), Error> {
     }
     config.validate()?;
     optics.validate()?;
-    if config_path.is_some() && (verify || verify_terrain) {
+    if config_path.is_some() && (verify || verify_terrain || verify_optics) {
         return Err("GPU verification does not load configurations; omit --config".into());
     }
     if config_path.is_some() && settings_path.is_some() {
@@ -250,15 +292,17 @@ fn run() -> Result<(), Error> {
     if frames == Some(0) {
         return Err("--frames must be positive".into());
     }
-    if ((verify || verify_terrain) && path.is_some())
-        || (frames.is_some() && (verify || verify_terrain || path.is_some()))
-        || (verify && verify_terrain)
+    if ((verify || verify_terrain || verify_optics) && path.is_some())
+        || (frames.is_some() && (verify || verify_terrain || verify_optics || path.is_some()))
+        || (u32::from(verify) + u32::from(verify_terrain) + u32::from(verify_optics) > 1)
     {
         return Err(
-            "--verify, --verify-terrain, --snapshot and --frames select different run modes".into(),
+            "--verify, --verify-terrain, --verify-optics, --snapshot and --frames select different run modes".into(),
         );
     }
-    if verify_terrain {
+    if verify_optics {
+        pollster::block_on(verify::water_lighting())
+    } else if verify_terrain {
         pollster::block_on(async {
             let gpu =
                 water_simulation::ocean::gpu::Gpu::new(&wgpu::Instance::default(), None).await?;
@@ -300,10 +344,8 @@ fn run() -> Result<(), Error> {
         } else if no_settings {
             (SavedSettings::default(), None)
         } else {
-            let (initial, store) = SettingsStore::open(
-                settings_path.unwrap_or_else(settings::default_path),
-                std::time::Instant::now(),
-            );
+            let (initial, store) =
+                SettingsStore::open(settings_path.unwrap_or_else(settings::default_path));
             (initial, Some(store))
         };
         initial.apply_cli(config, optics, &explicit);

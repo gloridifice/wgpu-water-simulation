@@ -9,6 +9,24 @@ impl OpticsConfig {
     pub fn uniform(&self) -> OpticsUniform {
         let (sin, cos) = self.sand_rotation_deg.to_radians().sin_cos();
         OpticsUniform {
+            caustics: [
+                f32::from(self.caustics),
+                self.caustics_strength,
+                self.caustics_extent,
+                self.caustics_softness,
+            ],
+            refraction: [
+                self.refraction_method.code(self.refraction),
+                self.water_ior,
+                self.refraction_distance,
+                self.caustics_resolution as f32,
+            ],
+            fast_refraction: [
+                self.fast_refraction_strength,
+                self.fast_refraction_depth,
+                self.fast_refraction_limit,
+                0.0,
+            ],
             sand_mapping: [cos, sin, 0.0, 0.0],
             sigma_depth: [
                 self.sigma_t[0],
@@ -57,6 +75,9 @@ pub struct OpticsUniform {
     pub sky_quality: [f32; 4],
     pub beach: [f32; 4],
     pub sand_mapping: [f32; 4],
+    pub caustics: [f32; 4],
+    pub refraction: [f32; 4],
+    pub fast_refraction: [f32; 4],
 }
 
 /// f64 reference with exp_m1 for accuracy, independent of the WGSL series.
@@ -266,6 +287,56 @@ mod tests {
     }
 
     #[test]
+    fn water_lighting_settings_legacy_roundtrip_and_finite_bounds() {
+        let legacy: OpticsConfig = serde_json::from_str(r#"{"depth":9.0}"#).unwrap();
+        assert!(!legacy.caustics && !legacy.refraction);
+        assert_eq!(legacy.depth, 9.0);
+        use crate::ocean::parameters::optics::OpticalMethod;
+        let old_enabled: OpticsConfig =
+            serde_json::from_str(r#"{"caustics":true,"caustics_method":"fast","fast_caustics_size":8.0,"refraction":true}"#).unwrap();
+        assert!(old_enabled.caustics);
+        assert_eq!(old_enabled.refraction_method, OpticalMethod::Physical);
+
+        let configured = OpticsConfig {
+            caustics: true,
+            refraction: true,
+            refraction_method: OpticalMethod::Fast,
+            fast_refraction_strength: 0.6,
+            fast_refraction_depth: 3.0,
+            fast_refraction_limit: 0.02,
+            caustics_strength: 2.5,
+            caustics_extent: 32.0,
+            caustics_softness: 2.0,
+            caustics_resolution: 512,
+            water_ior: 1.4,
+            refraction_distance: 75.0,
+            view: 14,
+            ..legacy
+        };
+        let restored: OpticsConfig =
+            serde_json::from_str(&serde_json::to_string(&configured).unwrap()).unwrap();
+        assert_eq!(restored, configured);
+        assert!(restored.validate().is_ok());
+        for bad in [f32::NAN, f32::INFINITY, -1.0] {
+            for field in 0..9 {
+                let mut config = configured;
+                match field {
+                    0 => config.caustics_strength = bad,
+                    1 => config.caustics_extent = bad,
+                    2 => config.caustics_softness = bad,
+                    3 => config.water_ior = bad,
+                    4 => config.refraction_distance = bad,
+                    5 => config.fast_refraction_strength = bad,
+                    6 => config.fast_refraction_depth = bad,
+                    7 => config.fast_refraction_limit = bad,
+                    _ => config.caustics_resolution = 129,
+                }
+                assert!(config.validate().is_err());
+            }
+        }
+    }
+
+    #[test]
     fn invalid_optical_parameters_are_rejected() {
         for invalid in [
             OpticsConfig {
@@ -281,7 +352,7 @@ mod tests {
                 ..Default::default()
             },
             OpticsConfig {
-                view: 12,
+                view: 15,
                 ..Default::default()
             },
         ] {

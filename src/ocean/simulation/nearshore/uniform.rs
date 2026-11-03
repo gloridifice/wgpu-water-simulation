@@ -20,6 +20,8 @@ pub struct ShoreUniform {
     pub foam_material: [f32; 4],
     pub foam_shading: [f32; 4],
     pub foam_lifetime: [f32; 4], // dual mode, fresh/residual exit rates /s, conversion fraction
+    pub foam_fresh_threshold: [f32; 4], // mode, constant, main/detail frequencies /m; render only
+    pub foam_fresh_noise: [f32; 4], // detail weight, reserved; render only
     pub options: [f32; 4],
     pub collider_meta: [f32; 4],
     pub model: [f32; 4], // enabled, minimum bed, fallback bed, sponge width

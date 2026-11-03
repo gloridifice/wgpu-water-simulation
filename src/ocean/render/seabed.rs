@@ -12,15 +12,16 @@ pub struct Seabed {
 }
 
 impl Seabed {
-    pub fn new(
+    pub(super) fn new(
         gpu: &crate::ocean::gpu::context::Gpu,
         camera: &wgpu::Buffer,
         optics: &wgpu::Buffer,
         shore: &crate::ocean::simulation::nearshore::Shore,
+        caustics: &super::caustics::Caustics,
         format: wgpu::TextureFormat,
-        width: u32,
-        height: u32,
+        size: [u32; 2],
     ) -> Self {
+        let [width, height] = size;
         let device = &gpu.device;
         let maps = crate::ocean::render::textures::sand::textures(gpu);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -77,6 +78,32 @@ impl Seabed {
             },
             count: None,
         });
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 11,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 12,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 13,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("seabed uniforms"),
             entries: &entries,
@@ -85,6 +112,18 @@ impl Seabed {
             label: Some("seabed bindings"),
             layout: &layout,
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: caustics.fields.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(&caustics.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::Sampler(&caustics.sampler),
+                },
                 wgpu::BindGroupEntry {
                     binding: 10,
                     resource: shore.terrain_bed.as_entire_binding(),
@@ -141,7 +180,17 @@ impl Seabed {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}\n{}",
-                    include_str!("shaders/seabed.wgsl"),
+                    concat!(
+                        include_str!("shaders/scene_types.wgsl"),
+                        "\n",
+                        include_str!("shaders/water_light.wgsl"),
+                        "\n",
+                        include_str!("shaders/caustic_sample.wgsl"),
+                        "\n",
+                        include_str!("shaders/surface.wgsl"),
+                        "\n",
+                        include_str!("shaders/seabed.wgsl")
+                    ),
                     include_str!("../simulation/nearshore/shaders/shore.wgsl"),
                     include_str!("../simulation/nearshore/shaders/shore_read.wgsl"),
                     include_str!("shaders/collider_render.wgsl")

@@ -19,6 +19,19 @@ fn image(
     optics: OpticsConfig,
     size: [u32; 2],
 ) -> Result<Vec<[f32; 4]>, Error> {
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    ocean.encode_filtered(gpu, &mut encoder, 0.0, &optics.shore);
+    gpu.queue.submit([encoder.finish()]);
+    raster_image(gpu, renderer, camera, optics, size)
+}
+
+fn raster_image(
+    gpu: &Gpu,
+    renderer: &Renderer,
+    camera: &crate::ocean::camera::CameraUniform,
+    optics: OpticsConfig,
+    size: [u32; 2],
+) -> Result<Vec<[f32; 4]>, Error> {
     renderer.update_optics(gpu, &optics);
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("optics raster check"),
@@ -42,7 +55,6 @@ fn image(
         mapped_at_creation: false,
     });
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    ocean.encode_filtered(gpu, &mut encoder, 0.0, &optics.shore);
     renderer.encode(
         gpu,
         &mut encoder,
@@ -688,5 +700,467 @@ fn swe_resolution(gpu: &Gpu) -> Result<(), Error> {
     eprintln!(
         "GPU SWE resolution: 64/128/256/512/1024, resize back, both orders, lake at rest and raster bindings OK"
     );
+    Ok(())
+}
+
+/// Analytic flat/tilted receiver irradiance and Snell path, then actual animated FFT.
+pub fn water_lighting(gpu: &Gpu) -> Result<(), Error> {
+    super::surface::run(gpu)?;
+    crate::ocean::render::caustics::verify(gpu)?;
+    model_water_lighting(gpu)?;
+    fast_refraction(gpu)?;
+    use glam::Vec3;
+    let config = OceanConfig {
+        length: 64.0,
+        resolution: 32,
+        mesh_resolution: 64,
+        amplitude: 0.0,
+        ..Default::default()
+    };
+    let ocean = Ocean::new(gpu, config)?;
+    let foam = Foam::new(gpu, &ocean.fields, config.resolution);
+    let mut renderer = Renderer::new(gpu, &ocean, &foam, wgpu::TextureFormat::Rgba32Float, 65, 49);
+    let mut camera = Camera::new(config.length);
+    camera.distance = 12.0;
+    camera.pitch = 0.9;
+    camera.foam = false;
+    let mut settings = OpticsConfig {
+        caustics: true,
+        caustics_extent: 64.0,
+        refraction: true,
+        sigma_t: [0.0; 3],
+        source: [0.0; 3],
+        reflections: false,
+        ..Default::default()
+    };
+    settings.shore.enabled = false;
+    settings.sky.enabled = false;
+    for size in [[65, 49], [47, 35]] {
+        renderer.resize(&gpu.device, size[0], size[1]);
+        for beach in [false, true] {
+            settings.beach = beach;
+            let slope = if beach { settings.beach_slope } else { 0.0 };
+            let bed = if beach {
+                slope * settings.shore_x
+            } else {
+                -settings.depth
+            };
+            let bed_normal = Vec3::new(slope, 1.0, 0.0).normalize();
+            for sun in [Vec3::Y, Vec3::new(-0.35, 0.4, -0.65).normalize()] {
+                let mut uniform = camera.uniform(config, size[0] as f32 / size[1] as f32);
+                uniform.sun = sun.extend(0.0).to_array();
+                let eta = 1.0 / settings.water_ior;
+                let light = Vec3::new(
+                    -sun.x * eta,
+                    -(1.0 - eta * eta * (1.0 - sun.y * sun.y)).sqrt(),
+                    -sun.z * eta,
+                );
+                let f0 = ((settings.water_ior - 1.0) / (settings.water_ior + 1.0)).powi(2);
+                let expected = sun.y / (-light.y)
+                    * (-light.dot(bed_normal))
+                    * (1.0 - f0 - (1.0 - f0) * (1.0 - sun.y).powi(5));
+                for resolution in [128, 512] {
+                    settings.caustics_resolution = resolution;
+                    settings.view = 12;
+                    let pixels = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+                    for [x, y] in [[size[0] / 2, size[1] / 2], [size[0] / 3, size[1] / 2]] {
+                        let value = pixels[(y * size[0] + x) as usize][0];
+                        if !value.is_finite() || (value - expected).abs() > 0.015 {
+                            return Err(format!("caustic planar flux: beach={beach}, grid={resolution}, value={value}, expected={expected}").into());
+                        }
+                    }
+                }
+                settings.view = 14;
+                let hit = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+                settings.view = 1;
+                let paths = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+                let inverse = Mat4::from_cols_array_2d(&uniform.inverse_view_projection);
+                let eye = Vec4::from_array(uniform.eye).truncate();
+                let mut checked = 0;
+                for [x, y] in [
+                    [size[0] / 2, size[1] / 2],
+                    [size[0] / 3, size[1] / 2],
+                    [size[0] * 2 / 3, size[1] / 2],
+                ] {
+                    let pixel = (y * size[0] + x) as usize;
+                    if hit[pixel][1] < 0.7 {
+                        continue;
+                    }
+                    let far = inverse
+                        * Vec4::new(
+                            (x as f32 + 0.5) / size[0] as f32 * 2.0 - 1.0,
+                            1.0 - (y as f32 + 0.5) / size[1] as f32 * 2.0,
+                            1.0,
+                            1.0,
+                        );
+                    let incoming = (far.truncate() / far.w - eye).normalize();
+                    let surface = eye + incoming * (-eye.y / incoming.y);
+                    let ray = Vec3::new(
+                        incoming.x * eta,
+                        -(1.0 - eta * eta * (1.0 - incoming.y * incoming.y)).sqrt(),
+                        incoming.z * eta,
+                    );
+                    let expected = (bed - slope * surface.x) / (ray.y + slope * ray.x);
+                    let actual = paths[pixel][0] * settings.path_range;
+                    if (actual - expected).abs() > 0.015 {
+                        return Err(format!(
+                            "Snell plane path: {actual} != {expected}, beach={beach}"
+                        )
+                        .into());
+                    }
+                    checked += 1;
+                }
+                if checked < 2 {
+                    return Err(format!("refraction rejected visible planar hits: beach={beach}, size={size:?}, checked={checked}").into());
+                }
+                settings.refraction_distance = 1.0;
+                settings.view = 14;
+                let fallback = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+                if fallback[(size[1] / 2 * size[0] + size[0] / 2) as usize][0] < 0.7 {
+                    return Err("refraction maximum path did not fall back".into());
+                }
+                settings.refraction_distance = 100.0;
+            }
+        }
+    }
+    settings.beach = false;
+    settings.view = 1;
+    settings.water_ior = 1.0;
+    let uniform = camera.uniform(config, 65.0 / 49.0);
+    renderer.resize(&gpu.device, 65, 49);
+    let straight = image(
+        gpu,
+        &renderer,
+        &ocean,
+        &uniform,
+        OpticsConfig {
+            refraction: false,
+            ..settings
+        },
+        [65, 49],
+    )?;
+    let index_one = image(gpu, &renderer, &ocean, &uniform, settings, [65, 49])?;
+    for pixel in [24 * 65 + 32, 24 * 65 + 22] {
+        if (straight[pixel][0] - index_one[pixel][0]).abs() > 0.0001 {
+            return Err("index-one refraction changed the straight water path".into());
+        }
+    }
+    settings.water_ior = 1.333;
+    settings.view = 12;
+    let mut night = uniform;
+    night.sun = [0.0, -1.0, 0.0, 0.0];
+    let dark = image(gpu, &renderer, &ocean, &night, settings, [65, 49])?;
+    if dark[24 * 65 + 32][0] > 0.0001 {
+        return Err("sun below horizon still casts caustics".into());
+    }
+    // Production FFT animation must move the focal pattern; repeated paused state
+    // must remain bit-identical. No independent caustic animation clock is allowed.
+    let config = OceanConfig {
+        amplitude: 0.002,
+        resolution: 64,
+        mesh_resolution: 64,
+        ..config
+    };
+    let ocean = Ocean::new(gpu, config)?;
+    let foam = Foam::new(gpu, &ocean.fields, config.resolution);
+    let mut renderer = Renderer::new(gpu, &ocean, &foam, wgpu::TextureFormat::Rgba32Float, 65, 49);
+    let uniform = camera.uniform(config, 65.0 / 49.0);
+    settings.beach = false;
+    settings.view = 12;
+    settings.caustics_resolution = 256;
+    settings.refraction = false;
+    let mut images = Vec::new();
+    for time in [0.0, 1.0, 1.0] {
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        ocean.encode_filtered(gpu, &mut encoder, time, &settings.shore);
+        gpu.queue.submit([encoder.finish()]);
+        images.push(raster_image(gpu, &renderer, &uniform, settings, [65, 49])?);
+    }
+    if images.iter().flatten().flatten().any(|v| !v.is_finite()) {
+        return Err("nonfinite caustic raster".into());
+    }
+    let change: f32 = images[0]
+        .iter()
+        .zip(&images[1])
+        .map(|(a, b)| (a[0] - b[0]).abs())
+        .sum::<f32>()
+        / images[0].len() as f32;
+    if change < 0.002 || images[1] != images[2] {
+        return Err(format!("caustic animation/pause failed: mean change={change}").into());
+    }
+    settings.beach = true;
+    settings.shore.enabled = true;
+    settings.shore.normal_strength = 1.0;
+    camera.target = [settings.shore_x + 3.0, 0.0];
+    camera.distance = 24.0;
+    camera.pitch = 1.15;
+    let uniform = camera.uniform(config, 65.0 / 49.0);
+    for (resolution, order) in [(64, 1), (128, 2)] {
+        settings.shore.resolution = resolution;
+        settings.shore.order = order;
+        renderer.set_shore_resolution(
+            gpu,
+            &ocean,
+            resolution,
+            wgpu::TextureFormat::Rgba32Float,
+            [65, 49],
+        );
+        renderer.prepare_scene(gpu, &settings, wgpu::TextureFormat::Rgba32Float)?;
+        for step in 0..12 {
+            let time = step as f32 / 60.0;
+            let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            ocean.encode_filtered(gpu, &mut encoder, time, &settings.shore);
+            renderer
+                .shore
+                .encode(gpu, &mut encoder, &settings, time, false, uniform.ocean[3]);
+            gpu.queue.submit([encoder.finish()]);
+        }
+        let before = gpu.read_buffer(&renderer.shore.field, renderer.shore.field.size())?;
+        let pixels = raster_image(gpu, &renderer, &uniform, settings, [65, 49])?;
+        let after = gpu.read_buffer(&renderer.shore.field, renderer.shore.field.size())?;
+        if before != after || pixels.iter().flatten().any(|v| !v.is_finite()) {
+            return Err("caustics mutated SWE or produced nonfinite raster after rebind".into());
+        }
+        if !pixels.iter().any(|p| p[0] > 0.1 && p[0] < 5.0) {
+            return Err("SWE caustic receiver is empty".into());
+        }
+        let inverse = Mat4::from_cols_array_2d(&uniform.inverse_view_projection);
+        let eye = Vec4::from_array(uniform.eye).truncate();
+        let mut dry_count = 0;
+        for y in 5..44 {
+            for x in 5..60 {
+                let far = inverse
+                    * Vec4::new(
+                        (x as f32 + 0.5) / 65.0 * 2.0 - 1.0,
+                        1.0 - (y as f32 + 0.5) / 49.0 * 2.0,
+                        1.0,
+                        1.0,
+                    );
+                let ray = (far.truncate() / far.w - eye).normalize();
+                let t = (settings.beach_slope * (settings.shore_x - eye.x) - eye.y)
+                    / (ray.y + settings.beach_slope * ray.x);
+                let hit = eye + ray * t;
+                if t > 0.0 && hit.x < settings.shore_x - 1.5 {
+                    dry_count += 1;
+                    if pixels[y * 65 + x][0] > 0.0001 {
+                        return Err("caustics illuminated dry beach".into());
+                    }
+                }
+            }
+        }
+        if dry_count < 10 {
+            return Err("SWE caustic check did not cover dry beach".into());
+        }
+    }
+    println!(
+        "GPU water lighting: flat/slope flux at 128/512, two sun directions, Snell paths, fallback, resize, FFT animation/pause, SWE 64/128 both orders and dry beach OK (change={change:.4})"
+    );
+    Ok(())
+}
+
+/// Actual GLB depth/height receivers, including resize and static terrain edits.
+fn model_water_lighting(gpu: &Gpu) -> Result<(), Error> {
+    let config = OceanConfig {
+        length: 128.0,
+        resolution: 64,
+        mesh_resolution: 128,
+        amplitude: 0.0,
+        ..Default::default()
+    };
+    let ocean = Ocean::new(gpu, config)?;
+    let foam = Foam::new(gpu, &ocean.fields, config.resolution);
+    let mut renderer = Renderer::new(
+        gpu,
+        &ocean,
+        &foam,
+        wgpu::TextureFormat::Rgba32Float,
+        129,
+        97,
+    );
+    let mut settings = OpticsConfig {
+        caustics: true,
+        caustics_extent: 128.0,
+        refraction: true,
+        sigma_t: [0.0; 3],
+        source: [0.0; 3],
+        reflections: false,
+        ..Default::default()
+    };
+    settings.model.enabled = true;
+    settings.model.scale = 2.0;
+    settings.model.show_bounds = false;
+    settings.shore.enabled = false;
+    settings.sky.enabled = false;
+    let mut camera = Camera::model(config.length);
+    camera.yaw = 1.402;
+    camera.pitch = 0.578;
+    camera.distance = 75.244;
+    camera.foam = false;
+    // Screen-space tracing must cover a continuous visible planar receiver:
+    // isolated exact pixel-depth roots leave alternating hit/fallback stripes.
+    let size = [257, 193];
+    renderer.resize(&gpu.device, size[0], size[1]);
+    let model_position = settings.model.position;
+    settings.model.position = [1000.0, 1000.0, 1000.0];
+    renderer.prepare_scene(gpu, &settings, wgpu::TextureFormat::Rgba32Float)?;
+    settings.caustics = false;
+    settings.view = 14;
+    let uniform = camera.uniform(config, size[0] as f32 / size[1] as f32);
+    let plane = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+    let mut covered = 0;
+    let mut samples = 0;
+    for y in size[1] / 2..size[1] * 4 / 5 {
+        for x in size[0] / 4..size[0] * 3 / 4 {
+            let p = plane[(y * size[0] + x) as usize];
+            samples += 1;
+            covered += usize::from(p[1] > 0.7 && p[0] < 0.03 && p[2] < 0.11);
+        }
+    }
+    if covered * 100 < samples * 99 {
+        return Err(format!("screen planar coverage has holes: {covered}/{samples}").into());
+    }
+    eprintln!("GPU screen planar coverage: {covered}/{samples}");
+    settings.caustics = true;
+    settings.model.position = model_position;
+    use crate::ocean::parameters::optics::OpticalMethod;
+    for (size, level, method) in [
+        ([129, 97], 0.5, OpticalMethod::Physical),
+        ([93, 67], 1.5, OpticalMethod::Physical),
+        ([129, 97], 0.5, OpticalMethod::Fast),
+    ] {
+        settings.refraction_method = method;
+        settings.model.sea_level = level;
+        renderer.prepare_scene(gpu, &settings, wgpu::TextureFormat::Rgba32Float)?;
+        renderer.resize(&gpu.device, size[0], size[1]);
+        let uniform = camera.uniform(config, size[0] as f32 / size[1] as f32);
+        settings.view = 14;
+        settings.water_ior = 1.333;
+        let hits = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+        let count = hits
+            .iter()
+            .filter(|p| p[1] > 0.7 && p[0] < 0.03 && p[2] < 0.11)
+            .count();
+        if count < hits.len() / 8 {
+            return Err(format!(
+                "model screen refraction too few hits: {count}/{}",
+                hits.len()
+            )
+            .into());
+        }
+        settings.refraction_distance = 1.0;
+        let short = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+        let short_count = short
+            .iter()
+            .filter(|p| p[1] > 0.7 && p[0] < 0.03 && p[2] < 0.11)
+            .count();
+        if short_count >= count / 2 {
+            return Err("model refraction ignored maximum path".into());
+        }
+        settings.refraction_distance = 100.0;
+        // IOR=1 must recover the same visible scene and Euclidean water path.
+        settings.water_ior = 1.0;
+        settings.view = 14;
+        let direct_hits = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+        settings.view = 1;
+        let refracted = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+        settings.refraction = false;
+        let straight = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+        let mut direct_count = 0;
+        for ((a, b), hit) in refracted.iter().zip(&straight).zip(&direct_hits) {
+            if hit[1] > 0.7 && hit[0] < 0.03 && hit[2] < 0.11 {
+                direct_count += 1;
+                if (a[0] - b[0]).abs() * settings.path_range > 0.08 {
+                    return Err(format!(
+                        "model index-one path differs: traced={} straight={} range={} hit={hit:?}",
+                        a[0], b[0], settings.path_range
+                    )
+                    .into());
+                }
+            }
+        }
+        if direct_count < count / 2 {
+            return Err("model screen trace failed straight projected rays".into());
+        }
+        settings.view = 12;
+        settings.water_ior = 1.333;
+        let light = image(gpu, &renderer, &ocean, &uniform, settings, size)?;
+        if light.iter().flatten().any(|v| !v.is_finite())
+            || light.iter().filter(|p| p[0] > 0.15).count() < light.len() / 8
+        {
+            return Err("model caustic receiver empty or nonfinite".into());
+        }
+        let paused = raster_image(gpu, &renderer, &uniform, settings, size)?;
+        if light != paused {
+            return Err("model static hierarchy changed while paused".into());
+        }
+        settings.refraction = true;
+        eprintln!(
+            "GPU model optics {method:?}: size={size:?}, sea level={level}, refracted hits={count}, index-one checked={direct_count}, short-path hits={short_count}"
+        );
+    }
+    Ok(())
+}
+
+/// Fast art follows simulation time, pauses exactly, and never changes fluid state.
+fn fast_refraction(gpu: &Gpu) -> Result<(), Error> {
+    use crate::ocean::parameters::optics::OpticalMethod;
+    let config = OceanConfig {
+        resolution: 32,
+        mesh_resolution: 64,
+        length: 64.0,
+        amplitude: 0.0,
+        ..Default::default()
+    };
+    let ocean = Ocean::new(gpu, config)?;
+    let foam = Foam::new(gpu, &ocean.fields, config.resolution);
+    let mut renderer = Renderer::new(gpu, &ocean, &foam, wgpu::TextureFormat::Rgba32Float, 65, 49);
+    let mut camera = Camera::new(config.length);
+    camera.distance = 12.0;
+    camera.pitch = 0.9;
+    camera.foam = false;
+    let uniform = camera.uniform(config, 65.0 / 49.0);
+    let mut settings = OpticsConfig {
+        refraction: true,
+        refraction_method: OpticalMethod::Fast,
+        sigma_t: [0.0; 3],
+        source: [0.0; 3],
+        reflections: false,
+        view: 6,
+        ..Default::default()
+    };
+    settings.shore.enabled = false;
+    settings.sky.enabled = false;
+    let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    ocean.encode_filtered(gpu, &mut encoder, 0.0, &settings.shore);
+    renderer
+        .shore
+        .encode(gpu, &mut encoder, &settings, 0.0, false, uniform.ocean[3]);
+    gpu.queue.submit([encoder.finish()]);
+    settings.view = 6;
+    settings.refraction = false;
+    let straight = raster_image(gpu, &renderer, &uniform, settings, [65, 49])?;
+    settings.refraction = true;
+    settings.fast_refraction_strength = 0.0;
+    let zero = raster_image(gpu, &renderer, &uniform, settings, [65, 49])?;
+    for i in [24 * 65 + 32, 24 * 65 + 22] {
+        if (straight[i][0] - zero[i][0]).abs() > 0.002 {
+            return Err("zero-strength fast refraction changed background".into());
+        }
+    }
+    // Each selected path remains valid after repeatedly changing modes.
+    settings.fast_refraction_strength = 1.0;
+    for method in [
+        OpticalMethod::Physical,
+        OpticalMethod::Fast,
+        OpticalMethod::Physical,
+    ] {
+        settings.refraction_method = method;
+        settings.view = 14;
+        let hit = raster_image(gpu, &renderer, &uniform, settings, [65, 49])?;
+        if hit[24 * 65 + 32][1] < 0.7 {
+            return Err("water effect method switch lost a visible receiver".into());
+        }
+    }
+    eprintln!("GPU fast refraction: zero offset and mode switches OK");
     Ok(())
 }

@@ -44,6 +44,8 @@ fn collider_vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) i
 }
 @fragment
 fn collider_fragment(input: ColliderOut) -> @location(0) vec4<f32> {
+    // This first caustic receiver is the seabed plane, not collider surfaces.
+    if u32(optics.source_view.w)==12u { return vec4(0.0,0.0,0.0,1.0); }
     let light=0.3+0.7*max(dot(normalize(input.normal),camera.sun.xyz),0.0);
     let wet=mix(0.65,1.0,smoothstep(-0.1,0.2,input.world.y));
     return vec4(vec3(0.38,0.41,0.44)*light*wet,1.0);

@@ -3,7 +3,7 @@ use crate::ocean::camera::Camera;
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
 use yummy_egui::ParameterSlider;
-use yummy_egui::{PanelButton, group, parameter};
+use yummy_egui::{PanelButton, group, parameter, segmented_control};
 
 impl Gui {
     pub(in crate::ocean::ui) fn foam_material_panel(
@@ -108,6 +108,48 @@ impl Gui {
                 true,
             );
         });
+        if shore.foam_dual_phase {
+            group(ui, "新鲜泡沫 N 覆盖阈值", |ui| {
+                parameter(ui, "阈值模式", help("N 阈值模式"), |ui| {
+                    segmented_control(
+                        ui,
+                        &mut shore.foam_fresh_threshold_mode,
+                        &[(0, "常数"), (1, "噪波")],
+                    );
+                });
+                if shore.foam_fresh_threshold_mode == 0 {
+                    number(
+                        ui,
+                        "N 常数阈值",
+                        &mut shore.foam_fresh_threshold,
+                        0.0..=1.0,
+                        false,
+                    );
+                } else {
+                    number(
+                        ui,
+                        "N 主噪波频率（每米）",
+                        &mut shore.foam_fresh_noise_frequency,
+                        0.05..=20.0,
+                        true,
+                    );
+                    number(
+                        ui,
+                        "N 细噪波频率（每米）",
+                        &mut shore.foam_fresh_noise_detail_frequency,
+                        0.05..=60.0,
+                        true,
+                    );
+                    number(
+                        ui,
+                        "N 细噪波占比",
+                        &mut shore.foam_fresh_noise_detail_weight,
+                        0.0..=1.0,
+                        false,
+                    );
+                }
+            });
+        }
         group(ui, "泡沫高度（仅外观）", |ui| {
             number(
                 ui,

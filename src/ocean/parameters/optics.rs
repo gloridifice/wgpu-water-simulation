@@ -1,5 +1,5 @@
 use crate::ocean::parameters::sky::SkyConfig;
-pub const VIEW_NAMES: [&str; 12] = [
+pub const VIEW_NAMES: [&str; 15] = [
     "正常着色",
     "水中光程（米）",
     "透射率",
@@ -12,7 +12,30 @@ pub const VIEW_NAMES: [&str; 12] = [
     "天空散射积分",
     "手动散射源积分",
     "光线中点总散射源",
+    "焦散入射光（线性 RGB）",
+    "折射方向",
+    "折射命中（绿／红）",
 ];
+
+/// Kept separate from the legacy enable flags so old enabled configs stay physical.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpticalMethod {
+    Fast,
+    #[default]
+    Physical,
+}
+impl OpticalMethod {
+    pub fn code(self, enabled: bool) -> f32 {
+        if !enabled {
+            0.0
+        } else if self == Self::Physical {
+            1.0
+        } else {
+            2.0
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -20,6 +43,24 @@ pub struct OpticsConfig {
     pub model: crate::ocean::parameters::model::ModelConfig,
     pub shore: crate::ocean::parameters::shore::ShoreConfig,
     pub spray: crate::ocean::parameters::spray::SprayConfig,
+    /// Opt-in so legacy sessions retain their appearance.
+    pub caustics: bool,
+    pub caustics_strength: f32,
+    /// World-space receiver square width in meters.
+    pub caustics_extent: f32,
+    /// Filter radius in caustic-map texels.
+    pub caustics_softness: f32,
+    pub caustics_resolution: u32,
+    pub refraction: bool,
+    pub refraction_method: OpticalMethod,
+    pub fast_refraction_strength: f32,
+    /// Water thickness for full distortion, in meters.
+    pub fast_refraction_depth: f32,
+    /// Maximum screen displacement as a fraction of viewport height.
+    pub fast_refraction_limit: f32,
+    pub water_ior: f32,
+    /// Maximum refracted water path in meters.
+    pub refraction_distance: f32,
     pub depth: f32,
     pub beach: bool,
     pub beach_slope: f32,
@@ -45,6 +86,18 @@ impl Default for OpticsConfig {
             model: crate::ocean::parameters::model::ModelConfig::default(),
             shore: crate::ocean::parameters::shore::ShoreConfig::default(),
             spray: crate::ocean::parameters::spray::SprayConfig::default(),
+            caustics: false,
+            caustics_strength: 1.0,
+            caustics_extent: 128.0,
+            caustics_softness: 1.0,
+            caustics_resolution: 256,
+            refraction: false,
+            refraction_method: OpticalMethod::Physical,
+            fast_refraction_strength: 1.0,
+            fast_refraction_depth: 2.0,
+            fast_refraction_limit: 0.04,
+            water_ior: 1.333,
+            refraction_distance: 100.0,
             depth: 6.0,
             beach: false,
             beach_slope: 0.18,
@@ -90,6 +143,48 @@ impl OpticsConfig {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        for (name, value, low, high) in [
+            (
+                "fast refraction strength",
+                self.fast_refraction_strength,
+                0.0,
+                2.0,
+            ),
+            (
+                "fast refraction depth (m)",
+                self.fast_refraction_depth,
+                0.01,
+                20.0,
+            ),
+            (
+                "fast refraction limit",
+                self.fast_refraction_limit,
+                0.0,
+                0.2,
+            ),
+            ("caustics strength", self.caustics_strength, 0.0, 4.0),
+            ("caustics extent (m)", self.caustics_extent, 8.0, 512.0),
+            (
+                "caustics softness (texels)",
+                self.caustics_softness,
+                0.0,
+                4.0,
+            ),
+            ("water refractive index", self.water_ior, 1.0, 1.6),
+            (
+                "refraction distance (m)",
+                self.refraction_distance,
+                1.0,
+                500.0,
+            ),
+        ] {
+            if !value.is_finite() || !(low..=high).contains(&value) {
+                return Err(format!("{name} must be finite and in {low}..={high}"));
+            }
+        }
+        if ![128, 256, 512].contains(&self.caustics_resolution) {
+            return Err("caustics resolution must be 128, 256 or 512".into());
+        }
         self.model.validate()?;
         self.shore.validate()?;
         self.spray.validate()?;
@@ -124,7 +219,7 @@ impl OpticsConfig {
             }
         }
         if self.view >= VIEW_NAMES.len() as u32 {
-            return Err("water view must be in 0..=11".into());
+            return Err("water view must be in 0..=14".into());
         }
         Ok(())
     }

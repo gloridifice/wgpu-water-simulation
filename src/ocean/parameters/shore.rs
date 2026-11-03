@@ -61,6 +61,12 @@ pub struct ShoreConfig {
     pub foam_dual_phase: bool,
     // Render only: 0 both, 1 fresh N, 2 residual R.
     pub foam_species_view: u32,
+    // Render only: 0 constant threshold, 1 two-octave noise (legacy default).
+    pub foam_fresh_threshold_mode: u32,
+    pub foam_fresh_threshold: f32,
+    pub foam_fresh_noise_frequency: f32,
+    pub foam_fresh_noise_detail_frequency: f32,
+    pub foam_fresh_noise_detail_weight: f32,
     pub foam_fresh_half_life: f32,
     pub foam_residual_half_life: f32,
     pub foam_conversion: f32,
@@ -118,6 +124,11 @@ impl Default for ShoreConfig {
             foam_texture_distortion: true,
             foam_dual_phase: false,
             foam_species_view: 0,
+            foam_fresh_threshold_mode: 1,
+            foam_fresh_threshold: 0.5,
+            foam_fresh_noise_frequency: 0.8,
+            foam_fresh_noise_detail_frequency: 2.5,
+            foam_fresh_noise_detail_weight: 0.3,
             foam_fresh_half_life: 1.4,
             foam_residual_half_life: 9.0,
             foam_conversion: 0.65,
@@ -187,6 +198,30 @@ impl ShoreConfig {
                 20.0,
             ),
             ("foam roughness", self.foam_roughness, 0.15, 1.0),
+            (
+                "fresh foam constant threshold",
+                self.foam_fresh_threshold,
+                0.0,
+                1.0,
+            ),
+            (
+                "fresh foam noise frequency (/m)",
+                self.foam_fresh_noise_frequency,
+                0.05,
+                20.0,
+            ),
+            (
+                "fresh foam detail frequency (/m)",
+                self.foam_fresh_noise_detail_frequency,
+                0.05,
+                60.0,
+            ),
+            (
+                "fresh foam detail weight",
+                self.foam_fresh_noise_detail_weight,
+                0.0,
+                1.0,
+            ),
             ("breaking depth", self.breaking_depth, 0.5, 5.0),
             ("shore foam generation", self.generation, 0.0, 15.0),
             (
@@ -310,6 +345,7 @@ impl ShoreConfig {
         if self.foam_texture >= FOAM_TEXTURE_NAMES.len() as u32
             || self.foam_material_view >= FOAM_MATERIAL_VIEWS.len() as u32
             || self.foam_species_view > 2
+            || self.foam_fresh_threshold_mode > 1
         {
             return Err("invalid foam material selection".into());
         }
@@ -445,6 +481,78 @@ mod tests {
             },
         ] {
             assert!(config.validate().is_err());
+        }
+    }
+
+    #[test]
+    fn fresh_threshold_settings_preserve_old_configs_and_validate_both_modes() {
+        let old: super::ShoreConfig = serde_json::from_str(r#"{"generation":2.5}"#).unwrap();
+        assert_eq!(old.generation, 2.5);
+        assert_eq!(old.foam_fresh_threshold_mode, 1);
+        assert_eq!(old.foam_fresh_threshold, 0.5);
+        assert_eq!(old.foam_fresh_noise_frequency, 0.8);
+        assert_eq!(old.foam_fresh_noise_detail_frequency, 2.5);
+        assert_eq!(old.foam_fresh_noise_detail_weight, 0.3);
+        for mode in 0..=1 {
+            for (threshold, main, detail, weight) in
+                [(0.0, 0.05, 0.05, 0.0), (1.0, 20.0, 60.0, 1.0)]
+            {
+                let config = super::ShoreConfig {
+                    foam_fresh_threshold_mode: mode,
+                    foam_fresh_threshold: threshold,
+                    foam_fresh_noise_frequency: main,
+                    foam_fresh_noise_detail_frequency: detail,
+                    foam_fresh_noise_detail_weight: weight,
+                    ..old
+                };
+                config.validate().unwrap();
+                let restored: super::ShoreConfig =
+                    serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+                assert_eq!(
+                    config, restored,
+                    "mode {mode} must retain both modes' parameters"
+                );
+            }
+        }
+        for patch in [
+            r#"{"foam_fresh_threshold_mode":2}"#,
+            r#"{"foam_fresh_threshold":-0.01}"#,
+            r#"{"foam_fresh_threshold":1.01}"#,
+            r#"{"foam_fresh_noise_frequency":0}"#,
+            r#"{"foam_fresh_noise_frequency":20.01}"#,
+            r#"{"foam_fresh_noise_detail_frequency":0}"#,
+            r#"{"foam_fresh_noise_detail_frequency":60.01}"#,
+            r#"{"foam_fresh_noise_detail_weight":-0.01}"#,
+            r#"{"foam_fresh_noise_detail_weight":1.01}"#,
+        ] {
+            let invalid: super::ShoreConfig = serde_json::from_str(patch).unwrap();
+            assert!(
+                invalid.validate().is_err(),
+                "accepted invalid settings: {patch}"
+            );
+        }
+        for invalid in [
+            super::ShoreConfig {
+                foam_fresh_threshold: f32::NAN,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_fresh_noise_frequency: f32::INFINITY,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_fresh_noise_detail_frequency: f32::NAN,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_fresh_noise_detail_weight: f32::INFINITY,
+                ..old
+            },
+        ] {
+            assert!(
+                invalid.validate().is_err(),
+                "accepted nonfinite threshold settings"
+            );
         }
     }
 

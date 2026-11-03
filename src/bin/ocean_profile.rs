@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use water_simulation::ocean::{
     Error,
     gpu::context::Gpu,
-    render::Renderer,
+    render::{RenderTiming, Renderer},
     settings::load_config,
     simulation::offshore::{
         Ocean,
@@ -30,6 +30,8 @@ fn main() -> Result<(), Error> {
     let mut output = None;
     let mut resolution = None;
     let mut no_spray = false;
+    let mut optics_ab = false;
+    let mut optics_methods = false;
     let mut frames = 120u32;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -39,9 +41,14 @@ fn main() -> Result<(), Error> {
             "--resolution" => resolution = Some(args.next().ok_or("missing resolution")?.parse()?),
             "--frames" => frames = args.next().ok_or("missing frames")?.parse()?,
             "--no-spray" => no_spray = true,
+            "--optics-ab" => optics_ab = true,
+            "--optics-methods" => {
+                optics_ab = true;
+                optics_methods = true;
+            }
             "--help" | "-h" => {
                 println!(
-                    "ocean-profile --config PATH --output NEW_DIR [--resolution N] [--frames 120] [--no-spray]\nRead-only config; 30 warm-up frames, fixed 1/60 simulated second, 1280x800 offscreen.\nGPU timestamps cover FFT, offshore foam, complete SWE, spray particles, rendering.\nWrites profile.json, effective.json, final-state.bin and final.rgba; no UI/present timing."
+                    "ocean-profile --config PATH --output NEW_DIR [--resolution N] [--frames 120] [--no-spray] [--optics-ab | --optics-methods]\nRead-only config; 30 warm-up frames, fixed 1/60 simulated second, 1280x800 offscreen.\nGPU timestamps cover FFT, offshore foam, complete SWE, spray particles, rendering. Detailed render stages are included when inside-pass timestamps are supported.\nWrites profile.json, effective.json, final-state.bin and final.rgba; no UI/present timing."
                 );
                 return Ok(());
             }
@@ -108,14 +115,48 @@ fn main() -> Result<(), Error> {
         let camera = settings
             .camera
             .uniform(settings.ocean, width as f32 / height as f32);
-        let queries = gpu.device.create_query_set(&wgpu::QuerySetDescriptor {
-            label: Some("production path profile"),
-            ty: wgpu::QueryType::Timestamp,
-            count: 6 * frames,
-        });
+        let detailed = gpu.device.features().contains(RenderTiming::FEATURES);
+        if optics_ab && !detailed {
+            return Err("--optics-ab requires encoder/pass timestamps".into());
+        }
+        let variants = if optics_ab { 4 } else { 1 };
+        let variant_names = if optics_methods {
+            [
+                "off",
+                "fast_refraction",
+                "physical_refraction",
+                "configured",
+            ]
+        } else {
+            ["off", "caustics", "refraction", "both"]
+        };
+        let selected = if optics_methods {
+            3
+        } else if optics_ab {
+            usize::from(settings.optics.caustics) + 2 * usize::from(settings.optics.refraction)
+        } else {
+            0
+        };
+        let stride = 6 + if detailed {
+            RenderTiming::QUERY_COUNT * variants
+        } else {
+            0
+        };
+        // Extra final row records initialization, separately from steady frames.
+        // Full batches have 256-byte aligned resolve offsets on every backend.
+        let batch_frames = (wgpu::QUERY_SET_MAX_QUERIES / stride / 32) * 32;
+        let queries: Vec<_> = (0..(frames + 1).div_ceil(batch_frames))
+            .map(|batch| {
+                gpu.device.create_query_set(&wgpu::QuerySetDescriptor {
+                    label: Some("profile timestamp batch"),
+                    ty: wgpu::QueryType::Timestamp,
+                    count: stride * (frames + 1 - batch * batch_frames).min(batch_frames),
+                })
+            })
+            .collect();
         let timings = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("profile timestamps"),
-            size: u64::from(6 * frames) * 8,
+            size: u64::from(stride * (frames + 1)) * 8,
             usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -128,9 +169,22 @@ fn main() -> Result<(), Error> {
                 time - (frame - 1) as f32 / 60.0
             };
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
+            let recorded = if frame >= 30 {
+                Some(frame - 30)
+            } else if frame == 0 {
+                Some(frames)
+            } else {
+                None
+            };
+            let span = recorded.map(|i| {
+                (
+                    &queries[(i / batch_frames) as usize],
+                    (i % batch_frames) * stride,
+                )
+            });
             let boundary = |encoder: &mut wgpu::CommandEncoder, i| {
-                if frame >= 30 {
-                    mark(encoder, &queries, (frame - 30) * 6 + i);
+                if let Some((queries, offset)) = span {
+                    mark(encoder, queries, offset + i);
                 }
             };
             boundary(&mut encoder, 0);
@@ -160,7 +214,49 @@ fn main() -> Result<(), Error> {
             boundary(&mut encoder, 3);
             renderer.encode_spray(&gpu, &mut encoder);
             boundary(&mut encoder, 4);
-            renderer.encode(&gpu, &mut encoder, &view, &camera);
+            if optics_ab {
+                // Finish physics before refreshing the shared render uniforms.
+                gpu.queue.submit([encoder.finish()]);
+                for slot in 0..4 {
+                    let variant = (slot + frame) % 4;
+                    let mut optics = settings.optics;
+                    if optics_methods {
+                        use water_simulation::ocean::parameters::optics::OpticalMethod;
+                        if variant == 0 {
+                            optics.caustics = false;
+                            optics.refraction = false;
+                        } else if variant != 3 {
+                            optics.caustics = true;
+                            optics.refraction = true;
+                            optics.refraction_method = if variant == 1 {
+                                OpticalMethod::Fast
+                            } else {
+                                OpticalMethod::Physical
+                            };
+                        }
+                    } else {
+                        optics.caustics = variant & 1 != 0;
+                        optics.refraction = variant & 2 != 0;
+                    }
+                    renderer.update_optics(&gpu, &optics);
+                    let mut draw = gpu.device.create_command_encoder(&Default::default());
+                    let timing = span.map(|(queries, offset)| RenderTiming {
+                        queries,
+                        offset: offset + 6 + variant * RenderTiming::QUERY_COUNT,
+                    });
+                    renderer.encode_with_timing(&gpu, &mut draw, &view, &camera, timing);
+                    gpu.queue.submit([draw.finish()]);
+                }
+                encoder = gpu.device.create_command_encoder(&Default::default());
+            } else {
+                let timing = span
+                    .filter(|_| detailed)
+                    .map(|(queries, offset)| RenderTiming {
+                        queries,
+                        offset: offset + 6,
+                    });
+                renderer.encode_with_timing(&gpu, &mut encoder, &view, &camera, timing);
+            }
             boundary(&mut encoder, 5);
             if frame >= 30 {
                 metadata.push((time, renderer.shore.substeps, renderer.shore.simulated_dt));
@@ -177,7 +273,11 @@ fn main() -> Result<(), Error> {
             mapped_at_creation: false,
         });
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        encoder.resolve_query_set(&queries, 0..6 * frames, &timings, 0);
+        for (batch, queries) in queries.iter().enumerate() {
+            let start = batch as u32 * batch_frames;
+            let count = stride * (frames + 1 - start).min(batch_frames);
+            encoder.resolve_query_set(queries, 0..count, &timings, u64::from(start * stride) * 8);
+        }
         encoder.copy_texture_to_buffer(
             texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
@@ -197,23 +297,98 @@ fn main() -> Result<(), Error> {
         gpu.queue.submit([encoder.finish()]);
         let bytes = gpu.read_buffer(&timings, timings.size())?;
         let period = f64::from(gpu.queue.get_timestamp_period()) / 1e6;
-        let samples: Vec<_> = bytes
-            .as_chunks::<48>()
-            .0
-            .iter()
-            .zip(metadata)
-            .map(|(row, (time, steps, dt))| {
-                let t: Vec<_> = row
-                    .as_chunks::<8>()
-                    .0
-                    .iter()
-                    .map(|b| u64::from_le_bytes(*b))
-                    .collect();
-                let ms: Vec<_> = t
-                    .windows(2)
-                    .map(|p| p[1].wrapping_sub(p[0]) as f64 * period)
-                    .collect();
-                serde_json::json!({"time_s":time,"substeps":steps,"simulated_dt":dt,"gpu_ms":ms})
+        let decode = |row: &[u8]| {
+            row.as_chunks::<8>()
+                .0
+                .iter()
+                .map(|b| u64::from_le_bytes(*b))
+                .collect::<Vec<_>>()
+        };
+        let intervals = |t: &[u64]| {
+            t.windows(2)
+                .map(|p| p[1].wrapping_sub(p[0]) as f64 * period)
+                .collect::<Vec<_>>()
+        };
+        let rows: Vec<_> = bytes
+            .chunks_exact(stride as usize * 8)
+            .map(decode)
+            .collect();
+        let render_values = |t: &[u64], variant: usize| {
+            if !detailed {
+                return Vec::new();
+            }
+            let start = 6 + variant * RenderTiming::QUERY_COUNT as usize;
+            intervals(&t[start..start + RenderTiming::QUERY_COUNT as usize])
+        };
+        let samples:Vec<_>=rows.iter().take(frames as usize).zip(metadata).map(|(t,(time,steps,dt))| {
+            let render=render_values(t,selected);
+            let mut gpu_ms=intervals(&t[..6]);
+            if optics_ab {gpu_ms[4]=render.iter().sum();}
+            let ab:Vec<_>=if optics_ab {(0..4).map(|i|render_values(t,i)).collect()} else {Vec::new()};
+            serde_json::json!({"time_s":time,"substeps":steps,"simulated_dt":dt,"gpu_ms":gpu_ms,"render_gpu_ms":render,"optics_ab_gpu_ms":ab})
+        }).collect();
+        let initial = &rows[frames as usize];
+        let mut initial_gpu_ms = intervals(&initial[..6]);
+        let initial_render_gpu_ms = render_values(initial, selected);
+        if optics_ab {
+            initial_gpu_ms[4] = initial_render_gpu_ms.iter().sum();
+        }
+        let initial_ab: Vec<_> = if optics_ab {
+            (0..4).map(|i| render_values(initial, i)).collect()
+        } else {
+            Vec::new()
+        };
+        let ab_medians: Vec<Vec<_>> = if optics_ab {
+            (0..4)
+                .map(|v| {
+                    (0..RenderTiming::NAMES.len())
+                        .map(|i| {
+                            median(
+                                samples
+                                    .iter()
+                                    .map(|s| s["optics_ab_gpu_ms"][v][i].as_f64().unwrap())
+                                    .collect(),
+                            )
+                        })
+                        .collect()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let ab_totals: Vec<_> = if optics_ab {
+            (0..4)
+                .map(|v| {
+                    median(
+                        samples
+                            .iter()
+                            .map(|s| {
+                                s["optics_ab_gpu_ms"][v]
+                                    .as_array()
+                                    .unwrap()
+                                    .iter()
+                                    .map(|x| x.as_f64().unwrap())
+                                    .sum()
+                            })
+                            .collect(),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let render_medians: Vec<_> = (0..if detailed {
+            RenderTiming::NAMES.len()
+        } else {
+            0
+        })
+            .map(|i| {
+                median(
+                    samples
+                        .iter()
+                        .map(|s| s["render_gpu_ms"][i].as_f64().unwrap())
+                        .collect(),
+                )
             })
             .collect();
         let medians: Vec<_> = (0..5)
@@ -259,13 +434,29 @@ fn main() -> Result<(), Error> {
             "GPU median ms: {names:?} = {medians:?}; dry tiles {dry_tiles}/{}",
             (n / 16).pow(2)
         );
+        if optics_ab {
+            eprintln!("Optics A/B render ms {variant_names:?}: {ab_totals:?}");
+        }
+        if detailed {
+            eprintln!(
+                "Render GPU median ms: {:?} = {render_medians:?}",
+                RenderTiming::NAMES
+            );
+        }
         fs::write(
             output.join("profile.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "gpu":gpu.name,"frames":frames,"warmup_frames":30,"fixed_dt_s":1.0/60.0,
                 "width":width,"height":height,"components":names,"median_gpu_ms":medians,
+                "render_components":if detailed {RenderTiming::NAMES.as_slice()} else {&[]},
+                "render_median_gpu_ms":render_medians,"initial_frame_gpu_ms":initial_gpu_ms,
+                "initial_frame_render_gpu_ms":initial_render_gpu_ms,
+                "optics_ab":optics_ab,"optics_ab_variants":variant_names,"optics_methods":optics_methods,
+                "optics_ab_median_gpu_ms":ab_medians,"optics_ab_render_median_ms":ab_totals,
+                "initial_frame_optics_ab_gpu_ms":initial_ab,
+                "final_image_variant":if optics_ab {(frames+32)%4} else {selected as u32},
                 "dry_tiles_with_two_cell_halo":dry_tiles,"tiles":(n/16).pow(2),"samples":samples,
-                "method":"Production calls, fixed simulation time, no UI or presentation. Timestamp boundary passes add overhead. Readback only after all frames. Dry tile count is a final-state diagnostic, not proof of safe multi-stage skipping."
+                "method":"Production calls, fixed simulation time, no UI or presentation. Timestamp boundary passes add overhead. Readback only after all frames. Optics A/B rotates four draws of the same simulated state; gpu_ms render selects the configured combination, not all four draws. Its final image is the last variant indicated by final_image_variant. Dry tile count is a final-state diagnostic, not proof of safe multi-stage skipping."
             }))?,
         )?;
         Ok(())

@@ -1,5 +1,9 @@
+mod caustics;
 pub mod optics;
 mod renderer;
+mod screen_depth;
+mod timing;
+pub use timing::RenderTiming;
 pub mod skylight;
 pub use renderer::Renderer;
 pub(in crate::ocean) mod model;

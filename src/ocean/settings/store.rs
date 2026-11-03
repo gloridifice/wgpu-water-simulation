@@ -4,7 +4,7 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 /// Repository sessions are deliberately versioned; launches outside the repo
@@ -106,13 +106,11 @@ pub struct SettingsStore {
     saved: Option<SavedSettings>,
     configurations: ConfigurationLibrary,
     saved_configurations: Option<ConfigurationLibrary>,
-    changed_at: Instant,
-    attempted_at: Option<Instant>,
     backup_before_write: bool,
 }
 
 impl SettingsStore {
-    pub fn open(path: PathBuf, now: Instant) -> (SavedSettings, Self) {
+    pub fn open(path: PathBuf) -> (SavedSettings, Self) {
         let result = read_document(&path);
         let mut saved_configurations = None;
         let (initial, saved, status, failed, backup_before_write) = match result {
@@ -129,7 +127,7 @@ impl SettingsStore {
             Ok(None) => (
                 SavedSettings::default(),
                 None,
-                "新配置，自动保存已启用".into(),
+                "新配置，尚未保存".into(),
                 false,
                 false,
             ),
@@ -151,8 +149,6 @@ impl SettingsStore {
                 .clone()
                 .unwrap_or_else(|| ConfigurationLibrary::new(initial.clone())),
             saved_configurations,
-            changed_at: now,
-            attempted_at: None,
             backup_before_write,
         };
         (initial, store)
@@ -162,46 +158,42 @@ impl SettingsStore {
         &self.configurations
     }
 
-    pub fn set_configurations(&mut self, library: &ConfigurationLibrary, now: Instant) {
+    pub fn set_configurations(&mut self, library: &ConfigurationLibrary) {
         if &self.configurations != library {
             self.configurations = library.clone();
-            self.changed_at = now;
-            self.status = "更改等待自动保存".into();
+            self.refresh_edit_status();
         }
     }
 
-    pub fn update(&mut self, current: SavedSettings, now: Instant, force: bool) {
+    fn refresh_edit_status(&mut self) {
+        // Keep failures visible until an explicit save succeeds.
+        if !self.failed {
+            self.status = if self.saved.as_ref() == Some(&self.observed)
+                && self.saved_configurations.as_ref() == Some(&self.configurations)
+            {
+                "无未保存的更改"
+            } else {
+                "有未保存的更改"
+            }
+            .into();
+        }
+    }
+
+    /// Observe live edits without writing; only an explicit user action saves.
+    pub fn update(&mut self, current: SavedSettings, save_requested: bool) {
         if current != self.observed {
             self.observed = current;
-            self.changed_at = now;
-            self.status = "更改等待自动保存".into();
+            self.refresh_edit_status();
         }
-        if self.saved.as_ref() == Some(&self.observed)
-            && self.saved_configurations.as_ref() == Some(&self.configurations)
-        {
-            if !self.failed {
-                self.status = "已保存到本地".into();
-            }
+        if !save_requested {
             return;
         }
-        if !force
-            && (now.duration_since(self.changed_at) < Duration::from_millis(500)
-                || self
-                    .attempted_at
-                    .is_some_and(|last| now.duration_since(last) < Duration::from_secs(2)))
-        {
-            return;
-        }
-        self.attempted_at = Some(now);
-        let result = self.save();
-        match result {
+        match self.save() {
             Ok(()) => {
                 self.saved = Some(self.observed.clone());
                 self.saved_configurations = Some(self.configurations.clone());
-                self.status = "已保存到本地".into();
+                self.status = "保存成功".into();
                 self.failed = false;
-                // A successful save shouldn't throttle the next real edit.
-                self.attempted_at = None;
             }
             Err(error) => {
                 self.status = format!("保存失败：{error}");
@@ -396,34 +388,43 @@ mod tests {
     }
 
     #[test]
-    fn idle_debounce_exit_flush_and_restart_restore() {
+    fn edits_only_reach_disk_after_explicit_save_and_survive_restart() {
         let dir = Directory::new();
-        let start = Instant::now();
-        let (mut state, mut store) = SettingsStore::open(dir.file(), start);
+        let (mut state, mut store) = SettingsStore::open(dir.file());
         state.optics.depth = 8.0;
-        store.update(state.clone(), start, false);
-        assert!(!dir.file().exists());
-        state.optics.depth = 9.0;
-        store.update(state.clone(), start + Duration::from_millis(400), false);
-        store.update(state.clone(), start + Duration::from_millis(700), false);
-        assert!(!dir.file().exists());
-        store.update(state.clone(), start + Duration::from_millis(901), false);
-        assert_eq!(read(&dir.file()).unwrap().unwrap(), state);
+        store.update(state.clone(), false);
+        assert!(
+            !dir.file().exists(),
+            "edits must not create a settings file"
+        );
+        store.update(state.clone(), true);
+        assert!(!store.failed, "{}", store.status);
+        let saved_bytes = fs::read(dir.file()).unwrap();
+
         state.optics.depth = 12.0;
-        store.update(state.clone(), start + Duration::from_millis(902), true);
-        let (restored, _) = SettingsStore::open(dir.file(), start);
+        let mut library = store.configurations().clone();
+        library.save_as("未写盘的方案", state.clone()).unwrap();
+        store.set_configurations(&library);
+        store.update(state.clone(), false);
+        assert_eq!(fs::read(dir.file()).unwrap(), saved_bytes);
+        let (restored, reopened) = SettingsStore::open(dir.file());
+        assert_eq!(restored.optics.depth, 8.0);
+        assert!(reopened.configurations().profiles().is_empty());
+
+        store.update(state.clone(), true);
+        let (restored, reopened) = SettingsStore::open(dir.file());
         assert_eq!(restored, state);
+        assert_eq!(reopened.configurations(), &library);
     }
     #[test]
     fn corrupt_or_unsupported_files_fall_back_and_are_backed_up() {
         let dir = Directory::new();
-        let now = Instant::now();
         let corrupt = b"{unfinished json";
         fs::write(dir.file(), corrupt).unwrap();
-        let (state, mut store) = SettingsStore::open(dir.file(), now);
+        let (state, mut store) = SettingsStore::open(dir.file());
         assert!(store.failed);
         assert_eq!(fs::read(dir.file()).unwrap(), corrupt);
-        store.update(state.clone(), now, true);
+        store.update(state.clone(), true);
         assert!(!store.failed);
         assert_eq!(read(&dir.file()).unwrap().unwrap(), state);
         let backup = fs::read_dir(&dir.0)
@@ -442,7 +443,6 @@ mod tests {
     #[test]
     fn invalid_values_and_write_failure_preserve_last_saved_file() {
         let dir = Directory::new();
-        let now = Instant::now();
         let valid = SavedSettings::default();
         write_atomic(&dir.file(), &valid).unwrap();
         let mut invalid = valid.clone();
@@ -451,36 +451,35 @@ mod tests {
         assert_eq!(read(&dir.file()).unwrap().unwrap(), valid);
         let blocking_parent = dir.0.join("not-a-directory");
         fs::write(&blocking_parent, b"keep").unwrap();
-        let (_, mut store) = SettingsStore::open(blocking_parent.join("settings.json"), now);
-        store.update(valid, now, true);
+        let (_, mut store) = SettingsStore::open(blocking_parent.join("settings.json"));
+        store.update(valid, true);
         assert!(store.failed);
         assert_eq!(fs::read(blocking_parent).unwrap(), b"keep");
     }
 
     #[test]
-    fn legacy_configuration_becomes_immutable_default_across_autosaves_and_restarts() {
+    fn legacy_configuration_becomes_immutable_default_across_saves_and_restarts() {
         let dir = Directory::new();
-        let now = Instant::now();
         let mut original = SavedSettings::default();
         original.optics.depth = 17.0;
         original.draft.seed = 42;
         original.camera.yaw = 1.2;
         write_atomic(&dir.file(), &original).unwrap();
 
-        let (mut current, mut store) = SettingsStore::open(dir.file(), now);
+        let (mut current, mut store) = SettingsStore::open(dir.file());
         assert_eq!(current, original);
         assert_eq!(store.configurations().get(None).unwrap(), &original);
         current.optics.depth = 7.0;
         current.draft.seed = 99;
-        store.update(current.clone(), now, true);
+        store.update(current.clone(), true);
         assert!(!store.failed, "{}", store.status);
 
-        let (restored, mut reopened) = SettingsStore::open(dir.file(), now);
+        let (restored, mut reopened) = SettingsStore::open(dir.file());
         assert_eq!(restored, current);
         assert_eq!(reopened.configurations().get(None).unwrap(), &original);
         let default = reopened.configurations().get(None).unwrap().clone();
-        reopened.update(default.clone(), now, true);
-        let (restored, reopened) = SettingsStore::open(dir.file(), now);
+        reopened.update(default.clone(), true);
+        let (restored, reopened) = SettingsStore::open(dir.file());
         assert_eq!(restored, original);
         assert_eq!(reopened.configurations().get(None).unwrap(), &default);
     }
@@ -488,8 +487,7 @@ mod tests {
     #[test]
     fn named_profiles_rename_overwrite_and_persist_independently_of_session() {
         let dir = Directory::new();
-        let now = Instant::now();
-        let (initial, mut store) = SettingsStore::open(dir.file(), now);
+        let (initial, mut store) = SettingsStore::open(dir.file());
         let mut library = store.configurations().clone();
         let mut beach = initial.clone();
         beach.optics.beach = true;
@@ -503,19 +501,19 @@ mod tests {
         let mut revised = initial.clone();
         revised.optics.sky.intensity = 2.0;
         library.overwrite(Some(second), revised.clone()).unwrap();
-        store.set_configurations(&library, now);
+        store.set_configurations(&library);
         // Named edits must be saved even when the session has not changed.
-        store.update(initial.clone(), now, true);
+        store.update(initial.clone(), true);
         assert!(!store.failed, "{}", store.status);
 
-        let (mut session, mut store) = SettingsStore::open(dir.file(), now);
+        let (mut session, mut store) = SettingsStore::open(dir.file());
         assert_eq!(session, initial);
         assert_eq!(store.configurations().profiles()[first].name(), "浅水方案");
         assert_eq!(store.configurations().get(Some(first)).unwrap(), &beach);
         assert_eq!(store.configurations().get(Some(second)).unwrap(), &revised);
         session.optics.shore.input_gain = 2.0;
-        store.update(session.clone(), now, true);
-        let (restored, store) = SettingsStore::open(dir.file(), now);
+        store.update(session.clone(), true);
+        let (restored, store) = SettingsStore::open(dir.file());
         assert_eq!(restored, session);
         assert_eq!(store.configurations(), &library);
     }
@@ -549,22 +547,21 @@ mod tests {
     #[test]
     fn deleting_profile_preserves_other_snapshots_and_survives_restart() {
         let dir = Directory::new();
-        let now = Instant::now();
-        let (initial, mut store) = SettingsStore::open(dir.file(), now);
+        let (initial, mut store) = SettingsStore::open(dir.file());
         let mut library = store.configurations().clone();
         library.save_as("删除的配置", initial.clone()).unwrap();
         let mut other = initial.clone();
         other.optics.depth = 17.0;
         library.save_as("保留的配置", other.clone()).unwrap();
-        store.set_configurations(&library, now);
-        store.update(initial.clone(), now, true);
+        store.set_configurations(&library);
+        store.update(initial.clone(), true);
         assert!(!store.failed);
 
         library.delete(Some(0)).unwrap();
-        store.set_configurations(&library, now);
-        store.update(initial.clone(), now, true);
+        store.set_configurations(&library);
+        store.update(initial.clone(), true);
         assert!(!store.failed);
-        let (restored, reopened) = SettingsStore::open(dir.file(), now);
+        let (restored, reopened) = SettingsStore::open(dir.file());
         assert_eq!(restored, initial);
         assert_eq!(reopened.configurations().profiles().len(), 1);
         assert_eq!(reopened.configurations().profiles()[0].name(), "保留的配置");
@@ -576,20 +573,19 @@ mod tests {
     #[test]
     fn last_used_configuration_survives_restart_independently_of_unsaved_work() {
         let dir = Directory::new();
-        let now = Instant::now();
-        let (initial, mut store) = SettingsStore::open(dir.file(), now);
+        let (initial, mut store) = SettingsStore::open(dir.file());
         let mut library = store.configurations().clone();
         let first = library.save_as("方案一", initial.clone()).unwrap();
         let second = library.save_as("方案二", initial.clone()).unwrap();
-        store.set_configurations(&library, now);
-        store.update(initial.clone(), now, true);
+        store.set_configurations(&library);
+        store.update(initial.clone(), true);
         assert!(!store.failed);
 
         // Identical parameters must not hide a change in the selected profile.
         library.select(Some(first)).unwrap();
-        store.set_configurations(&library, now);
-        store.update(initial.clone(), now, true);
-        let (restored, mut reopened) = SettingsStore::open(dir.file(), now);
+        store.set_configurations(&library);
+        store.update(initial.clone(), true);
+        let (restored, mut reopened) = SettingsStore::open(dir.file());
         assert_eq!(restored, initial);
         assert_eq!(reopened.configurations().active(), Some(first));
 
@@ -598,9 +594,9 @@ mod tests {
         working.optics.depth = 17.0;
         working.draft.seed = 123;
         library.rename(Some(first), "上次使用").unwrap();
-        reopened.set_configurations(&library, now);
-        reopened.update(working.clone(), now, true);
-        let (restored, mut reopened) = SettingsStore::open(dir.file(), now);
+        reopened.set_configurations(&library);
+        reopened.update(working.clone(), true);
+        let (restored, mut reopened) = SettingsStore::open(dir.file());
         assert_eq!(restored, working);
         assert_eq!(reopened.configurations().active(), Some(first));
         assert_eq!(
@@ -614,9 +610,9 @@ mod tests {
 
         // Explicitly choosing the default must not select an identical named profile.
         library.select(None).unwrap();
-        reopened.set_configurations(&library, now);
-        reopened.update(initial.clone(), now, true);
-        let (_, reopened) = SettingsStore::open(dir.file(), now);
+        reopened.set_configurations(&library);
+        reopened.update(initial.clone(), true);
+        let (_, reopened) = SettingsStore::open(dir.file());
         assert_eq!(reopened.configurations().active(), None);
         library.select(Some(second)).unwrap();
         library.delete(Some(second)).unwrap();
@@ -629,7 +625,6 @@ mod tests {
     #[test]
     fn missing_or_stale_last_selection_preserves_legacy_configurations() {
         let dir = Directory::new();
-        let now = Instant::now();
         let initial = SavedSettings::default();
         let mut library = ConfigurationLibrary::new(initial.clone());
         library.save_as("原有配置", initial.clone()).unwrap();
@@ -647,7 +642,7 @@ mod tests {
                 document["configurations"]["active"] = serde_json::json!(999);
             }
             fs::write(dir.file(), serde_json::to_vec(&document).unwrap()).unwrap();
-            let (restored, store) = SettingsStore::open(dir.file(), now);
+            let (restored, store) = SettingsStore::open(dir.file());
             assert!(!store.failed, "{}", store.status);
             assert_eq!(restored, initial);
             assert_eq!(store.configurations().active(), None);
@@ -658,21 +653,26 @@ mod tests {
     #[test]
     fn profile_write_failure_is_reported_and_retry_preserves_profiles() {
         let dir = Directory::new();
-        let now = Instant::now();
         let blocker = dir.0.join("blocker");
         fs::write(&blocker, b"keep").unwrap();
-        let (initial, mut store) = SettingsStore::open(blocker.join("settings.json"), now);
+        let (initial, mut store) = SettingsStore::open(blocker.join("settings.json"));
         let mut library = store.configurations().clone();
         library.save_as("待保存方案", initial.clone()).unwrap();
-        store.set_configurations(&library, now);
-        store.update(initial.clone(), now, true);
+        store.set_configurations(&library);
+        store.update(initial.clone(), true);
         assert!(store.failed);
         assert_eq!(fs::read(&blocker).unwrap(), b"keep");
-        // Retry on a writable path without losing the pending named snapshot.
+        // Fixing the path must not trigger an automatic retry or hide the failure.
+        let failure = store.status.clone();
         store.path = dir.file();
-        store.update(initial, now + Duration::from_secs(3), false);
+        store.update(initial.clone(), false);
+        assert!(store.failed);
+        assert_eq!(store.status, failure);
+        assert!(!dir.file().exists());
+        // An explicit retry keeps the pending named snapshot.
+        store.update(initial, true);
         assert!(!store.failed, "{}", store.status);
-        let (_, reopened) = SettingsStore::open(dir.file(), now);
+        let (_, reopened) = SettingsStore::open(dir.file());
         assert_eq!(reopened.configurations(), &library);
     }
 
@@ -711,6 +711,15 @@ mod tests {
         s.apply_cli(ocean, optics, &["--foam-transport-order".into()]);
         assert_eq!(s.optics.shore.foam_transport_order, 2);
         assert_eq!(s.optics.shore.order, 2);
+        optics.caustics = true;
+        optics.refraction = true;
+        optics.water_ior = 1.4;
+        s.apply_cli(ocean, optics, &["--caustics".into(), "--water-ior".into()]);
+        assert!(s.optics.caustics);
+        assert!(!s.optics.refraction);
+        assert_eq!(s.optics.water_ior, 1.4);
+        s.apply_cli(ocean, optics, &["--refraction".into()]);
+        assert!(s.optics.refraction);
         s.optics.model.enabled = true;
         s.optics.model.center = [11.0, 2.0, -7.0];
         optics.model.size = [96.0, 48.0, 112.0];

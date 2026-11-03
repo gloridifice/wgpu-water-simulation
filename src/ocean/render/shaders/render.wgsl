@@ -1,28 +1,13 @@
+@group(0) @binding(14) var caustic_map: texture_2d<f32>;
+@group(0) @binding(15) var caustic_sampler: sampler;
+@group(0) @binding(16) var scene_ranges: texture_2d<f32>;
 @group(0) @binding(9) var<storage, read> shore_lace: array<f32>;
 @group(0) @binding(10) var foam_nsh: texture_2d_array<f32>;
 @group(0) @binding(11) var foam_nsh_sampler: sampler;
 @group(0) @binding(13) var<storage, read> terrain_bed: array<vec2<f32>>;
-struct Camera {
-    view_projection: mat4x4<f32>,
-    inverse_view_projection: mat4x4<f32>,
-    eye: vec4<f32>,
-    sun: vec4<f32>,
-    ocean: vec4<f32>,
-    misc: vec4<f32>,
-}
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<storage, read> fields: array<vec2<f32>>;
 @group(0) @binding(2) var<storage, read> foam_field: array<vec2<f32>>;
-struct Optics {
-    sigma_depth: vec4<f32>,
-    source_view: vec4<f32>,
-    options: vec4<f32>,
-    sky_color: vec4<f32>,
-    sky_albedo_enabled: vec4<f32>,
-    sky_quality: vec4<f32>,
-    beach: vec4<f32>,
-    sand_mapping: vec4<f32>, // cos(rotation), sin(rotation), reserved
-}
 @group(0) @binding(3) var<uniform> optics: Optics;
 @group(0) @binding(4) var scene_color: texture_2d<f32>;
 @group(0) @binding(5) var scene_depth: texture_depth_2d;
@@ -48,28 +33,6 @@ fn sky_vertex(@builtin(vertex_index) index: u32) -> SkyOut {
 fn sky_fragment(input: SkyOut) -> @location(0) vec4<f32> {
     let world = camera.inverse_view_projection * vec4(input.ndc, 1.0, 1.0);
     return vec4(sky_color(normalize(world.xyz / world.w - camera.eye.xyz)), 1.0);
-}
-
-// 周期双线性采样，FFT 网格与渲染网格独立。
-fn field_at(grid: vec2<i32>, channel: u32) -> f32 {
-    let n = i32(camera.ocean.x);
-    let wrapped = ((grid % vec2(n)) + vec2(n)) % vec2(n);
-    return fields[channel * u32(n * n) + u32(wrapped.y * n + wrapped.x)].x;
-}
-fn sample_field(grid: vec2<f32>, channel: u32) -> f32 {
-    let cell = vec2<i32>(floor(grid));
-    let f = fract(grid);
-    return mix(mix(field_at(cell, channel), field_at(cell + vec2(1, 0), channel), f.x),
-               mix(field_at(cell + vec2(0, 1), channel), field_at(cell + vec2(1, 1), channel), f.x), f.y);
-}
-fn surface(grid: vec2<f32>, tile_offset: vec2<f32>) -> vec3<f32> {
-    let n = camera.ocean.x;
-    let base = (grid / n - vec2(0.5)) * camera.ocean.y + tile_offset;
-    let weight = ocean_weight(base, shore);
-    let h = sample_field(grid, 0u) * camera.ocean.w * weight + shore_sample(base, shore).height;
-    let dx = sample_field(grid, 1u) * camera.ocean.z * camera.ocean.w * weight;
-    let dz = sample_field(grid, 2u) * camera.ocean.z * camera.ocean.w * weight;
-    return vec3(base.x + dx, h, base.y + dz);
 }
 
 struct WaterOut {
@@ -157,23 +120,6 @@ fn foam_detail(grid: vec2<f32>) -> f32 {
     // Fade subpixel detail to its mean to avoid sparkling at distance.
     return mix(noise, 0.5, smoothstep(0.5, 2.0, length(fwidth(p))));
 }
-// Render-only high-frequency slope: subtract a wider finite difference from
-// the local FFT slope. This is independent of the SWE inlet filter and does
-// not add displacement or momentum. Derivatives suppress subpixel detail.
-fn fft_detail_slope(grid: vec2<f32>, step: f32) -> vec2<f32> {
-    let dx = sample_field(grid + vec2(step, 0.0), 0u) - sample_field(grid - vec2(step, 0.0), 0u);
-    let dz = sample_field(grid + vec2(0.0, step), 0u) - sample_field(grid - vec2(0.0, step), 0u);
-    return vec2(dx, dz) * camera.ocean.w / (2.0 * step * camera.ocean.y / camera.ocean.x);
-}
-fn shore_detail_normal(base: vec3<f32>, grid: vec2<f32>, world: vec3<f32>, depth: f32, footprint: f32) -> vec3<f32> {
-    if !shore_active(shore) || shore.visual.x <= 0.0 { return base; }
-    let weight = (1.0 - ocean_weight(world.xz, shore)) * smoothstep(0.02, 0.25, depth)
-        * (1.0 - smoothstep(0.5, 2.0, footprint)) * shore.visual.x;
-    if weight <= 0.0 { return base; }
-    let slope = (fft_detail_slope(grid, 1.0) - fft_detail_slope(grid, 4.0)) * weight;
-    return normalize(vec3(base.x - base.y * slope.x, base.y, base.z - base.y * slope.y));
-}
-
 // Keep the existing density-dependent pores, but use unclipped density for
 // optical opacity. Changing opacity_scale never changes the pore threshold.
 // This is a render-only response, not a physical foam thickness or mass change.
@@ -267,9 +213,16 @@ fn material_grid(material: vec2<f32>) -> f32 {
 }
 fn foam_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<f32>, density: f32, species: vec2<f32>, depth: f32) -> FoamAppearance {
     if shore.foam_lifetime.x>0.5 {
-        // Decorrelate the two octave orientations as well as their frequencies.
-        let fine=vec2(0.8*material.x-0.6*material.y,0.6*material.x+0.8*material.y);
-        let fresh=0.7*filtered_fresh_noise(material*0.8)+0.3*filtered_fresh_noise(fine*2.5+vec2(17.3,-9.1));
+        // Replace only N's threshold field. Keep the density response, soft
+        // transition, per-phase composition and R material identical.
+        var fresh=shore.foam_fresh_threshold.y;
+        if shore.foam_fresh_threshold.x>0.5 {
+            // Decorrelate the two octave orientations as well as their frequencies.
+            let fine=vec2(0.8*material.x-0.6*material.y,0.6*material.x+0.8*material.y);
+            let weight=shore.foam_fresh_noise.x;
+            fresh=(1.0-weight)*filtered_fresh_noise(material*shore.foam_fresh_threshold.z)
+                +weight*filtered_fresh_noise(fine*shore.foam_fresh_threshold.w+vec2(17.3,-9.1));
+        }
         let old=0.55*prototype_noise(material*2.5)+0.30*prototype_noise(material*7.0)+0.15*prototype_noise(material*17.0);
         let fresh_amount=select(species.x,0.0,shore.density.w>1.5);
         let residual_amount=select(species.y,0.0,shore.density.w>0.5 && shore.density.w<1.5);
@@ -345,6 +298,13 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
         if shore.options.y > 2.5 && shore.options.y < 3.5 { return vec4(vec3(foam_density_level(shore_history.x,shore)), 1.0); }
         if shore.options.y > 3.5 && shore.options.y < 4.5 { return vec4(vec3(shore_history.y), 1.0); }
     }
+    // Water and lifted foam share the detail slope, not their base normals.
+    let detail_slope = shore_detail_slope(input.grid, input.world, local_depth, detail_footprint);
+    let normal = apply_detail_slope(normalize(input.normal), detail_slope);
+    let incoming=normalize(input.world-camera.eye.xyz);
+    let refracted=refract(incoming,normal,1.0/optics.refraction.y);
+    var refracted_valid=false;
+    var water_ray=incoming;
     let pixel = vec2<i32>(input.position.xy);
     let size = vec2<f32>(textureDimensions(scene_depth));
     let depth = textureLoad(scene_depth, pixel, 0);
@@ -352,19 +312,100 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     // Avoid infinities so zero extinction and a nonzero source remain defined.
     var distance = 1000.0;
     var bg = vec3(0.0);
+    var receiver=vec3(0.0);
+    var receiver_valid=false;
     if depth < 1.0 {
         let uv = input.position.xy / size;
         let ndc = vec3(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
         let reconstructed = camera.inverse_view_projection * vec4(ndc, 1.0);
         let bottom = reconstructed.xyz / reconstructed.w;
+        receiver=bottom; receiver_valid=true;
         distance = length(bottom - input.world);
         bg = textureLoad(scene_color, pixel, 0).rgb;
     }
-    let ray = normalize(input.world - camera.eye.xyz);
+    if optics.refraction.x>0.5 && camera.eye.y>input.world.y && dot(incoming,normal)<0.0 {
+        if optics.refraction.x>1.5 {
+            if receiver_valid {
+                let hit=fast_refraction_hit(input.world,receiver,incoming,refracted,normal);
+                if hit.valid {
+                    let edge=min(min(hit.uv.x*size.x,hit.uv.y*size.y),min((1.0-hit.uv.x)*size.x,(1.0-hit.uv.y)*size.y));
+                    let confidence=smoothstep(0.0,4.0,edge);
+                    bg=mix(bg,fast_refraction_color(hit.uv,input.position.z,bg),confidence);
+                    distance=mix(distance,hit.distance,confidence);
+                    water_ray=normalize(mix(incoming,normalize(hit.world-input.world),confidence));
+                    receiver=hit.world; receiver_valid=true; refracted_valid=true;
+                }
+            }
+        } else if shore.model.x>0.5 {
+            let hit=trace_screen(input.world,refracted,optics.refraction.z);
+            if hit.valid {
+                let uv=(vec2<f32>(hit.pixel)+vec2(0.5))/size;
+                let edge=min(min(uv.x*size.x,uv.y*size.y),min((1.0-uv.x)*size.x,(1.0-uv.y)*size.y));
+                let confidence=smoothstep(0.0,4.0,edge);
+                bg=mix(bg,textureLoad(scene_color,hit.pixel,0).rgb,confidence);
+                distance=mix(distance,hit.distance,confidence);
+                water_ray=normalize(mix(incoming,refracted,confidence));
+                receiver=screen_world(hit.pixel,textureLoad(scene_depth,hit.pixel,0));
+                receiver_valid=true; refracted_valid=true;
+            }
+        } else {
+            let path=water_bed_intersection(input.world,refracted);
+            let hit=input.world+refracted*max(path,0.0);
+            let clip=camera.view_projection*vec4(hit,1.0);
+            if path>0.0 && path<=optics.refraction.z && clip.w>0.0 {
+                let projected=clip.xyz/clip.w;
+                let uv=vec2(projected.x*0.5+0.5,0.5-projected.y*0.5);
+                if all(uv>=vec2(0.0)) && all(uv<vec2(1.0)) && projected.z>=0.0 && projected.z<=1.0 {
+                    let hit_pixel=vec2<i32>(uv*size);
+                    let hit_depth=textureLoad(scene_depth,hit_pixel,0);
+                    let hit_uv=(vec2<f32>(hit_pixel)+vec2(0.5))/size;
+                    let reconstructed=camera.inverse_view_projection*vec4(hit_uv.x*2.0-1.0,1.0-hit_uv.y*2.0,hit_depth,1.0);
+                    let opaque=reconstructed.xyz/reconstructed.w;
+                    let adjacent=camera.inverse_view_projection*vec4(hit_uv.x*2.0-1.0+2.0/size.x,1.0-hit_uv.y*2.0+2.0/size.y,hit_depth,1.0);
+                    let pixel_footprint=length(adjacent.xyz/adjacent.w-opaque);
+                    // A visible foreground object must never be stretched onto the
+                    // analytic seabed. Missing/offscreen hits retain the original ray.
+                    if hit_depth<1.0 && abs(opaque.y-water_bed_height(opaque.xz))<0.04
+                        && length(opaque-hit)<max(0.04,pixel_footprint*1.5) {
+                        let edge=min(min(uv.x*size.x,uv.y*size.y),min((1.0-uv.x)*size.x,(1.0-uv.y)*size.y));
+                        let confidence=smoothstep(0.0,4.0,edge);
+                        bg=mix(bg,textureLoad(scene_color,hit_pixel,0).rgb,confidence);
+                        distance=mix(distance,path,confidence);
+                        water_ray=normalize(mix(incoming,refracted,confidence));
+                        receiver=opaque; receiver_valid=true;
+                        refracted_valid=true;
+                    }
+                }
+            }
+        }
+    }
+    var model_light=vec3(0.0);
+    if shore.model.x>0.5 && optics.caustics.x>0.5 && receiver_valid {
+        let grid=shore.domain.zw/shore.options.z;
+        let bed=model_terrain(receiver.xz,shore).x;
+        let receiver_mask=1.0-smoothstep(max(0.04,min(grid.x,grid.y)*0.3),max(0.08,min(grid.x,grid.y)*0.8),abs(receiver.y-bed));
+        let wave=surface((receiver.xz/camera.ocean.y+vec2(0.5))*camera.ocean.x,vec2(0.0)).y;
+        if receiver.y<wave-0.015 {
+            model_light=caustic_light(receiver,wave)*receiver_mask;
+            // Photogrammetry already contains baked lighting. Add the focused
+            // excess instead of multiplying a second directional light into it.
+            bg*=vec3(1.0)+0.65*optics.caustics.y*max(model_light-flat_water_light(receiver,wave),vec3(0.0));
+        }
+    }
+    let ray = water_ray;
     let manual = integrate_medium(bg, optics.sigma_depth.xyz, optics.source_view.xyz, distance);
     let skylight = integrate_skylight(input.world, ray, distance);
     let medium = MediumResult(manual.transmittance, manual.background, manual.scattering + skylight);
     let mode = u32(optics.source_view.w);
+    if mode == 12u {
+        if shore.model.x>0.5 { return vec4(model_light,1.0); }
+        return vec4(select(vec3(0.0),bg,optics.caustics.x>0.5),1.0);
+    }
+    if mode == 13u { return vec4(water_ray*0.5+vec3(0.5),1.0); }
+    if mode == 14u {
+        if optics.refraction.x<0.5 { return vec4(0.2,0.2,0.2,1.0); }
+        return vec4(select(vec3(0.8,0.05,0.02),vec3(0.02,0.8,0.1),refracted_valid),1.0);
+    }
     if mode == 1u { return vec4(vec3(clamp(distance / optics.options.x, 0.0, 1.0)), 1.0); }
     if mode == 2u { return vec4(medium.transmittance, 1.0); }
     if mode == 3u { return vec4(medium.background, 1.0); }
@@ -385,10 +426,10 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
         if j < 1.0 { return vec4(mix(vec3(1.0, 0.25, 0.02), vec3(1.0), j), 1.0); }
         return vec4(mix(vec3(1.0), vec3(0.02, 0.3, 0.9), clamp(j - 1.0, 0.0, 1.0)), 1.0);
     }
-    let normal = shore_detail_normal(normalize(input.normal), input.grid, input.world, local_depth, detail_footprint);
+
     let view = normalize(camera.eye.xyz - input.world);
     let facing = max(dot(normal, view), 0.0);
-    let fresnel = (0.02 + 0.98 * pow(1.0 - facing, 5.0)) * optics.options.y;
+    let fresnel = select(0.02 + 0.98 * pow(1.0 - facing, 5.0),water_fresnel(facing),optics.refraction.x>0.5) * optics.options.y;
     let reflected = sky_color(reflect(-view, normal));
     var color = mix(medium.background + medium.scattering, reflected, fresnel);
     let half_vector = normalize(view + camera.sun.xyz);
@@ -413,7 +454,7 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
             * ocean_weight(input.world.xz, shore) * (0.55 + 0.45 * foam_detail(input.grid));
         foam = camera.misc.x * (1.0 - (1.0 - deep_foam) * (1.0 - shore_foam));
     }
-    let foam_normal = shore_detail_normal(normalize(input.foam_normal), input.grid, input.world, local_depth, detail_footprint);
+    let foam_normal = apply_detail_slope(normalize(input.foam_normal), detail_slope);
     let foam_color = shore.water_foam_color.rgb * (0.65 + 0.35 * max(dot(foam_normal, camera.sun.xyz), 0.0));
     if shore_active(shore) && (shore.foam_material.x>0.5 || shore.foam_shading.x>0.5 || shore.foam_lifetime.x>0.5) {
         // Each phase is thresholded and shaded before cross-fading. Blending
