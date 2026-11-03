@@ -1,10 +1,10 @@
 # yummy_egui 接入与默认主题
 
-通用控件使用 crates.io 的 [`yummy_egui`](https://crates.io/crates/yummy_egui) 0.1 系列，最低版本 0.1.1。本仓库不再维护组件库源码、主题 TOML 或外部主题加载／保存入口。
+通用控件使用 crates.io 的 [`yummy_egui`](https://crates.io/crates/yummy_egui) 0.1 系列，最低版本 0.1.2。本仓库不再维护组件库源码、主题 TOML 或外部主题加载／保存入口。
 
 ## 依赖与边界
 
-- `yummy_egui` 0.1.1 使用 egui 0.34.3、可选 egui_dock 0.19.1，需要 Rust 1.92 或更新版本。
+- `yummy_egui` 0.1.2 使用 egui 0.34.3、可选 egui_dock 0.19.1，需要 Rust 1.92 或更新版本。
 - 宿主同步使用 egui／egui_extras／egui-winit／egui-wgpu 0.34.3、egui_dock 0.19.1 和 wgpu 29，避免不同版本的 UI 或 GPU 类型混用。
 - 根包只在 `ocean` feature 下启用 `yummy_egui`，并开启库的 `dock` feature。独立 `crates/tall-cell-fluid` workspace 仅在 `demo` feature 下启用该 UI 依赖。
 - CPU 包 `tui-2d-prototype` 不依赖 egui、yummy_egui 或 GPU；根 workspace 只有根包和 CPU 包。
@@ -29,6 +29,8 @@ let dock_style = theme.dock_style().clone();
 ## 控件与文档
 
 业务面板直接调用 `yummy_egui::ParameterSlider`、`ParameterList`、`SelectionList`、`PanelButton`、`group`、`parameter`、`choices` 和 h1／h2／h3。逻辑参数组共用两列网格，保留 42%／58% 列宽和名称 hover 提示；选择列表只返回交互响应，业务状态仍由调用方提交。
+
+Ocean 左侧导航使用 `IconSegmentedControl::vertical()`，五个 SVG 图标组成连续分段栏；工作区选择仍由宿主保存，分段中文 hover 由宿主补充，不改变模拟或 Dock 布局语义。
 
 库 API 与主题实现见 [docs.rs](https://docs.rs/yummy_egui) 和[上游仓库](https://github.com/gloridifice/yummy-egui)，不在本项目维护第二份接口手册。
 

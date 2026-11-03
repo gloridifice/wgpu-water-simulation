@@ -36,7 +36,7 @@ WASD 在鼠标位于渲染视图内、窗口有焦点且未编辑参数时生效
 
 ## egui 参数面板
 
-通用控件、列表及 egui／Dock 主题使用 crates.io 的 `yummy_egui` 0.1 系列（最低 0.1.1），搭配 egui 0.34、egui_dock 0.19 与 wgpu 29。Ocean 直接应用库的默认主题，本仓库不再保留控件库源码或主题配置，也不读取、监听或保存外部主题。MiSans 保留在 `assets/fonts/MiSans-Normal.ttf`，由 `ui/fonts.rs` 显式安装，主题不替换字体。模拟配置、命名配置及 Dock 布局仍按原有规则保存，不受主题迁移影响。详见 [yummy_egui 接入说明](yummy-egui.md)。
+通用控件、列表及 egui／Dock 主题使用 crates.io 的 `yummy_egui` 0.1 系列（最低 0.1.2），搭配 egui 0.34、egui_dock 0.19 与 wgpu 29。Ocean 直接应用库的默认主题，本仓库不再保留控件库源码或主题配置，也不读取、监听或保存外部主题。MiSans 保留在 `assets/fonts/MiSans-Normal.ttf`，由 `ui/fonts.rs` 显式安装，主题不替换字体。模拟配置、命名配置及 Dock 布局仍按原有规则保存，不受主题迁移影响。详见 [yummy_egui 接入说明](yummy-egui.md)。
 
 所有 Dock 面板（包括渲染视图）的内容四边默认留白 **10 pt**；整个 Dock 区域外围顶部不留白，左、右、底部各 **4 pt**。通过顶部 **面板 → Dock 边距调试** 可打开默认收起的浮动窗口，两个滑块分别调整面板内容四边留白、Dock 区域左／右／底部留白（顶部固定为 0），范围均为 0～32 逻辑点（pt），拖动或编辑数值实时预览，不重置模拟。100% 缩放时 1 pt = 1 px；高 DPI 下随界面缩放。初始值来自内嵌主题，调试调整仅本次运行有效，不写入会话、命名配置或布局文件。
 

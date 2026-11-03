@@ -19,7 +19,7 @@ egui = { version = "0.34.3", optional = true }
 egui-winit = { version = "0.34.3", optional = true }
 egui-wgpu = { version = "0.34.3", optional = true }
 egui_dock = { version = "0.19.1", optional = true }
-yummy_egui = { version = "0.1.1", features = ["dock"], optional = true }
+yummy_egui = { version = "0.1.2", features = ["dock"], optional = true }
 
 [features]
 default = ["gpu"]

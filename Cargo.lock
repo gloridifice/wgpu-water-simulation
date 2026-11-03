@@ -4276,9 +4276,9 @@ dependencies = [
 
 [[package]]
 name = "yummy_egui"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3e329be1ead5572154ee9e524f3d7cb0204d9ab2976022cea0240ae6ff4d6a6"
+checksum = "47ad34ec4aa7df02df8b2d48b9ac08dbd1a2a7552ea7eab01f6dbbc2f5c06dbb"
 dependencies = [
  "egui",
  "egui_dock",

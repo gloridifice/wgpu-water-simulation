@@ -11,7 +11,7 @@ use crate::ocean::{
     settings::{ConfigurationLibrary, SavedSettings},
 };
 use winit::window::Window;
-use yummy_egui::{ParameterSlider, parameter, parameter_table};
+use yummy_egui::{IconSegmentedControl, ParameterSlider, parameter, parameter_table};
 
 struct PanelViewer<F>(F);
 impl<F: FnMut(Panel, &mut egui::Ui)> egui_dock::TabViewer for PanelViewer<F> {
@@ -336,44 +336,39 @@ impl Gui {
                 .frame(egui::Frame::side_top_panel(root_ui.style()).inner_margin(8.0))
                 .show_inside(root_ui, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 8.0;
+                        let segment_size = 38.0;
+                        let items = WorkspaceId::ALL.map(|id| {
+                            let color = if workspaces.active == id {
+                                ui.visuals().selection.stroke.color
+                            } else {
+                                ui.visuals().text_color()
+                            };
+                            (id, self.icons[id.index()].clone().tint(color))
+                        });
+                        let response = ui.add(
+                            IconSegmentedControl::new(&mut workspaces.active, items)
+                                .vertical()
+                                .size(segment_size)
+                                .icon_size(24.0),
+                        );
+                        // The selector exposes one response; add per-workspace hover labels
+                        // without replacing its native click and keyboard handling.
                         for id in WorkspaceId::ALL {
-                            if id == WorkspaceId::Configurations {
-                                ui.separator();
-                            }
-                            let selected = workspaces.active == id;
-                            let mut button =
-                                egui::Button::new("").selected(selected).corner_radius(8);
-                            if !selected {
-                                button = button
-                                    .fill(egui::Color32::TRANSPARENT)
-                                    .stroke(egui::Stroke::NONE);
-                            }
-                            let response =
-                                ui.add_sized([38.0, 38.0], button).on_hover_text(id.name());
-                            response.widget_info(|| {
-                                egui::WidgetInfo::selected(
-                                    egui::WidgetType::SelectableLabel,
-                                    true,
-                                    selected,
-                                    id.name(),
-                                )
-                            });
-                            let color = ui
-                                .style()
-                                .interact_selectable(&response, selected)
-                                .text_color();
-                            let icon_rect = egui::Rect::from_center_size(
-                                response.rect.center(),
-                                egui::vec2(24.0, 24.0),
+                            let rect = egui::Rect::from_min_size(
+                                response.rect.min
+                                    + egui::vec2(0.0, id.index() as f32 * segment_size),
+                                egui::Vec2::splat(segment_size),
                             );
-                            self.icons[id.index()]
-                                .clone()
-                                .tint(color)
-                                .paint_at(ui, icon_rect);
-                            if response.clicked() {
-                                workspaces.active = id;
-                            }
+                            ui.interact(rect, ui.id().with(id), egui::Sense::hover())
+                                .on_hover_text(id.name())
+                                .widget_info(|| {
+                                    egui::WidgetInfo::selected(
+                                        egui::WidgetType::SelectableLabel,
+                                        ui.is_enabled(),
+                                        workspaces.active == id,
+                                        id.name(),
+                                    )
+                                });
                         }
                     });
                 });
