@@ -9,22 +9,22 @@ publish = false
 [workspace]
 
 [dependencies]
-wgpu = { version = "27.0.1", optional = true }
+wgpu = { version = "29.0.1", optional = true }
 bytemuck = { version = "1.23", features = ["derive"], optional = true }
 pollster = { version = "0.4", optional = true }
 winit = { version = "0.30.13", optional = true }
 glam = { version = "0.30", optional = true }
 png = { version = "0.18", optional = true }
-egui = { version = "0.33.3", optional = true }
-egui-winit = { version = "0.33.3", optional = true }
-egui-wgpu = { version = "0.33.3", optional = true }
-egui_dock = { version = "0.18", optional = true }
-charming_egui = { path = "../charming_egui", optional = true }
+egui = { version = "0.34.3", optional = true }
+egui-winit = { version = "0.34.3", optional = true }
+egui-wgpu = { version = "0.34.3", optional = true }
+egui_dock = { version = "0.19.1", optional = true }
+yummy_egui = { version = "0.1.1", features = ["dock"], optional = true }
 
 [features]
 default = ["gpu"]
 gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
-demo = ["gpu", "dep:winit", "dep:glam", "dep:png", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:egui_dock", "dep:charming_egui"]
+demo = ["gpu", "dep:winit", "dep:glam", "dep:png", "dep:egui", "dep:egui-winit", "dep:egui-wgpu", "dep:egui_dock", "dep:yummy_egui"]
 
 [[bin]]
 name = "fluid-demo"

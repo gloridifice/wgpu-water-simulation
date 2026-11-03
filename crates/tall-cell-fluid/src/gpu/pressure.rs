@@ -210,7 +210,7 @@ fn solve(
         velocity_data.len(),
         count,
     ] {
-        if length as u64 * 4 > u64::from(context.device.limits().max_storage_buffer_binding_size)
+        if length as u64 * 4 > context.device.limits().max_storage_buffer_binding_size
             || length > u32::MAX as usize
         {
             return Err("GPU 压力工作缓冲区超过设备上限".into());

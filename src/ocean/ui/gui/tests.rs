@@ -2,7 +2,7 @@ use super::*;
 #[test]
 fn default_workspace_keeps_view_right_of_controls_and_resizes() {
     let ctx = egui::Context::default();
-    let theme = charming_egui::Theme::default();
+    let theme = yummy_egui::Theme::default();
     theme.apply(&ctx);
     crate::ocean::ui::fonts::install(&ctx);
     let dock_style = theme.dock_style().clone();
@@ -10,7 +10,7 @@ fn default_workspace_keeps_view_right_of_controls_and_resizes() {
     let mut previous_width = 0.0;
     for width in [1200.0, 1600.0] {
         let mut rects = std::collections::HashMap::new();
-        let _ = ctx.run(
+        let _ = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -18,8 +18,8 @@ fn default_workspace_keeps_view_right_of_controls_and_resizes() {
                 )),
                 ..Default::default()
             },
-            |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            |root_ui| {
+                egui::CentralPanel::default().show_inside(root_ui, |ui| {
                     egui_dock::DockArea::new(&mut dock)
                         .style(dock_style.clone())
                         .show_inside(
@@ -47,7 +47,7 @@ fn wasd_moves_only_in_focused_view_without_parameter_editing() {
     let mut time = 0.0;
     let mut frame = |events, focused, editing| {
         time += 0.05;
-        let _ = ctx.run(
+        let _ = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -58,10 +58,10 @@ fn wasd_moves_only_in_focused_view_without_parameter_editing() {
                 events,
                 ..Default::default()
             },
-            |ctx| {
-                egui::SidePanel::left("controls")
-                    .exact_width(200.0)
-                    .show(ctx, |ui| {
+            |root_ui| {
+                egui::Panel::left("controls")
+                    .exact_size(200.0)
+                    .show_inside(root_ui, |ui| {
                         let response = ui.text_edit_singleline(&mut text);
                         if editing {
                             response.request_focus();
@@ -69,7 +69,7 @@ fn wasd_moves_only_in_focused_view_without_parameter_editing() {
                             response.surrender_focus();
                         }
                     });
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show_inside(root_ui, |ui| {
                     ocean_view(ui, egui::TextureId::User(0), &mut camera, 128.0);
                 });
             },
@@ -109,7 +109,7 @@ fn orbit_is_owned_by_view_drag_not_sidebar_drag() {
     let mut camera = Camera::new(128.0);
     let initial = camera.yaw;
     let mut frame = |events| {
-        let _ = ctx.run(
+        let _ = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -118,13 +118,13 @@ fn orbit_is_owned_by_view_drag_not_sidebar_drag() {
                 events,
                 ..Default::default()
             },
-            |ctx| {
-                egui::SidePanel::left("controls")
-                    .exact_width(200.0)
-                    .show(ctx, |ui| {
+            |root_ui| {
+                egui::Panel::left("controls")
+                    .exact_size(200.0)
+                    .show_inside(root_ui, |ui| {
                         ui.label("Controls");
                     });
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show_inside(root_ui, |ui| {
                     let size = ocean_view(ui, egui::TextureId::User(0), &mut camera, 128.0);
                     assert!(size[0] > 700 && size[0] < 800);
                     assert!(size[1] > 500 && size[1] <= 600);

@@ -1,5 +1,5 @@
 use crate::ocean::parameters::spray::SprayConfig;
-use charming_egui::{ParameterSlider, group, parameter};
+use yummy_egui::{ParameterSlider, group, parameter};
 
 fn sliders(ui: &mut egui::Ui, rows: &[(&str, &str)], values: &mut [(&mut f32, f32, f32)]) {
     for ((name, tip), (value, min, max)) in rows.iter().zip(values) {

@@ -1,7 +1,7 @@
 //! Demo adapter; the interactive widget is the same one used by ocean panels.
-use charming_egui::ParameterSlider;
-pub(super) use charming_egui::SliderAppearance as Appearance;
 use std::ops::RangeInclusive;
+use yummy_egui::ParameterSlider;
+pub(super) use yummy_egui::SliderAppearance as Appearance;
 
 pub(super) fn slider(
     ui: &mut egui::Ui,

@@ -4,8 +4,8 @@ mod window;
 
 pub use window::run;
 
-use charming_egui::{group, parameter, parameter_table};
 use slider::Appearance;
+use yummy_egui::{group, parameter, parameter_table};
 
 struct Demo {
     appearance: Appearance,
@@ -28,27 +28,27 @@ impl Default for Demo {
 }
 
 impl Demo {
-    fn ui(&mut self, context: &egui::Context) {
-        egui::TopBottomPanel::top("title").show(context, |ui| {
+    fn ui(&mut self, root_ui: &mut egui::Ui) {
+        egui::Panel::top("title").show_inside(root_ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                charming_egui::h3(ui, "矩形滑块 · 外观实验");
+                yummy_egui::h3(ui, "矩形滑块 · 外观实验");
                 ui.separator();
                 ui.label("独立窗口 · 不读写配置 · 不运行海洋模拟");
             });
         });
-        egui::SidePanel::left("appearance")
-            .default_width(340.0)
-            .width_range(300.0..=420.0)
-            .show(context, |ui| {
+        egui::Panel::left("appearance")
+            .default_size(340.0)
+            .size_range(300.0..=420.0)
+            .show_inside(root_ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.controls(ui));
             });
-        egui::CentralPanel::default().show(context, |ui| {
+        egui::CentralPanel::default().show_inside(root_ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| self.preview(ui));
         });
     }
 
     fn controls(&mut self, ui: &mut egui::Ui) {
-        charming_egui::h3(ui, "外观参数（实时生效）");
+        yummy_egui::h3(ui, "外观参数（实时生效）");
         let style = &mut self.appearance;
         group(ui, "背景与数值框", |ui| {
             parameter(
@@ -173,7 +173,7 @@ impl Demo {
     }
 
     fn preview(&mut self, ui: &mut egui::Ui) {
-        charming_egui::h3(ui, "交互预览");
+        yummy_egui::h3(ui, "交互预览");
         parameter_table(ui, "preview sliders", |ui| {
             for (i, (name, range)) in [
                 ("混合比例", 0.0..=1.0),
@@ -202,7 +202,7 @@ impl Demo {
             }
         });
         ui.add_space(18.0);
-        charming_egui::h3(ui, "状态对照（静态示意，不可拖动）");
+        yummy_egui::h3(ui, "状态对照（静态示意，不可拖动）");
         parameter_table(ui, "state comparison", |ui| {
             parameter(
                 ui,
@@ -222,7 +222,7 @@ impl Demo {
             );
         });
         ui.add_space(18.0);
-        charming_egui::h3(ui, "原生滑块对照（同一个混合比例）");
+        yummy_egui::h3(ui, "原生滑块对照（同一个混合比例）");
         parameter_table(ui, "native comparison", |ui| {
             parameter(
                 ui,

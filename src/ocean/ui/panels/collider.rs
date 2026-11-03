@@ -1,9 +1,7 @@
 use crate::ocean::parameters::optics::OpticsConfig;
 use crate::ocean::scene::collider::Collider;
 use crate::ocean::scene::collider::Shape;
-use charming_egui::{
-    PanelButton, ParameterSlider, action_row, choices, parameter, parameter_table,
-};
+use yummy_egui::{PanelButton, ParameterSlider, action_row, choices, parameter, parameter_table};
 
 pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
     let resolution = optics.shore.resolution;
@@ -18,7 +16,7 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
             domain[1] + domain[3],
         ]
     };
-    charming_egui::h3(ui, "静态碰撞体");
+    yummy_egui::h3(ui, "静态碰撞体");
     parameter_table(ui, "collider actions", |ui| {
         parameter(
             ui,
@@ -99,7 +97,7 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
         };
         ui.separator();
         ui.push_id(index, |ui| {
-            charming_egui::h3(ui, format!("碰撞体 {}", index + 1));
+            yummy_egui::h3(ui, format!("碰撞体 {}", index + 1));
             parameter_table(ui, "collider parameters", |ui| {
                 parameter(ui, "启用", "开启或关闭；即时生效并保存，不重置 SWE，暂停时也会应用。", |ui| ui.checkbox(&mut c.enabled, ""));
                 parameter(ui, "形状", "圆柱或可旋转长方体，底部连接海底；即时生效并保存，不重置 SWE。", |ui| {

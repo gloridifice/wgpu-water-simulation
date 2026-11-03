@@ -73,14 +73,14 @@ Consultez le [guide PIC](../doco/guides/pic.md) et le [guide de simulation en ea
 
 ## Licence
 
-Aucune licence générale du projet n’est actuellement fournie. Les ressources incluses ont leurs propres conditions ; consultez les [mentions des modèles](../assets/models/NOTICE.md), les [sources de l’écume](../assets/foam/SOURCES.md), les [sources des embruns](../assets/spray/README.md) et la [licence du thème d’interface](../assets/egui_themes/LICENSE-wgpu_pbr.txt).
+Aucune licence générale du projet n’est actuellement fournie. Les ressources incluses ont leurs propres conditions ; consultez les [mentions des modèles](../assets/models/NOTICE.md), les [sources de l’écume](../assets/foam/SOURCES.md), les [sources des embruns](../assets/spray/README.md) et la [licence de yummy_egui](https://github.com/gloridifice/yummy-egui/blob/main/LICENSE).
 
 ## Développement
 
 Les guides détaillés sont principalement en chinois.
 
 - [Utilisation d’Ocean et vérification GPU](../doco/guides/ocean.md)
-- [Composants et thèmes charming_egui](../doco/guides/charming-egui.md)
+- [Intégration de yummy_egui et thème par défaut](../doco/guides/yummy-egui.md)
 - [Simulation CPU PIC](../doco/guides/pic.md)
 - [Simulation en eau peu profonde 1D](../doco/guides/shallow.md)
 - [Diagnostics et benchmarks de l’écume](../doco/guides/foam-lab.md)

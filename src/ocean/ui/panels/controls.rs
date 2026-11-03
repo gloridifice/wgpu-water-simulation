@@ -1,6 +1,6 @@
 use crate::ocean::ui::help::help;
-use charming_egui::{ParameterSlider, parameter};
 use std::ops::RangeInclusive;
+use yummy_egui::{ParameterSlider, parameter};
 pub(super) fn number(
     ui: &mut egui::Ui,
     name: &str,

@@ -83,8 +83,9 @@ pub fn extract_surface(
     if cube_count > u64::from(u32::MAX / 12) {
         return Err("GPU 表面三角形计数可能溢出".into());
     }
-    let max_storage_bytes =
-        u64::from(device_limits.max_storage_buffer_binding_size).min(device_limits.max_buffer_size);
+    let max_storage_bytes = device_limits
+        .max_storage_buffer_binding_size
+        .min(device_limits.max_buffer_size);
     if phi.len() as u64 * 4 > max_storage_bytes {
         return Err("GPU 表面 phi 缓冲区超过设备单绑定上限".into());
     }

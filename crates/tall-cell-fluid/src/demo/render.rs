@@ -58,6 +58,8 @@ struct Pipelines {
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
+    instance: wgpu::Instance,
+    window: Arc<Window>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -146,10 +148,10 @@ impl Renderer {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("preview pipeline layout"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let validation_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("tall cell surface preview"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/render.wgsl").into()),
@@ -161,7 +163,7 @@ impl Renderer {
             &shader,
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
-        if let Some(error) = device.pop_error_scope().await {
+        if let Some(error) = validation_scope.pop().await {
             return Err(format!("预览着色器初始化失败：{error}"));
         }
         let vertices = vertex_buffer(&device, "empty preview surface", &[]);
@@ -171,6 +173,8 @@ impl Renderer {
         let timer = SceneGpuTimer::new(&device, &queue);
         Ok(Self {
             surface,
+            instance,
+            window,
             device,
             queue,
             config,
@@ -271,13 +275,24 @@ impl Renderer {
         // 在 egui 构建前读取最近已完成的样本；绝不把 CPU 绘制提交时间标成 GPU 耗时。
         self.timer.poll(&self.device);
         let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(Vec::new());
             }
-            Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => return Ok(Vec::new()),
-            Err(error) => return Err(format!("预览 surface 失败：{error}")),
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface = self
+                    .instance
+                    .create_surface(self.window.clone())
+                    .map_err(|e| e.to_string())?;
+                self.surface.configure(&self.device, &self.config);
+                return Ok(Vec::new());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(Vec::new());
+            }
+            wgpu::CurrentSurfaceTexture::Validation => return Err("预览 surface 校验失败".into()),
         };
         let timing = RenderTiming {
             supported: self.timer.supported,
@@ -511,6 +526,7 @@ impl Renderer {
             }),
             timestamp_writes,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_bind_group(0, &self.bind, &[]);
         pass.set_pipeline(&pipelines.ground);
@@ -609,8 +625,8 @@ fn make_pipelines(
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: depth_write,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_write_enabled: Some(depth_write),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -625,7 +641,7 @@ fn make_pipelines(
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };

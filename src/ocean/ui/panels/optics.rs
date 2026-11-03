@@ -4,7 +4,7 @@ use crate::ocean::parameters::optics::VIEW_NAMES;
 use crate::ocean::render::skylight::incident_reference;
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
-use charming_egui::{PanelButton, choices, group, parameter, parameter_table};
+use yummy_egui::{PanelButton, choices, group, parameter, parameter_table};
 
 impl Gui {
     pub(in crate::ocean::ui) fn optics_panel(&mut self, ui: &mut egui::Ui) {

@@ -1,5 +1,5 @@
 //! A native egui linear-RGB picker plus an independent radiometric strength.
-use charming_egui::{parameter, parameter_table};
+use yummy_egui::{parameter, parameter_table};
 #[derive(Clone, Debug)]
 pub struct CoefficientEditor {
     last_rgb: [f32; 3],
@@ -34,7 +34,7 @@ impl CoefficientEditor {
             *self = Self::new(*rgb, self.zero_strength);
         }
         ui.push_id(label, |ui| {
-            charming_egui::h3(ui, label).on_hover_text(
+            yummy_egui::h3(ui, label).on_hover_text(
                 "线性 RGB 系数等于颜色乘以强度；消光为零时使用散射源乘以距离的解析极限。",
             );
             let mut changed = false;

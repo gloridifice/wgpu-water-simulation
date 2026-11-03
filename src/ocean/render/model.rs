@@ -84,7 +84,7 @@ impl ModelRenderer {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             anisotropy_clamp: 8,
             ..Default::default()
         });
@@ -118,8 +118,8 @@ impl ModelRenderer {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("model pipeline layout"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("unlit coast scan"),
@@ -152,12 +152,12 @@ impl ModelRenderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: !lines,
-                    depth_compare: if lines {
+                    depth_write_enabled: Some(!lines),
+                    depth_compare: Some(if lines {
                         wgpu::CompareFunction::Always
                     } else {
                         wgpu::CompareFunction::LessEqual
-                    },
+                    }),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -172,7 +172,7 @@ impl ModelRenderer {
                     compilation_options: Default::default(),
                     targets: &[Some(target.into())],
                 }),
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
         };

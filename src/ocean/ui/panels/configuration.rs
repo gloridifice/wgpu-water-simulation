@@ -1,6 +1,6 @@
 //! Compact single-selection configuration controls.
 use crate::ocean::settings::{ConfigurationLibrary, DEFAULT_CONFIGURATION_NAME, SavedSettings};
-use charming_egui::{PanelButton, SelectionList, action_row};
+use yummy_egui::{PanelButton, SelectionList, action_row};
 
 #[derive(Clone, Copy)]
 enum Editor {
@@ -236,7 +236,7 @@ mod tests {
     impl Harness {
         fn new(enabled: bool) -> Self {
             let context = egui::Context::default();
-            charming_egui::Theme::default().apply(&context);
+            yummy_egui::Theme::default().apply(&context);
             crate::ocean::ui::fonts::install(&context);
             let initial = SavedSettings::default();
             Self {
@@ -250,7 +250,7 @@ mod tests {
         }
 
         fn frame(&mut self, events: Vec<egui::Event>) {
-            let output = self.context.run(
+            let output = self.context.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
                         egui::Pos2::ZERO,
@@ -259,8 +259,8 @@ mod tests {
                     events,
                     ..Default::default()
                 },
-                |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
+                |root_ui| {
+                    egui::CentralPanel::default().show_inside(root_ui, |ui| {
                         if let Some(settings) =
                             self.panel.ui(ui, self.current.clone(), self.enabled)
                         {

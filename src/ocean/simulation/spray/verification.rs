@@ -560,6 +560,7 @@ fn verify_raster(
                         }),
                         timestamp_writes: None,
                         occlusion_query_set: None,
+                        multiview_mask: None,
                     });
                 }
                 particles.render(encoder, &target_view, source);

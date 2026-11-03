@@ -6,11 +6,11 @@
 
 - Rust 2024 workspace，根包 `water-simulation` 默认启用 `ocean` feature；默认成员只有根包，`cargo run` 启动 GPU Ocean。
 - `src/bin/ocean.rs` 提供 GPU 海洋入口、验证与预览参数。
-- `src/bin/slider_lab.rs` 与 `src/ocean/labs/slider_lab/` 提供独立矩形滑块外观窗口，与正式面板共用 `charming_egui::ParameterSlider`，复用现有主题与参数网格；实验调节仅影响本窗口，不运行模拟、不读写配置。启动与交互见 [滑块外观实验](guides/slider-lab.md)。
+- `src/bin/slider_lab.rs` 与 `src/ocean/labs/slider_lab/` 提供独立矩形滑块外观窗口，与正式面板共用 `yummy_egui::ParameterSlider`，复用库默认主题与参数网格；实验调节仅影响本窗口，不运行模拟、不读写配置。启动与交互见 [滑块外观实验](guides/slider-lab.md)。
 - `src/bin/ocean_profile.rs` 提供只读配置的离屏生产路径剖析：固定 1/60 模拟秒推进，预热后分开记录 FFT、远海泡沫、完整 SWE（含浪花源与复制）、粒子和绘制的 GPU timestamp；末尾回读状态／图像作 A/B，不包含 UI 或呈现。运行说明同见 [泡沫诊断与基准测试](guides/foam-lab.md#生产路径离屏剖析)。
 - `src/bin/foam_lab.rs` 提供独立离线泡沫输送对照：默认诊断入口调用生产泡沫通量／源项／纹理运动，在固定解析水流下输出密度快照及误差；`foam_lab/benchmark.rs` 的 `--benchmark` 模式则调用生产 SWE 管线，在固定稀疏／密集／模型地形／障碍物及模型双浓度＋非零入射波输入下预热并重复计时、导出单步状态。两者均不读写个人配置，见 [泡沫诊断与基准测试](guides/foam-lab.md)。
 - `crates/tui-2d-prototype/` 是独立 CPU 包：`src/main.rs` 统一选择二维 PIC／一维浅水及 TUI／批处理，`src/pic/`、`src/solver.rs` 提供不依赖终端的求解器，`src/tui/`、`src/shallow_tui/` 负责交互。测试与 `pic_probe` 示例归该包所有，Cargo 包名为 `tui-2d-prototype`，库名为 `tui_2d_prototype`，二进制仍名为 `water-simulation`；从根目录用 `cargo run -p tui-2d-prototype` 启动。
-- 根包不依赖 CPU 包、Ratatui 或 Crossterm；根包、CPU 包与 `crates/charming_egui/` 共用根 `Cargo.lock` 和构建目录，`cargo test --workspace` 覆盖三包。`crates/tall-cell-fluid/` 保持独立 workspace，不纳入此工作区。
+- 根包不依赖 CPU 包、Ratatui 或 Crossterm；根包与 CPU 包共用根 `Cargo.lock` 和构建目录，`cargo test --workspace` 覆盖这两个包；组件库 `yummy_egui` 从 crates.io 获取，不是 workspace 成员。`crates/tall-cell-fluid/` 保持独立 workspace，不纳入此工作区。
 
 ## GPU 海洋
 
@@ -30,19 +30,19 @@
 - `simulation/spray/mod.rs` 与所属 `spray*.wgsl`：近岸纹理浪花。Shore 持有 `SpraySource`，每完成 SWE 子步按当前／初始场角色选择绑定，向独立网格 storage buffer 累积发射信号；Renderer 持有 `SprayParticles`，消费信号，维护 GPU 余量、双粒子列表和间接绘制参数。粒子不反作用水体或泡沫，运行时不回读信号/粒子计数。配置放在 `OpticsConfig::spray`，默认关闭。
 - `app/viewer.rs`：窗口、配置应用和帧调度；正常帧先计算 FFT、远海泡沫和 SWE，再编码粒子更新，最后调用场景、浪花和 GUI 绘制。`app/snapshot.rs` 保留离屏暖机与调度，同样推进粒子；两条路径没有合并或重排。
 - `render/renderer.rs::Renderer` 持有 `Shore`，组织天空、海底、模型与水面绘制。远海和局部 SWE 水面都使用索引网格；局部索引随 SWE 分辨率重建，网格密度、三角形绕序和顶点采样不变。水面写入 `Depth32Float` 深度；主深度具有 `RENDER_ATTACHMENT | TEXTURE_BINDING` 用途，场景 pass 保存深度，后续浪花 pass 只采样，不把该深度同时挂为可写附件。
-- 近岸材质坐标跟随泡沫输运速度，双相位重置周期由 `foam_texture_period` 控制（默认 2 模拟秒，0 为持续输运）；只重置不可见的坐标层，不修改密度／动量。`foam_prototype` 默认关闭，开启后在输运坐标上使用三尺度 value noise 和密度阈值显示孔洞，沿用现有光学、颜色和密度尺度参数；不使用 NSH 微法线。材质调试 5 显示输运坐标网格。此阶段没有新增细波传播、撞岩源或高分辨率泡沫场。
-- 双浓度实验开启时，`render.wgsl` 使用共享输运坐标显示两尺度三角格梯度噪声的亮白 N 与多尺度窄带、稍暗的 R；N 的细噪声层旋转并错开坐标，减少稀疏白沫的方格排列，不改变密度响应或模拟，覆盖原 NSH／原型选择；仍使用同一水面几何，没有细尺度湍流或单气泡。密度调试 6／9／10 分别读取 N+R／N／R，不经过材质阈值；双坐标重置周期继续有效。参数及启用方式见 [Ocean 使用说明](guides/ocean.md)。
+- 近岸材质坐标跟随泡沫输运速度；默认开启的 `foam_texture_distortion` 仅控制渲染是否使用输运坐标，关闭时用固定世界坐标，不停止位移历史或浓度更新，通过 `foam_velocity.w` 传递关闭标记，不改变 uniform 布局。双相位重置周期由 `foam_texture_period` 控制（默认 2 模拟秒，0 为持续输运）；只重置不可见的坐标层，不修改密度／动量。`foam_prototype` 默认关闭，开启后在输运坐标上使用三尺度 value noise 和密度阈值显示孔洞，沿用现有光学、颜色和密度尺度参数；不使用 NSH 微法线。材质调试 5 显示输运坐标网格。此阶段没有新增细波传播、撞岩源或高分辨率泡沫场。
+- 双浓度实验开启时，`render.wgsl` 使用共享输运坐标显示两尺度三角格梯度噪声的亮白 N 与多尺度窄带、稍暗的 R；N 的细噪声层旋转并错开坐标，减少稀疏白沫的方格排列，不改变密度响应或模拟，覆盖原 NSH／原型选择；仍使用同一水面几何，没有细尺度湍流或单气泡。渲染成分选项可显示全部、仅 N 或仅 R，同步筛选外观高度，单独查看时隐藏远海泡沫；不改变模拟，关闭双浓度时不生效。该选项通过 ShoreUniform.density.w 传递，不改变 uniform 布局。密度调试 6／9／10 分别读取 N+R／N／R，不经过材质阈值；双坐标重置周期继续有效。参数及启用方式见 [Ocean 使用说明](guides/ocean.md)。
 - `render.wgsl` 的近岸 NSH 泡沫保留双相位孔隙覆盖，使用原始面密度的指数响应控制连续不透明度；`ShoreConfig::foam_opacity_scale` 仅控制外观，不修改密度／动量或重置历史。原灰度和远海泡沫路径独立。
 - `parameters/` 保留原参数类型名称、字段、默认值及校验。`OpticsConfig` 仍是既有场景参数聚合，不改变序列化结构。`render/{optics,skylight,seabed,model}.rs` 与所属着色器负责光学、水底、天空与模型绘制；`scene/{terrain,collider,model}.rs` 提供地形、碰撞几何与导入模型数据。
 - `render/textures/sand.rs` 与所属 `color_mips.wgsl`：沙地和导入模型颜色贴图在 CPU 解码 JPEG、上传原始层后，通过 GPU render pass 在线性空间生成完整 sRGB mip 链，不同步等待 GPU；每级写回 8 位 sRGB。沙地法线／标量贴图保留 CPU 过滤。`sand::verify` 回读实际 GPU mip，检查线性光平均及矩形纹理边界。
 
 ## 界面、配置与验证
 
-- `crates/charming_egui/` 是不依赖窗口、GPU 或海洋业务的 egui 组件库，提供参数列表、选择列表、滑块、面板按钮、互斥选项与基于 RichText 的 h1／h2／h3。标题颜色继承 egui 高对比色，字号和上下 margin 归组件主题；业务界面的原加粗标题／强调文字统一使用默认 14 pt、不加粗的 h3。独立 `tall-cell-fluid` 仅在 `demo` feature 下依赖该库复用标题，不改变其整体主题、字体、求解器或 workspace 边界。`src/theme/default/` 内的 `egui.toml`、`egui_dock.toml`、`charming_egui.toml` 编译期内嵌，也支持显式外部目录／字符串加载；按文件替换，缺文件使用内嵌默认，错误返回且不修改当前界面。`dock` feature 默认关闭，控制 Dock 依赖和主题读取。样式按 Context 隔离，MiSans 仍由主程序 `ui/fonts.rs` 安装；Ocean 和两个界面实验使用默认主题，不隐式读取外部主题。接口及加载约定见 [charming_egui](guides/charming-egui.md)。
+- 通用控件由 crates.io 的 `yummy_egui` 0.1 系列提供（最低 0.1.1），搭配 egui 0.34.3、egui_dock 0.19.1 与 wgpu 29；库源码及主题配置不存储在本仓库。Ocean、两个界面实验和独立 `tall-cell-fluid` demo 使用 `Theme::default()`，Dock 使用其 `dock_style()`，不读取或保存外部主题。标题统一使用 h3；字体仍由各宿主安装，Ocean 使用 `ui/fonts.rs` 安装 MiSans。`tall-cell-fluid` 的 UI 依赖仍仅在 `demo` feature 下启用，不改变其独立 workspace 和求解器边界。接入约定见 [yummy_egui](guides/yummy-egui.md)。
 
-- `ui/gui.rs` 使用 egui_dock，顶部常驻工具栏及性能摘要，左侧固定“场景、浅水、远海、着色、配置”导航；五套独立布局默认参数靠左、渲染视图靠右，共享模拟、草稿与相机。`ui/workspace/` 维护包含临时隐藏面板的规范布局；各布局及当前分类独立保存到可写会话旁的 `.workspaces.json` sidecar，只读／无保存模式不隐式读写。界面合约见 [工作区界面规范](specs/workspace-ui.md)。`ui/panels/` 按职责拆分面板，共用 `charming_egui` 的参数列表和控件；操作按钮显式使用 `PanelButton` 填满所属单元格：保留原生 egui 按钮的边框与交互，文字在沿用主题 padding 的内容区居中；margin 在内嵌组件主题中默认为上下各 4 pt、左右 0，不参与点击，不写入参数或布局文件。`action_row` 等宽排列并在每按钮扣除 margin 后不足 96 pt 时整组纵向排列，不改变全局按钮样式；`ui/workspace/{mod,store}.rs` 管理工作区与独立布局 sidecar。`settings/{session,library,store}.rs` 分别管理当前参数快照、命名库与加载/原子保存/自动保存。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
-- `charming_egui::ParameterSlider` 给面板原生 egui Slider 增加等高圆角背景与窄竖条皮肤，悬浮／拖动改变竖条宽高和亮度，不绘制描边。输入、数值编辑、整数／步长、对数及 clamping 继续由 egui 处理；独立显示映射仅支持当前面板的有限线性范围和非负对数范围，不改参数默认值或配置格式。
-- 配置面板使用 `charming_egui::SelectionList`，容器只负责滚动、全宽条目和原生响应；配置加载、选中状态、失败回滚及增删改仍归 `ui/panels/configuration.rs` 和 `settings/`。点击已选项仍可重新载入，无保存模式仍允许选择。参数列表的布局与滑块交互测试归组件库，配置业务和 Dock／相机测试保留在根包。
+- `ui/gui.rs` 使用 egui_dock，顶部常驻工具栏及性能摘要，左侧固定“场景、浅水、远海、着色、配置”导航；五套独立布局默认参数靠左、渲染视图靠右，共享模拟、草稿与相机。`ui/workspace/` 维护包含临时隐藏面板的规范布局；各布局及当前分类独立保存到可写会话旁的 `.workspaces.json` sidecar，只读／无保存模式不隐式读写。界面合约见 [工作区界面规范](specs/workspace-ui.md)。`ui/panels/` 按职责拆分面板，共用 `yummy_egui` 的参数列表和控件；操作按钮显式使用 `PanelButton` 填满所属单元格：保留原生 egui 按钮的边框与交互，文字在沿用主题 padding 的内容区居中；margin 在内嵌组件主题中默认为上下各 4 pt、左右 0，不参与点击，不写入参数或布局文件。`action_row` 等宽排列并在每按钮扣除 margin 后不足 96 pt 时整组纵向排列，不改变全局按钮样式；`ui/workspace/{mod,store}.rs` 管理工作区与独立布局 sidecar。`settings/{session,library,store}.rs` 分别管理当前参数快照、命名库与加载/原子保存/自动保存。`SavedSettings` 使用默认值兼容缺失字段，读取路径由 `default_path()` 决定：当前工作目录已有 `configs/ocean-settings.json` 时使用该 Git 跟踪会话，否则回退原用户目录；显式 `--settings` 优先。`--config` 严格只读加载顶层会话，用于窗口和快照，不自动保存或替换坏文件。快照保留指定相机／远海泡沫参数，支持模拟时间发射窗口；均不改写配置。原会话、命名库及派生礁石实验配置见 [../configs/README.md](../configs/README.md)。
+- `yummy_egui::ParameterSlider` 给面板原生 egui Slider 增加等高圆角背景与窄竖条皮肤，悬浮／拖动改变竖条宽高和亮度，不绘制描边。输入、数值编辑、整数／步长、对数及 clamping 继续由 egui 处理；独立显示映射仅支持当前面板的有限线性范围和非负对数范围，不改参数默认值或配置格式。
+- 配置面板使用 `yummy_egui::SelectionList`，容器只负责滚动、全宽条目和原生响应；配置加载、选中状态、失败回滚及增删改仍归 `ui/panels/configuration.rs` 和 `settings/`。点击已选项仍可重新载入，无保存模式仍允许选择。参数列表的布局与滑块交互测试归组件库，配置业务和 Dock／相机测试保留在根包。
 - `verify.rs` 只组织完整 GPU 行为检查；DFT/耦合、近岸、浪花及渲染验证归各自 `verification.rs` 或 `verification/`，仍编译到非测试程序供 CLI 调用，不通过暴露私有字段来迁移。`gpu/timer.rs` 使用设备支持的 GPU timestamp；功能运行不能依赖同步回读。
 - 配置、特性边界、参数面板和资源许可约束见根目录 `AGENTS.md`；使用与算法指南集中在 `doco/guides/`，包括 [Ocean](guides/ocean.md)、[CPU PIC](guides/pic.md)、[一维浅水](guides/shallow.md) 和 [泡沫诊断](guides/foam-lab.md)。根目录 `README.md` 提供项目入口，`doco/specs/` 保留精确行为合约。
 

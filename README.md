@@ -73,14 +73,14 @@ See the [PIC guide](doco/guides/pic.md) and [1D shallow-water guide](doco/guides
 
 ## License
 
-No project-level license is currently provided. Bundled assets have separate terms; see the [model notices](assets/models/NOTICE.md), [foam sources](assets/foam/SOURCES.md), [spray sources](assets/spray/README.md), and [UI theme license](assets/egui_themes/LICENSE-wgpu_pbr.txt).
+No project-level license is currently provided. Bundled assets have separate terms; see the [model notices](assets/models/NOTICE.md), [foam sources](assets/foam/SOURCES.md), [spray sources](assets/spray/README.md), and the upstream [yummy_egui license](https://github.com/gloridifice/yummy-egui/blob/main/LICENSE).
 
 ## Development
 
 Detailed guides are primarily in Chinese.
 
 - [Ocean usage and GPU verification](doco/guides/ocean.md)
-- [charming_egui components and themes](doco/guides/charming-egui.md)
+- [yummy_egui integration and default theme](doco/guides/yummy-egui.md)
 - [CPU PIC simulation](doco/guides/pic.md)
 - [1D shallow-water simulation](doco/guides/shallow.md)
 - [Foam diagnostics and benchmarks](doco/guides/foam-lab.md)

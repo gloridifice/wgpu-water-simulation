@@ -28,7 +28,7 @@ pub struct GpuContext {
 
 impl GpuContext {
     pub async fn new() -> Result<Self, String> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -88,7 +88,7 @@ impl GpuContext {
         if let Some(pipeline) = cache.get(&key) {
             return Ok(pipeline.clone());
         }
-        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let validation_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = self
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -105,7 +105,7 @@ impl GpuContext {
                 compilation_options: Default::default(),
                 cache: None,
             });
-        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+        if let Some(error) = pollster::block_on(validation_scope.pop()) {
             return Err(format!("{label}: {error}"));
         }
         cache.insert(key, pipeline.clone());
@@ -214,7 +214,7 @@ impl GpuContext {
             2 * grid.domain.cell_count() + grid.velocity.faces.iter().map(Vec::len).sum::<usize>();
         let limits = self.device.limits();
         if count > u32::MAX as usize / 64
-            || (count as u64 * 4) > u64::from(limits.max_storage_buffer_binding_size)
+            || (count as u64 * 4) > limits.max_storage_buffer_binding_size
             || count.div_ceil(64) > limits.max_compute_workgroups_per_dimension as usize
         {
             return Err("网格超过当前 GPU 单缓冲区/dispatch 上限".into());

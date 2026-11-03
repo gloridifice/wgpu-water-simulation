@@ -27,11 +27,11 @@ pub use verification::verify;
 
 // Resource creation only: error scopes do not map or wait for simulation data.
 fn allocate<T>(gpu: &Gpu, build: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
-    gpu.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-    gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let allocation_scope = gpu.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let validation_scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let result = build();
-    let validation = pollster::block_on(gpu.device.pop_error_scope());
-    let allocation = pollster::block_on(gpu.device.pop_error_scope());
+    let validation = pollster::block_on(validation_scope.pop());
+    let allocation = pollster::block_on(allocation_scope.pop());
     if let Some(error) = validation.or(allocation) {
         return Err(format!("GPU spray disabled: {error}").into());
     }
@@ -142,7 +142,7 @@ impl SpraySource {
         let limits = gpu.device.limits();
         let largest =
             (u64::from(cells) * SIGNAL_BYTES).max(16 + u64::from(CAPACITY) * PARTICLE_BYTES);
-        if largest > u64::from(limits.max_storage_buffer_binding_size)
+        if largest > limits.max_storage_buffer_binding_size
             || largest > limits.max_buffer_size
             || limits.max_storage_buffers_per_shader_stage < 7
         {
@@ -379,7 +379,7 @@ impl SprayParticles {
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let render_bind =
@@ -456,7 +456,7 @@ impl SprayParticles {
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         std::array::from_fn(|i| {
@@ -560,6 +560,7 @@ impl SprayParticles {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, &self.render_bind[self.front], &[]);

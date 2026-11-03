@@ -3,8 +3,8 @@ use crate::ocean::camera::Camera;
 use crate::ocean::parameters::ocean::OceanConfig;
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
-use charming_egui::ParameterSlider;
-use charming_egui::{PanelButton, action_row, choices, group, parameter};
+use yummy_egui::ParameterSlider;
+use yummy_egui::{PanelButton, action_row, choices, group, parameter};
 
 impl Gui {
     pub(in crate::ocean::ui) fn ocean_panel(

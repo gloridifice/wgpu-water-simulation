@@ -73,14 +73,14 @@ cargo run --release -p tui-2d-prototype
 
 ## 许可证
 
-仓库目前未提供项目级许可证。随附资源有各自的许可条款，见[模型声明](../assets/models/NOTICE.md)、[泡沫来源](../assets/foam/SOURCES.md)、[浪花来源](../assets/spray/README.md)及 [UI 主题许可证](../assets/egui_themes/LICENSE-wgpu_pbr.txt)。
+仓库目前未提供项目级许可证。随附资源有各自的许可条款，见[模型声明](../assets/models/NOTICE.md)、[泡沫来源](../assets/foam/SOURCES.md)、[浪花来源](../assets/spray/README.md)及 [yummy_egui 上游许可证](https://github.com/gloridifice/yummy-egui/blob/main/LICENSE)。
 
 ## 开发
 
 详细文档主要使用中文。
 
 - [Ocean 使用与 GPU 验证](../doco/guides/ocean.md)
-- [charming_egui 组件与主题](../doco/guides/charming-egui.md)
+- [yummy_egui 接入与默认主题](../doco/guides/yummy-egui.md)
 - [CPU PIC 模拟](../doco/guides/pic.md)
 - [一维浅水模拟](../doco/guides/shallow.md)
 - [泡沫诊断与基准测试](../doco/guides/foam-lab.md)

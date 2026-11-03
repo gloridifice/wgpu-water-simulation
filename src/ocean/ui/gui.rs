@@ -10,8 +10,8 @@ use crate::ocean::{
     parameters::{foam::FoamConfig, ocean::OceanConfig, optics::OpticsConfig},
     settings::{ConfigurationLibrary, SavedSettings},
 };
-use charming_egui::{ParameterSlider, parameter, parameter_table};
 use winit::window::Window;
+use yummy_egui::{ParameterSlider, parameter, parameter_table};
 
 struct PanelViewer<F>(F);
 impl<F: FnMut(Panel, &mut egui::Ui)> egui_dock::TabViewer for PanelViewer<F> {
@@ -54,7 +54,7 @@ fn ocean_view(
         let amount = ui.ctx().input(|input| input.smooth_scroll_delta.y) / 50.0;
         camera.distance =
             (camera.distance * (-amount * 0.1).exp()).clamp(length * 0.12, length * 0.95);
-        if !ui.ctx().wants_keyboard_input() {
+        if !ui.ctx().egui_wants_keyboard_input() {
             ui.input(|input| {
                 if input.focused {
                     let right = i32::from(input.key_down(egui::Key::D))
@@ -113,7 +113,7 @@ impl Gui {
         config: OceanConfig,
     ) -> Self {
         let context = egui::Context::default();
-        let theme = charming_egui::Theme::default();
+        let theme = yummy_egui::Theme::default();
         theme.apply(&context);
         super::fonts::install(&context);
         let dock_style = theme.dock_style().clone();
@@ -198,18 +198,15 @@ impl Gui {
         let mut apply = None;
         // Move just the UI layouts out during callbacks, not shared editor state.
         let mut workspaces = std::mem::take(&mut self.workspaces);
-        let output = context.run(input, |ctx| {
-            egui::TopBottomPanel::top("workspace header")
+        let output = context.run_ui(input, |root_ui| {
+            egui::Panel::top("workspace header")
                 .frame(egui::Frame::NONE)
-                .show(ctx, |ui| {
+                .show_inside(root_ui, |ui| {
                     egui::Frame::new().inner_margin(6.0).show(ui, |ui| {
                         let toolbar_bounds = ui.available_rect_before_wrap();
                         let controls = ui
                             .horizontal_wrapped(|ui| {
-                                charming_egui::h3(
-                                    ui,
-                                    format!("{}工作区", workspaces.active.name()),
-                                );
+                                yummy_egui::h3(ui, format!("{}工作区", workspaces.active.name()));
                                 ui.separator();
                                 if ui.button(if *paused { "继续" } else { "暂停" }).clicked() {
                                     *paused = !*paused;
@@ -333,11 +330,11 @@ impl Gui {
                         response.on_hover_text(crate::ocean::ui::performance::SUMMARY_HELP);
                     });
                 });
-            egui::SidePanel::left("workspace navigation")
-                .exact_width(54.0)
+            egui::Panel::left("workspace navigation")
+                .exact_size(54.0)
                 .resizable(false)
-                .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(8.0))
-                .show(ctx, |ui| {
+                .frame(egui::Frame::side_top_panel(root_ui.style()).inner_margin(8.0))
+                .show_inside(root_ui, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 8.0;
                         for id in WorkspaceId::ALL {
@@ -380,10 +377,10 @@ impl Gui {
                         }
                     });
                 });
-            self.dock_padding_window(ctx);
+            self.dock_padding_window(root_ui.ctx());
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
-                .show(ctx, |ui| {
+                .show_inside(root_ui, |ui| {
                     let active = workspaces.active;
                     let workspace = workspaces.current();
                     workspace.prepare(&self.optics);

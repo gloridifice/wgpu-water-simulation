@@ -1,5 +1,4 @@
 use super::*;
-use charming_egui::{parameter, parameter_table};
 use std::{
     sync::{Arc, mpsc},
     time::{Duration, Instant},
@@ -11,6 +10,7 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
 };
+use yummy_egui::{parameter, parameter_table};
 
 #[derive(Clone, Copy)]
 enum Panel {
@@ -51,6 +51,7 @@ struct Pending {
 struct State {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
+    instance: wgpu::Instance,
     surface_config: wgpu::SurfaceConfiguration,
     gpu: Gpu,
     experiment: Experiment,
@@ -106,7 +107,7 @@ impl State {
         };
         let experiment = Experiment::new(&gpu, draft, controls.grid)?;
         let context = egui::Context::default();
-        let theme = charming_egui::Theme::default();
+        let theme = yummy_egui::Theme::default();
         theme.apply(&context);
         crate::ocean::ui::fonts::install(&context);
         let dock_style = theme.dock_style().clone();
@@ -134,6 +135,7 @@ impl State {
         Ok(Self {
             window,
             surface,
+            instance,
             surface_config,
             gpu,
             experiment,
@@ -169,7 +171,7 @@ impl State {
     }
     fn controls_panel(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().id_salt("lab controls").show(ui,|ui| {
-            charming_egui::h3(ui, "播放");
+            yummy_egui::h3(ui, "播放");
             ui.horizontal_wrapped(|ui| {
                 if ui.button(if self.paused {"播放"} else {"暂停"}).clicked(){self.paused = !self.paused;}
                 if ui.add_enabled(self.paused,egui::Button::new("步进 1/60 秒")).clicked(){self.time+=1.0/60.0;}
@@ -181,7 +183,7 @@ impl State {
                 });
                 parameter(ui,"时间倍率","0～3，无量纲。只改变播放速度，不改变同一模拟时刻的 J。实时生效。",|ui|ui.add(egui::Slider::new(&mut self.speed,0.0..=3.0)));
             });
-            ui.separator();charming_egui::h3(ui, "FFT 波谱（应用后生效）");
+            ui.separator();yummy_egui::h3(ui, "FFT 波谱（应用后生效）");
             parameter_table(ui,"spectrum",|ui| {
                 parameter(ui,"FFT 分辨率","64～512，每轴采样数。应用后重建现有 Ocean FFT，不新增另一套波谱；保留当前时间。",|ui| {
                     egui::ComboBox::from_id_salt("fft n").width(ui.available_width()).selected_text(self.draft.resolution.to_string()).show_ui(ui,|ui| {for n in [64,128,256,512] {ui.selectable_value(&mut self.draft.resolution,n,n.to_string());}});
@@ -194,7 +196,7 @@ impl State {
                 parameter(ui,"随机种子","无符号整数；固定种子用于可重复比较。应用后重建 FFT，不使用个人配置。",|ui|ui.add(egui::DragValue::new(&mut self.draft.seed)));
             });
             if ui.button("应用 FFT 参数").clicked(){self.apply=true;}
-            ui.separator();charming_egui::h3(ui, "J 与目标采样网格");
+            ui.separator();yummy_egui::h3(ui, "J 与目标采样网格");
             parameter_table(ui,"sampling",|ui| {
                 parameter(ui,"横向位移倍率","0～3，无量纲。实际位移系数为负值，与海洋 choppiness 约定一致；高度增益固定为 1。0 时 J=1。实时生效，不重建 FFT。",|ui|ui.add(egui::Slider::new(&mut self.controls.chop,0.0..=3.0)));
                 parameter(ui,"目标网格","64～512，每轴格数。只改变权重图采样，不改变 FFT；不运行 SWE。格内面积平均，不能凭空增加细节。实时重建诊断图。",|ui| {
@@ -208,7 +210,7 @@ impl State {
                 if ui.button("单周期方形").clicked(){self.controls.extent=[1.0,1.0];}
                 if ui.button("沿岸窄条 0.5 × 3").clicked(){self.controls.extent=[0.5,3.0];}
             });
-            ui.separator();charming_egui::h3(ui, "生成权重（实时）");
+            ui.separator();yummy_egui::h3(ui, "生成权重（实时）");
             parameter_table(ui,"weights",|ui| {
                 parameter(ui,"压缩起始阈值","0～1，无量纲。C=max(0,1−J)；超过阈值才有掩码。只改变示意权重，不改水体或现有泡沫。",|ui|ui.add(egui::Slider::new(&mut self.controls.threshold,0.0..=1.0).max_decimals(3)));
                 parameter(ui,"压缩过渡宽度","0～1，无量纲。掩码在起始阈值至阈值＋宽度间平滑变为 1。0 为严格大于阈值的硬门限；平水不会误触发。",|ui|ui.add(egui::Slider::new(&mut self.controls.transition,0.0..=1.0).max_decimals(3)));
@@ -220,28 +222,28 @@ impl State {
     }
     fn statistics_panel(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().id_salt("lab statistics").show(ui,|ui| {
-            charming_egui::h3(ui, "独立权重试验 · 不保存配置");
+            yummy_egui::h3(ui, "独立权重试验 · 不保存配置");
             ui.label("未接入 SWE；不显示累计泡沫密度。");
             let config=self.experiment.ocean.config;
             let p=self.controls.params(config);
-            ui.separator();charming_egui::h3(ui, "当前实际采样");
+            ui.separator();yummy_egui::h3(ui, "当前实际采样");
             ui.label(format!("FFT：{}²，{:.2} 米／采样",config.resolution,config.length/config.resolution as f32));
             ui.label(format!("目标：{}²，{:.1} × {:.1} 米",self.controls.grid,p.domain[1],p.domain[2]));
             ui.label(format!("每格：{:.3} × {:.3} 米",p.domain[1]/self.controls.grid as f32,p.domain[2]/self.controls.grid as f32));
             ui.label("范围按世界比例显示；+X 向右，+Z 向上。").on_hover_text("图像使用最近邻显示以暴露网格分辨率；缩小显示仍可能遮住细线，点击单图放大观察。计算使用面积平均，不是点采样。所有图使用未形变的 FFT 世界坐标。");
-            ui.separator();charming_egui::h3(ui, "异步统计（约 4 次／秒）");
+            ui.separator();yummy_egui::h3(ui, "异步统计（约 4 次／秒）");
             if let Some(s)=&self.stats {
                 ui.label(format!("统计时刻：{:.3} 模拟秒",s.time));
                 if s.params!=p {ui.colored_label(egui::Color32::YELLOW,"参数已变动，等待新统计");}
                 for (a,label) in ["面积变化比 J","生成掩码 M","生成权重 W","示意生成率 S"].iter().enumerate() {
-                    charming_egui::h3(ui, *label);
+                    yummy_egui::h3(ui, *label);
                     ui.label(format!("{:.4} ～ {:.4}\n平均 {:.4}",s.min[a],s.max[a],s.mean[a]));
                 }
                 ui.label(format!("掩码 > 0.5：{:.1}%\n格均 J ≤ 0：{:.2}%",100.0*s.active,100.0*s.folded));
                 ui.label(format!("相对基准总生成率：{:.3} 倍",s.mean[2])).on_hover_text("此实验基准在全域均匀，因此平均 W 等于积分生成率倍率（基准为 0 时仅表示权重倍率）。不自动保持总量；减少生成不能直接当作形态改善。");
                 if s.max[2]>self.controls.weight_range || s.max[3]>self.controls.rate_range {ui.colored_label(egui::Color32::YELLOW,"部分颜色饱和；数值未截断");}
             } else {ui.label("等待读回…");}
-            ui.separator();charming_egui::h3(ui, "固定色标（仅显示）");
+            ui.separator();yummy_egui::h3(ui, "固定色标（仅显示）");
             parameter_table(ui,"display scales",|ui| {
                 parameter(ui,"J 偏离范围","0.01～2，无量纲。色标为 1±此值，橙色压缩／灰白 J=1／蓝色扩张；不影响计算。实时生效。",|ui|ui.add(egui::Slider::new(&mut self.controls.j_range,0.01..=2.0).logarithmic(true)));
                 parameter(ui,"权重色标上限","1.1～8，无量纲。黑=0、青绿=1、黄=上限；超过仅颜色饱和，实际 W 不截断。实时生效。",|ui|ui.add(egui::Slider::new(&mut self.controls.weight_range,1.1..=8.0)));
@@ -286,7 +288,7 @@ impl State {
             }
         });
         let plot = |ui: &mut egui::Ui, i: usize, size: egui::Vec2| {
-            charming_egui::h3(ui, TITLES[i]);
+            yummy_egui::h3(ui, TITLES[i]);
             ui.label(&legends[i]);
             let available = egui::vec2(size.x.max(1.0), (size.y - 56.0).max(1.0));
             let aspect = self.controls.extent[0] / self.controls.extent[1];
@@ -356,10 +358,10 @@ impl State {
         let input = self.input.take_egui_input(&self.window);
         let context = self.context.clone();
         let mut dock = std::mem::replace(&mut self.dock, egui_dock::DockState::new(Vec::new()));
-        let output = context.run(input, |ctx| {
+        let output = context.run_ui(input, |root_ui| {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
-                .show(ctx, |ui| {
+                .show_inside(root_ui, |ui| {
                     egui_dock::DockArea::new(&mut dock)
                         .style(self.dock_style.clone())
                         .show_close_buttons(false)
@@ -396,13 +398,23 @@ impl State {
                 .update_texture(&self.gpu.device, &self.gpu.queue, *id, delta);
         }
         let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated => {
                 self.resize(self.surface_config.width, self.surface_config.height);
                 return Ok(());
             }
-            Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => return Ok(()),
-            Err(error) => return Err(error.into()),
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface = self.instance.create_surface(self.window.clone())?;
+                self.resize(self.surface_config.width, self.surface_config.height);
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err("surface texture validation failed".into());
+            }
         };
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
         self.experiment

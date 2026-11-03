@@ -1,7 +1,7 @@
 use super::controls::{list, number, toggle};
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
-use charming_egui::{PanelButton, action_row, choices, group, parameter};
+use yummy_egui::{PanelButton, action_row, choices, group, parameter};
 
 impl Gui {
     pub(in crate::ocean::ui) fn shore_panel(&mut self, ui: &mut egui::Ui) {

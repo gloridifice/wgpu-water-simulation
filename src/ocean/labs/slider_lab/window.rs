@@ -12,6 +12,7 @@ use winit::{
 struct WindowState {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
+    instance: wgpu::Instance,
     surface_config: wgpu::SurfaceConfiguration,
     gpu: Gpu,
     context: egui::Context,
@@ -33,7 +34,7 @@ impl WindowState {
         surface_config.present_mode = wgpu::PresentMode::AutoVsync;
         surface.configure(&gpu.device, &surface_config);
         let context = egui::Context::default();
-        charming_egui::Theme::default().apply(&context);
+        yummy_egui::Theme::default().apply(&context);
         fonts::install(&context);
         let input = egui_winit::State::new(
             context.clone(),
@@ -49,6 +50,7 @@ impl WindowState {
         Ok(Self {
             window,
             surface,
+            instance,
             surface_config,
             gpu,
             context,
@@ -70,16 +72,26 @@ impl WindowState {
 
     fn draw(&mut self) -> Result<(), Error> {
         let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated => {
                 self.resize(self.window.inner_size());
                 return Ok(());
             }
-            Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => return Ok(()),
-            Err(error) => return Err(error.into()),
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface = self.instance.create_surface(self.window.clone())?;
+                self.resize(self.window.inner_size());
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err("surface texture validation failed".into());
+            }
         };
         let input = self.input.take_egui_input(&self.window);
-        let output = self.context.run(input, |context| self.demo.ui(context));
+        let output = self.context.run_ui(input, |ui| self.demo.ui(ui));
         self.input
             .handle_platform_output(&self.window, output.platform_output);
         for (id, delta) in &output.textures_delta.set {

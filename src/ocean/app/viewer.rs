@@ -28,6 +28,7 @@ use winit::{
 struct State {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
+    instance: wgpu::Instance,
     gpu: Gpu,
     ocean: Ocean,
     foam_field: Foam,
@@ -76,6 +77,7 @@ impl State {
             gui,
             window,
             surface,
+            instance,
             gpu,
             ocean,
             foam_field,
@@ -168,7 +170,7 @@ impl State {
         self.surface.configure(&self.gpu.device, &self.config);
     }
 
-    fn draw(&mut self) -> Result<bool, wgpu::SurfaceError> {
+    fn draw(&mut self) -> Result<bool, Error> {
         let now = Instant::now();
         let interval = now.duration_since(self.last).as_secs_f64() * 1000.0;
         let elapsed = now.duration_since(self.last).as_secs_f32().min(0.1);
@@ -177,7 +179,25 @@ impl State {
             self.time += elapsed * self.gui.speed;
         }
         let acquire_start = Instant::now();
-        let frame = self.surface.get_current_texture()?;
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.resize(self.config.width, self.config.height);
+                return Ok(false);
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface = self.instance.create_surface(self.window.clone())?;
+                self.resize(self.config.width, self.config.height);
+                return Ok(false);
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(false);
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err("surface texture validation failed".into());
+            }
+        };
         let acquire = acquire_start.elapsed().as_secs_f64() * 1000.0;
         let view = frame.texture.create_view(&Default::default());
         let (status, sample) = if let Some(timer) = &mut self.renderer.shore.timer {
@@ -261,7 +281,7 @@ impl State {
                     .prepare_scene(&self.gpu, &self.gui.optics, self.config.format)
             {
                 self.gui.error = Some(error.to_string());
-                return Err(wgpu::SurfaceError::Other);
+                return Ok(false);
             }
         }
         self.applied_model = self.gui.optics.model;
@@ -497,10 +517,6 @@ impl ApplicationHandler for App {
                         event_loop.exit()
                     }
                     Ok(_) => {}
-                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        state.resize(state.config.width, state.config.height)
-                    }
-                    Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => {}
                     Err(error) => {
                         self.error = Some(error.to_string());
                         event_loop.exit();

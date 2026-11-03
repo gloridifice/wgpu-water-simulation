@@ -34,4 +34,4 @@ cargo run --bin slider-lab -- --frames 120
 
 颜色根据调参截图的实色块采样。pt 为逻辑像素，随系统 DPI 缩放。两端仍分别对应完整范围的最小值／最大值；行间预留外延空间，动画不改变数值映射或行布局。实验窗口通过滑块 `.height()` 显式调节高度，`.appearance()` 仅覆盖外观，不改变正式面板和主题；正式面板的滑块内数值框与独立数值框共用主题高度及 padding。实验圆角独立可调（0 为直角），颜色允许自由选择，不对悬浮颜色做自动亮度校正。
 
-窗口位于 `src/ocean/labs/slider_lab/`，共用控件位于 `crates/charming_egui/src/widgets/slider.rs`。后者保留原生 Slider 的输入、数值编辑、整数／步长、clamping 及非负对数刻度；只覆盖轨道与竖条绘制，不改模拟参数或配置格式。
+窗口位于 `src/ocean/labs/slider_lab/`，共用控件为 crates.io `yummy_egui` 的 `ParameterSlider`，窗口使用该库默认主题，本仓库不保存主题配置。后者保留原生 Slider 的输入、数值编辑、整数／步长、clamping 及非负对数刻度；只覆盖轨道与竖条绘制，不改模拟参数或配置格式。

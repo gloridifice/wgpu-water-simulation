@@ -1,6 +1,6 @@
 use super::controls::{number, toggle};
 use crate::ocean::ui::gui::Gui;
-use charming_egui::group;
+use yummy_egui::group;
 
 impl Gui {
     pub(in crate::ocean::ui) fn surface_panel(&mut self, ui: &mut egui::Ui) {

@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/tui-2d-prototype", "crates/charming_egui"]
+members = [".", "crates/tui-2d-prototype"]
 default-members = ["."]
 exclude = ["crates/tall-cell-fluid"]
 resolver = "3"
@@ -12,10 +12,10 @@ default-run = "ocean"
 
 [features]
 default = ["ocean"]
-ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_extras", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:charming_egui", "dep:gltf", "dep:sha2"]
+ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_extras", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:yummy_egui", "dep:gltf", "dep:sha2"]
 
 [dependencies.wgpu]
-version = "27.0.1"
+version = "29.0.1"
 optional = true
 
 [dependencies.winit]
@@ -91,22 +91,22 @@ path = "src/bin/slider_lab.rs"
 required-features = ["ocean"]
 
 [dependencies.egui]
-version = "0.33.3"
+version = "0.34.3"
 features = ["serde"]
 optional = true
 
 [dependencies.egui_extras]
-version = "0.33.3"
+version = "0.34.3"
 default-features = false
 features = ["svg"]
 optional = true
 
 [dependencies.egui-winit]
-version = "0.33.3"
+version = "0.34.3"
 optional = true
 
 [dependencies.egui-wgpu]
-version = "0.33.3"
+version = "0.34.3"
 optional = true
 
 [dependencies.serde]
@@ -119,11 +119,11 @@ version = "1.0"
 optional = true
 
 [dependencies.egui_dock]
-version = "0.18.0"
+version = "0.19.1"
 features = ["serde"]
 optional = true
 
-[dependencies.charming_egui]
-path = "crates/charming_egui"
+[dependencies.yummy_egui]
+version = "0.1.1"
 features = ["dock"]
 optional = true

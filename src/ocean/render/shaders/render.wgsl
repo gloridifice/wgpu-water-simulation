@@ -86,7 +86,11 @@ struct WaterOut {
 fn foam_vertex_surface(water: vec3<f32>) -> vec3<f32> {
     if !shore_active(shore) || shore.visual.y <= 0.0 || camera.misc.x <= 0.0 { return water; }
     let history = sample_shore_history(water.xz);
-    let amount = max(history.x, 0.0);
+    var amount = max(history.x, 0.0);
+    if shore.foam_lifetime.x>0.5 && shore.density.w>0.5 {
+        let species=sample_shore_species(water.xz);
+        amount=select(species.x,species.y,shore.density.w>1.5);
+    }
     let weight = smoothstep(shore.visual.z, shore.visual.z + shore.visual.w, amount);
     let wet = smoothstep(0.008, 0.02, history.z);
     return water + vec3(0.0, shore.visual.y * weight * wet, 0.0);
@@ -267,8 +271,10 @@ fn foam_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, v
         let fine=vec2(0.8*material.x-0.6*material.y,0.6*material.x+0.8*material.y);
         let fresh=0.7*filtered_fresh_noise(material*0.8)+0.3*filtered_fresh_noise(fine*2.5+vec2(17.3,-9.1));
         let old=0.55*prototype_noise(material*2.5)+0.30*prototype_noise(material*7.0)+0.15*prototype_noise(material*17.0);
-        let white=prototype_opacity(species.x,depth,fresh,0.5*fwidth(fresh),shore.foam_material.w);
-        let residue=residual_opacity(species.y,depth,old,fwidth(old),shore.foam_material.w);
+        let fresh_amount=select(species.x,0.0,shore.density.w>1.5);
+        let residual_amount=select(species.y,0.0,shore.density.w>0.5 && shore.density.w<1.5);
+        let white=prototype_opacity(fresh_amount,depth,fresh,0.5*fwidth(fresh),shore.foam_material.w);
+        let residue=residual_opacity(residual_amount,depth,old,fwidth(old),shore.foam_material.w);
         let color=shore.water_foam_color.rgb*(0.65+0.35*max(dot(base,camera.sun.xyz),0.0));
         return FoamAppearance(color*(white+0.72*residue*(1.0-white)),
             white+residue*(1.0-white),vec2(fresh,old),base);
@@ -331,9 +337,9 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
             return vec4(mix(vec3(0.08), select(vec3(0.95, 0.32, 0.08), vec3(0.05, 0.65, 1.0), u < 0.0), clamp(abs(u) / 2.0, 0.0, 1.0)), 1.0);
         }
         if shore.options.y > 6.5 && shore.options.y < 8.5 {
-            let diagnostic=sample_shore_extra(input.world.xz).xy;
-            var value=diagnostic.y;
-            if shore.options.y<7.5 { value=diagnostic.x/max(shore.foam_front.x,0.000001); }
+            let diagnostic_values=sample_shore_extra(input.world.xz).xy;
+            var value=diagnostic_values.y;
+            if shore.options.y<7.5 { value=diagnostic_values.x/max(shore.foam_front.x,0.000001); }
             return vec4(vec3(clamp(value,0.0,1.0)),1.0);
         }
         if shore.options.y > 2.5 && shore.options.y < 3.5 { return vec4(vec3(foam_density_level(shore_history.x,shore)), 1.0); }
@@ -419,7 +425,8 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
         let opacity=mix(b.opacity,a.opacity,motion.blend)*camera.misc.x;
         let contribution=mix(b.premultiplied,a.premultiplied,motion.blend)*camera.misc.x;
         // Offshore history retains its existing material.
-        let deep=smoothstep(0.015,0.25,sample_foam(input.grid).x)*ocean_weight(input.world.xz,shore)
+        let show_offshore=select(1.0,0.0,shore.foam_lifetime.x>0.5 && shore.density.w>0.5);
+        let deep=show_offshore*smoothstep(0.015,0.25,sample_foam(input.grid).x)*ocean_weight(input.world.xz,shore)
             *(0.55+0.45*foam_detail(input.grid))*camera.misc.x;
         color=mix(color,foam_color,deep)*(1.0-opacity)+contribution;
         if shore.options.y<0.5 && camera.misc.x>0.5 {

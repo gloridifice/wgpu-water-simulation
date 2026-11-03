@@ -58,6 +58,7 @@ pub struct Gui {
     input: egui_winit::State,
     renderer: egui_wgpu::Renderer,
     dock: egui_dock::DockState<Panel>,
+    dock_style: egui_dock::Style,
     format: wgpu::TextureFormat,
     viewport_texture: wgpu::Texture,
     viewport_id: egui::TextureId,
@@ -68,7 +69,8 @@ pub struct Gui {
 impl Gui {
     pub fn new(window: &Window, device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let context = egui::Context::default();
-        context.set_theme(egui::ThemePreference::Dark);
+        let theme = yummy_egui::Theme::default();
+        theme.apply(&context);
         let mut fonts = egui::FontDefinitions::default();
         // 复用仓库内现有字体，不依赖启动目录或 Ocean 模块。
         fonts.font_data.insert(
@@ -84,11 +86,6 @@ impl Gui {
             .or_default()
             .insert(0, "MiSans".into());
         context.set_fonts(fonts);
-        context.style_mut(|style| {
-            style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-            style.visuals.panel_fill = egui::Color32::from_rgb(24, 29, 36);
-            style.visuals.selection.bg_fill = egui::Color32::from_rgb(32, 94, 110);
-        });
         let input = egui_winit::State::new(
             context.clone(),
             egui::ViewportId::ROOT,
@@ -112,6 +109,7 @@ impl Gui {
             input,
             renderer,
             dock: default_dock(),
+            dock_style: theme.dock_style().clone(),
             format,
             viewport_texture,
             viewport_id,
@@ -134,10 +132,10 @@ impl Gui {
         let input = self.input.take_egui_input(window);
         let mut actions = Vec::new();
         let mut requested_size = self.viewport_size;
-        let output = self.context.run(input, |ctx| {
-            egui::TopBottomPanel::top("demo toolbar").show(ctx, |ui| {
+        let output = self.context.run_ui(input, |root_ui| {
+            egui::Panel::top("demo toolbar").show_inside(root_ui, |ui| {
                 ui.horizontal(|ui| {
-                    charming_egui::h3(ui, "Tall Cell Fluid");
+                    yummy_egui::h3(ui, "Tall Cell Fluid");
                     ui.label("独立液体实验");
                     if ui.button("恢复布局").clicked() {
                         self.dock = default_dock();
@@ -146,7 +144,7 @@ impl Gui {
             });
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
-                .show(ctx, |ui| {
+                .show_inside(root_ui, |ui| {
                     let mut viewer = Viewer {
                         data,
                         timing,
@@ -155,6 +153,7 @@ impl Gui {
                         actions: &mut actions,
                     };
                     egui_dock::DockArea::new(&mut self.dock)
+                        .style(self.dock_style.clone())
                         .show_close_buttons(false)
                         .show_leaf_close_all_buttons(false)
                         .show_inside(ui, &mut viewer);
@@ -364,7 +363,7 @@ fn performance_panel(
     let frame = data.frame.filter(|_| !data.resetting);
     let metric =
         |value: Option<f64>| value.map_or_else(|| "等待样本".into(), |v| format!("{v:.2}"));
-    charming_egui::h3(ui, "模拟耗时");
+    yummy_egui::h3(ui, "模拟耗时");
     table(ui, "simulation timing", |ui, widths| {
         value_row(
             ui,
@@ -375,7 +374,7 @@ fn performance_panel(
         );
     });
     ui.separator();
-    charming_egui::h3(ui, "Mesh 耗时");
+    yummy_egui::h3(ui, "Mesh 耗时");
     table(ui, "mesh timing", |ui, widths| {
         value_row(
             ui,
@@ -386,7 +385,7 @@ fn performance_panel(
         );
     });
     ui.separator();
-    charming_egui::h3(ui, "着色耗时");
+    yummy_egui::h3(ui, "着色耗时");
     table(ui, "shading timing", |ui, widths| {
         let text = if !timing.supported {
             "设备不支持".into()
@@ -404,7 +403,7 @@ fn performance_panel(
         );
     });
     ui.separator();
-    charming_egui::h3(ui, "运行状态");
+    yummy_egui::h3(ui, "运行状态");
     table(ui, "demo status", |ui, widths| {
         let state = if data.error.is_some() {
             "计算失败"
@@ -459,7 +458,7 @@ fn performance_panel(
         ui.colored_label(egui::Color32::LIGHT_RED, error);
     }
     ui.separator();
-    charming_egui::h3(ui, "演示控制");
+    yummy_egui::h3(ui, "演示控制");
     table(ui, "demo controls", |ui, widths| {
         row(
             ui,

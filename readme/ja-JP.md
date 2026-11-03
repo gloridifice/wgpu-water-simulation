@@ -73,14 +73,14 @@ cargo run --release -p tui-2d-prototype
 
 ## ライセンス
 
-プロジェクト全体のライセンスは現在提供されていません。同梱アセットには個別の条件があります。[モデルの表記](../assets/models/NOTICE.md)、[泡の出典](../assets/foam/SOURCES.md)、[飛沫の出典](../assets/spray/README.md)、[UI テーマのライセンス](../assets/egui_themes/LICENSE-wgpu_pbr.txt)を参照してください。
+プロジェクト全体のライセンスは現在提供されていません。同梱アセットには個別の条件があります。[モデルの表記](../assets/models/NOTICE.md)、[泡の出典](../assets/foam/SOURCES.md)、[飛沫の出典](../assets/spray/README.md)、[yummy_egui のライセンス](https://github.com/gloridifice/yummy-egui/blob/main/LICENSE)を参照してください。
 
 ## 開発
 
 詳細ドキュメントは主に中国語です。
 
 - [Ocean の使い方と GPU 検証](../doco/guides/ocean.md)
-- [charming_egui のコンポーネントとテーマ](../doco/guides/charming-egui.md)
+- [yummy_egui の導入と既定のテーマ](../doco/guides/yummy-egui.md)
 - [CPU PIC シミュレーション](../doco/guides/pic.md)
 - [一次元浅水シミュレーション](../doco/guides/shallow.md)
 - [泡の診断とベンチマーク](../doco/guides/foam-lab.md)

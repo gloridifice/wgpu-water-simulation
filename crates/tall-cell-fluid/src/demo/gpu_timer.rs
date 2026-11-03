@@ -207,6 +207,7 @@ mod tests {
                         depth_stencil_attachment: None,
                         timestamp_writes: timer.timestamp_writes(),
                         occlusion_query_set: None,
+                        multiview_mask: None,
                     });
                 }
                 timer.resolve(&mut encoder);

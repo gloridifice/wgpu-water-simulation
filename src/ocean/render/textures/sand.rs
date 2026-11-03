@@ -114,7 +114,7 @@ fn color_mips(gpu: &Gpu, image: &image::RgbaImage) -> wgpu::Texture {
                 compilation_options: Default::default(),
                 targets: &[Some(format.into())],
             }),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
     let layout = pipeline.get_bind_group_layout(0);
@@ -151,6 +151,7 @@ fn color_mips(gpu: &Gpu, image: &image::RgbaImage) -> wgpu::Texture {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &bind, &[]);
