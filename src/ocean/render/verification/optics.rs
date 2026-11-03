@@ -434,6 +434,91 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
         "GPU NSH opacity raster: all 3 textures respond continuously to density scale; legacy material and raw density view unchanged OK"
     );
     println!("GPU shore raster: world-space history reaches water shading at both target sizes OK");
+    // Pure-species limits must preserve normal shading for the visible species
+    // and exactly match bare water for the hidden one, through real uniforms.
+    let mut species_settings = settings;
+    species_settings.shore.view = 0;
+    species_settings.shore.foam_dual_phase = true;
+    species_settings.shore.foam_material_view = 0;
+    species_settings.shore.foam_height_max = 0.0;
+    species_settings.shore.foam_opacity_scale = 1.0;
+    let cells = (renderer.shore.resolution as usize).pow(2);
+    let history = vec![[4.0_f32, 0.0, 1.0, 0.0]; cells];
+    gpu.queue
+        .write_buffer(&renderer.shore.field, 0, bytemuck::cast_slice(&history));
+    let mut bare_camera = camera;
+    bare_camera.misc[0] = 0.0;
+    let bare = image(gpu, &renderer, &ocean, &bare_camera, species_settings, size)?;
+    for (visible, hidden, residual) in [(1, 2, 0.0_f32), (2, 1, 4.0)] {
+        let texture = vec![[0.0_f32, 0.0, 0.0, residual]; cells];
+        gpu.queue.write_buffer(
+            &renderer.shore.field,
+            (4 * cells * 16) as u64,
+            bytemuck::cast_slice(&texture),
+        );
+        species_settings.shore.foam_species_view = 0;
+        let both = image(gpu, &renderer, &ocean, &camera, species_settings, size)?;
+        species_settings.shore.foam_species_view = visible;
+        let selected = image(gpu, &renderer, &ocean, &camera, species_settings, size)?;
+        species_settings.shore.foam_species_view = hidden;
+        let excluded = image(gpu, &renderer, &ocean, &camera, species_settings, size)?;
+        if both != selected || excluded != bare {
+            return Err(format!(
+                "foam species {visible} isolation changed visible shading or leaked hidden foam"
+            )
+            .into());
+        }
+        let changed = selected
+            .iter()
+            .zip(&bare)
+            .filter(|(a, b)| (0..3).any(|c| (a[c] - b[c]).abs() > 0.005))
+            .count();
+        if changed < 8 {
+            return Err(format!(
+                "foam species {visible} fixture produced no visible coverage: {changed}"
+            )
+            .into());
+        }
+    }
+    println!("GPU foam species: pure N/R preserve selected shading and hide the other species OK");
+    // Fixed-coordinate rendering must ignore stored motion, while the enabled
+    // path must respond to it. Exercise the real render bindings and shaders.
+    species_settings.shore.foam_species_view = 0;
+    species_settings.shore.foam_material_view = 5;
+    let mut fixed = Vec::new();
+    let mut moving = Vec::new();
+    for offset in [0.0_f32, 0.13] {
+        let texture = vec![[offset, offset, 0.0, 4.0]; cells];
+        gpu.queue.write_buffer(
+            &renderer.shore.field,
+            (4 * cells * 16) as u64,
+            bytemuck::cast_slice(&texture),
+        );
+        species_settings.shore.foam_texture_distortion = false;
+        fixed.push(image(
+            gpu,
+            &renderer,
+            &ocean,
+            &camera,
+            species_settings,
+            size,
+        )?);
+        species_settings.shore.foam_texture_distortion = true;
+        moving.push(image(
+            gpu,
+            &renderer,
+            &ocean,
+            &camera,
+            species_settings,
+            size,
+        )?);
+    }
+    if fixed[0] != fixed[1] || moving[0] == moving[1] || fixed[0] != moving[0] {
+        return Err("foam texture distortion toggle did not isolate stored motion".into());
+    }
+    println!(
+        "GPU foam texture distortion: disabled ignores motion, enabled responds, zero offset agrees OK"
+    );
     Ok(())
 }
 

@@ -2,8 +2,8 @@ use super::controls::{list, number, toggle};
 use crate::ocean::camera::Camera;
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
-use charming_egui::ParameterSlider;
-use charming_egui::{PanelButton, group, parameter};
+use yummy_egui::ParameterSlider;
+use yummy_egui::{PanelButton, group, parameter};
 
 impl Gui {
     pub(in crate::ocean::ui) fn foam_material_panel(
@@ -31,6 +31,15 @@ impl Gui {
             return;
         }
         group(ui, "近岸泡沫材质", |ui| {
+            toggle(ui, "纹理随流扭曲", &mut shore.foam_texture_distortion);
+            if shore.foam_dual_phase {
+                list(
+                    ui,
+                    "泡沫显示成分",
+                    &mut shore.foam_species_view,
+                    &[(0, "全部"), (1, "仅新鲜泡沫 N"), (2, "仅残余泡沫 R")],
+                );
+            }
             if !shore.foam_dual_phase {
                 toggle(ui, "原型孔洞外观", &mut shore.foam_prototype);
             }

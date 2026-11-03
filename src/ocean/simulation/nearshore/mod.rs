@@ -19,6 +19,7 @@ pub struct Shore {
     terrain_grid: Option<crate::ocean::scene::terrain::Grid>,
     terrain_key: Option<(crate::ocean::parameters::model::ModelConfig, f32)>,
     previous: wgpu::Buffer,
+    pipeline_layout: wgpu::PipelineLayout,
     pipeline: wgpu::ComputePipeline,
     shader: wgpu::ShaderModule,
     solver_pipelines: [Option<wgpu::ComputePipeline>; 3],
@@ -88,9 +89,35 @@ impl Shore {
                 .into(),
             ),
         });
+        // Explicit layout: inferred layouts are exclusive to their originating
+        // pipeline and cannot be shared by the specialized SWE/foam variants.
+        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("shared SWE stage bindings"),
+            entries: &[0, 1, 2, 3, 4, 5, 7].map(|binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: if binding == 0 {
+                        wgpu::BufferBindingType::Uniform
+                    } else {
+                        wgpu::BufferBindingType::Storage {
+                            read_only: binding != 2,
+                        }
+                    },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("shared SWE solver layout"),
+            bind_group_layouts: &[Some(&bind_layout)],
+            immediate_size: 0,
+        });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("hydrostatic SWE and ground memory"),
-            layout: None,
+            layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("main"),
             compilation_options: Default::default(),
@@ -114,7 +141,7 @@ impl Shore {
         let make_bind = |input: &wgpu::Buffer, output: &wgpu::Buffer, initial: &wgpu::Buffer| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SWE stage bindings"),
-                layout: &pipeline.get_bind_group_layout(0),
+                layout: &bind_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 7,
@@ -201,6 +228,7 @@ impl Shore {
             uniform,
             field,
             previous,
+            pipeline_layout,
             pipeline,
             shader,
             solver_pipelines: [None, None, None],
@@ -238,17 +266,10 @@ impl Shore {
         assert!((1..=2).contains(&order) && (1..=2).contains(&foam_order));
         let index = if order == 1 { 0 } else { foam_order as usize };
         self.solver_pipelines[index].get_or_insert_with(|| {
-            let layout = gpu
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("shared SWE solver layout"),
-                    bind_group_layouts: &[&self.pipeline.get_bind_group_layout(0)],
-                    push_constant_ranges: &[],
-                });
             gpu.device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("specialized SWE/foam solver"),
-                    layout: Some(&layout),
+                    layout: Some(&self.pipeline_layout),
                     module: &self.shader,
                     entry_point: Some("main"),
                     compilation_options: wgpu::PipelineCompilationOptions {
@@ -399,7 +420,7 @@ impl Shore {
                 c.foam_compression_threshold,
                 c.foam_density_reference,
                 0.003, // Fixed minimum water depth for foam transport/retention.
-                0.0,
+                c.foam_species_view as f32,
             ],
             foam_generation: [
                 c.foam_generation_threshold,
@@ -423,7 +444,7 @@ impl Shore {
                 0.0,
                 c.foam_velocity_threshold,
                 c.foam_velocity_transition,
-                0.0,
+                f32::from(!c.foam_texture_distortion),
             ],
             foam_motion: [c.foam_follow, c.foam_response_time, 0.0, 0.0],
             foam_inertia: [

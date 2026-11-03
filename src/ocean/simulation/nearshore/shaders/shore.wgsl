@@ -9,11 +9,11 @@ struct ShoreParams {
     filter_settings: vec4<f32>, // enabled, rejected wavelength, transition width, padding
     solver: vec4<f32>, // order (1/2), RK stage (0/1/2), render height gain, SWE input gain
     visual: vec4<f32>, // render only: normal strength, foam max lift (m), density threshold, transition
-    density: vec4<f32>, // compression threshold /s, display reference (amount/area), minimum foam water depth (m), reserved
+    density: vec4<f32>, // compression threshold /s, display reference (amount/area), minimum foam water depth (m), render species (0 both/1 N/2 R)
     foam_generation: vec4<f32>, // normalized rise threshold, transition width, reserved
     foam_front: vec4<f32>, // front rate /s, sample distance m, reserved, background multiplier
     foam_ridge: vec4<f32>, // experimental ridge mode, width m, relative prominence, emission enabled
-    foam_velocity: vec4<f32>, // reserved, threshold /s, transition /s, reserved
+    foam_velocity: vec4<f32>, // reserved, threshold /s, transition /s, disable render texture distortion
     foam_motion: vec4<f32>, // flow following multiplier, response time seconds, reserved
     foam_inertia: vec4<f32>, // drag enabled, newborn velocity multiplier, foam spatial order (1/2), reserved
     water_foam_color: vec4<f32>, // linear RGB, render only

@@ -57,7 +57,10 @@ pub struct ShoreConfig {
     pub foam_material_view: u32,
     pub foam_prototype: bool,
     pub foam_texture_period: f32,
+    pub foam_texture_distortion: bool,
     pub foam_dual_phase: bool,
+    // Render only: 0 both, 1 fresh N, 2 residual R.
+    pub foam_species_view: u32,
     pub foam_fresh_half_life: f32,
     pub foam_residual_half_life: f32,
     pub foam_conversion: f32,
@@ -112,7 +115,9 @@ impl Default for ShoreConfig {
             foam_material_view: 0,
             foam_prototype: false,
             foam_texture_period: 2.0,
+            foam_texture_distortion: true,
             foam_dual_phase: false,
+            foam_species_view: 0,
             foam_fresh_half_life: 1.4,
             foam_residual_half_life: 9.0,
             foam_conversion: 0.65,
@@ -304,6 +309,7 @@ impl ShoreConfig {
         }
         if self.foam_texture >= FOAM_TEXTURE_NAMES.len() as u32
             || self.foam_material_view >= FOAM_MATERIAL_VIEWS.len() as u32
+            || self.foam_species_view > 2
         {
             return Err("invalid foam material selection".into());
         }
@@ -340,6 +346,33 @@ mod tests {
         assert_eq!(old.foam_texture_size, 12.0);
         assert!(!old.foam_prototype);
         assert_eq!(old.foam_texture_period, 2.0);
+        assert!(old.foam_texture_distortion);
+        let fixed = super::ShoreConfig {
+            foam_texture_distortion: false,
+            ..old
+        };
+        let restored: super::ShoreConfig =
+            serde_json::from_str(&serde_json::to_string(&fixed).unwrap()).unwrap();
+        assert_eq!(fixed, restored);
+        assert_eq!(old.foam_species_view, 0);
+        for view in 0..=2 {
+            let config = super::ShoreConfig {
+                foam_species_view: view,
+                ..old
+            };
+            config.validate().unwrap();
+            let restored: super::ShoreConfig =
+                serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+            assert_eq!(config, restored);
+        }
+        assert!(
+            super::ShoreConfig {
+                foam_species_view: 3,
+                ..old
+            }
+            .validate()
+            .is_err()
+        );
         for period in [0.0, 0.25, 8.0, 60.0] {
             let config = super::ShoreConfig {
                 foam_prototype: true,

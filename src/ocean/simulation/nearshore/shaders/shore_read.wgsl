@@ -85,6 +85,8 @@ fn lace_sample(uv: vec2<f32>) -> f32 {
 }
 struct FoamTextureSample { offsets: vec4<f32>, blend: f32 }
 fn sample_shore_texture(p: vec2<f32>) -> FoamTextureSample {
+    // Render-only toggle: retain simulated history so re-enabling is immediate.
+    if shore.foam_velocity.w>0.5 { return FoamTextureSample(vec4(0.0),1.0); }
     let n=i32(shore.options.z); let cells=u32(n*n);
     let grid=(p-shore.domain.xy)/shore.domain.zw*shore.options.z-vec2(0.5);
     let base=vec2<i32>(floor(grid)); let f=fract(grid);
