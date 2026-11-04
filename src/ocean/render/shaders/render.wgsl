@@ -15,14 +15,63 @@
 @group(0) @binding(7) var<storage, read> shore_field: array<vec4<f32>>;
 @group(0) @binding(8) var<uniform> shore: ShoreParams;
 
-fn sky_color(direction: vec3<f32>) -> vec3<f32> {
-    var color = sky_background(direction, optics.sky_color);
+fn sky_with_halo(direction: vec3<f32>) -> vec3<f32> {
     let sun = max(dot(direction, camera.sun.xyz), 0.0);
-    color += vec3(1.0, 0.75, 0.40) * (0.20 * pow(sun, 40.0) + 3.0 * pow(sun, 3000.0));
-    return color;
+    return sky_background(direction, optics.sky_color)
+        + vec3(1.0, 0.75, 0.40) * (0.20 * pow(sun, 40.0));
+}
+
+fn sky_color(direction: vec3<f32>) -> vec3<f32> {
+    let sun = max(dot(direction, camera.sun.xyz), 0.0);
+    return sky_with_halo(direction) + vec3(1.0, 0.75, 0.40) * (3.0 * pow(sun, 3000.0));
+}
+
+// Cook–Torrance dielectric reflection under a directional sun: BRDF times N·L.
+fn water_sun_response(normal: vec3<f32>, view: vec3<f32>, light: vec3<f32>) -> f32 {
+    let no_v = clamp(dot(normal, view), 0.0, 1.0);
+    let no_l = clamp(dot(normal, light), 0.0, 1.0);
+    if no_v <= 0.0 || no_l <= 0.0 || light.y <= 0.0 {
+        return 0.0;
+    }
+    let half_sum = view + light;
+    let half_length_squared = dot(half_sum, half_sum);
+    if half_length_squared < 1e-8 {
+        return 0.0;
+    }
+    let half_vector = half_sum * inverseSqrt(half_length_squared);
+    let no_h = clamp(dot(normal, half_vector), 0.0, 1.0);
+    let lo_h = clamp(dot(light, half_vector), 0.0, 1.0);
+
+    // Residual roughness below the scale of the resolved wave normal.
+    let roughness = 0.28;
+    let alpha = roughness * roughness;
+    let alpha_squared = alpha * alpha;
+    let no_h_squared = no_h * no_h;
+    let ggx = (1.0 - no_h_squared) + alpha_squared * no_h_squared;
+    let distribution = alpha_squared / (3.14159265 * ggx * ggx);
+    // Height-correlated Smith visibility (includes the BRDF denominator).
+    let shadow_view = no_l * sqrt(no_v * no_v * (1.0 - alpha_squared) + alpha_squared);
+    let shadow_light = no_v * sqrt(no_l * no_l * (1.0 - alpha_squared) + alpha_squared);
+    let visibility_times_cosine = 0.5 * no_l / (shadow_view + shadow_light);
+    return distribution * visibility_times_cosine * water_fresnel(lo_h);
 }
 
 struct SkyOut { @builtin(position) position: vec4<f32>, @location(0) ndc: vec2<f32> }
+// RGB is the sampled scene radiance; alpha is SSR's contribution weight.
+fn screen_reflection(origin:vec3<f32>, normal:vec3<f32>, incoming:vec3<f32>) -> vec4<f32> {
+    if optics.reflection.x<0.5 || incoming.y>=0.0 || dot(normal,-incoming)<=0.0 {
+        return vec4(0.0);
+    }
+    let maximum=optics.reflection.y;
+    let hit=trace_screen(origin,reflect(incoming,normal),maximum,true);
+    if !hit.valid { return vec4(0.0); }
+    let size=vec2<f32>(textureDimensions(scene_depth));
+    let pixel=vec2<f32>(hit.pixel)+vec2(0.5);
+    let edge=min(min(pixel.x,pixel.y),min(size.x-pixel.x,size.y-pixel.y));
+    let edge_weight=smoothstep(0.0,max(optics.reflection.w,0.0001),edge);
+    let confidence=optics.reflection.z*edge_weight*(1.0-smoothstep(0.8*maximum,maximum,hit.distance));
+    return vec4(textureLoad(scene_color,hit.pixel,0).rgb,confidence);
+}
 @vertex
 fn sky_vertex(@builtin(vertex_index) index: u32) -> SkyOut {
     let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
@@ -337,7 +386,7 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
                 }
             }
         } else if shore.model.x>0.5 {
-            let hit=trace_screen(input.world,refracted,optics.refraction.z);
+            let hit=trace_screen(input.world,refracted,optics.refraction.z,false);
             if hit.valid {
                 let uv=(vec2<f32>(hit.pixel)+vec2(0.5))/size;
                 let edge=min(min(uv.x*size.x,uv.y*size.y),min((1.0-uv.x)*size.x,(1.0-uv.y)*size.y));
@@ -397,6 +446,10 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     let skylight = integrate_skylight(input.world, ray, distance);
     let medium = MediumResult(manual.transmittance, manual.background, manual.scattering + skylight);
     let mode = u32(optics.source_view.w);
+    if mode == 15u {
+        let ssr=screen_reflection(input.world,normal,incoming);
+        return vec4(ssr.rgb*ssr.a,1.0);
+    }
     if mode == 12u {
         if shore.model.x>0.5 { return vec4(model_light,1.0); }
         return vec4(select(vec3(0.0),bg,optics.caustics.x>0.5),1.0);
@@ -429,12 +482,15 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
 
     let view = normalize(camera.eye.xyz - input.world);
     let facing = max(dot(normal, view), 0.0);
-    let fresnel = select(0.02 + 0.98 * pow(1.0 - facing, 5.0),water_fresnel(facing),optics.refraction.x>0.5) * optics.options.y;
-    let reflected = sky_color(reflect(-view, normal));
+    let fresnel = water_fresnel(facing) * optics.options.y;
+    let reflection_ray = reflect(-view, normal);
+    let ssr=screen_reflection(input.world,normal,incoming);
+    // The sky's visible sun disc is represented here by direct BRDF lighting.
+    let reflected=mix(sky_with_halo(reflection_ray),ssr.rgb,ssr.a);
     var color = mix(medium.background + medium.scattering, reflected, fresnel);
-    let half_vector = normalize(view + camera.sun.xyz);
-    let specular = pow(max(dot(normal, half_vector), 0.0), 300.0);
-    color += vec3(1.0, 0.86, 0.64) * specular * 1.8 * optics.options.y;
+    // Scene-relative irradiance for the current SDR output.
+    let sun_irradiance = vec3(1.0, 0.86, 0.64) * 0.7;
+    color += sun_irradiance * water_sun_response(normal, view, camera.sun.xyz) * optics.options.y;
     // Foam is matte and scatters light; mix after water highlights/reflections.
     // World coordinates prevent repeated shoreline patterns on the 3x3 tiles.
     var detail = foam_detail(input.grid);

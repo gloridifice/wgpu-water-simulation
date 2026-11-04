@@ -1,6 +1,9 @@
 //! Shared camera state and GPU layout, independent of the window.
 use crate::ocean::parameters::ocean::OceanConfig;
 use glam::{Mat4, Vec2, Vec3};
+
+const VERTICAL_FOV: f32 = 55.0_f32.to_radians();
+
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Camera {
@@ -66,6 +69,17 @@ impl Camera {
         self.target[1] += offset.y;
     }
 
+    /// Drag in logical points (right/down), with viewport height in the same units.
+    pub fn pan_drag(&mut self, delta: Vec2, viewport_height: f32) {
+        let scale = 2.0 * self.distance * (VERTICAL_FOV * 0.5).tan() / viewport_height.max(1.0);
+        let right = Vec2::new(self.yaw.cos(), -self.yaw.sin());
+        let forward = Vec2::new(-self.yaw.sin(), -self.yaw.cos());
+        // Keep height fixed; compensate for the horizontal plane's screen foreshortening.
+        let offset = (-right * delta.x + forward * (delta.y / self.pitch.sin())) * scale;
+        self.target[0] += offset.x;
+        self.target[1] += offset.y;
+    }
+
     pub fn uniform(&self, config: OceanConfig, aspect: f32) -> CameraUniform {
         let target = Vec3::new(self.target[0], 0.0, self.target[1]);
         let eye = target
@@ -75,8 +89,7 @@ impl Camera {
                 self.yaw.cos() * self.pitch.cos(),
             ) * self.distance;
         let view = Mat4::look_at_rh(eye, target, Vec3::Y);
-        let projection =
-            Mat4::perspective_rh(55.0_f32.to_radians(), aspect, 0.1, config.length * 8.0);
+        let projection = Mat4::perspective_rh(VERTICAL_FOV, aspect, 0.1, config.length * 8.0);
         let matrix = projection * view;
         let sun = Vec3::new(-0.35, 0.40, -0.65).normalize();
         CameraUniform {

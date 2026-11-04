@@ -9,6 +9,22 @@ impl OpticsConfig {
     pub fn uniform(&self) -> OpticsUniform {
         let (sin, cos) = self.sand_rotation_deg.to_radians().sin_cos();
         OpticsUniform {
+            reflection: [
+                f32::from(
+                    self.reflections
+                        && self.screen_space_reflections
+                        && self.reflection_strength > 0.0,
+                ),
+                self.reflection_distance,
+                self.reflection_strength,
+                self.reflection_edge_fade,
+            ],
+            reflection_trace: [
+                self.reflection_steps as f32,
+                self.reflection_tolerance,
+                0.0,
+                0.0,
+            ],
             caustics: [
                 f32::from(self.caustics),
                 self.caustics_strength,
@@ -78,6 +94,8 @@ pub struct OpticsUniform {
     pub caustics: [f32; 4],
     pub refraction: [f32; 4],
     pub fast_refraction: [f32; 4],
+    pub reflection: [f32; 4],
+    pub reflection_trace: [f32; 4],
 }
 
 /// f64 reference with exp_m1 for accuracy, independent of the WGSL series.
@@ -291,6 +309,10 @@ mod tests {
         let legacy: OpticsConfig = serde_json::from_str(r#"{"depth":9.0}"#).unwrap();
         assert!(!legacy.caustics && !legacy.refraction);
         assert_eq!(legacy.depth, 9.0);
+        assert_eq!(legacy.reflection_strength, 1.0);
+        assert_eq!(legacy.reflection_steps, 128);
+        assert_eq!(legacy.reflection_tolerance, 1.0);
+        assert_eq!(legacy.reflection_edge_fade, 4.0);
         use crate::ocean::parameters::optics::OpticalMethod;
         let old_enabled: OpticsConfig =
             serde_json::from_str(r#"{"caustics":true,"caustics_method":"fast","fast_caustics_size":8.0,"refraction":true}"#).unwrap();
@@ -310,7 +332,13 @@ mod tests {
             caustics_resolution: 512,
             water_ior: 1.4,
             refraction_distance: 75.0,
-            view: 14,
+            screen_space_reflections: true,
+            reflection_distance: 60.0,
+            reflection_strength: 0.5,
+            reflection_steps: 64,
+            reflection_tolerance: 0.75,
+            reflection_edge_fade: 24.0,
+            view: 15,
             ..legacy
         };
         let restored: OpticsConfig =
@@ -318,7 +346,7 @@ mod tests {
         assert_eq!(restored, configured);
         assert!(restored.validate().is_ok());
         for bad in [f32::NAN, f32::INFINITY, -1.0] {
-            for field in 0..9 {
+            for field in 0..13 {
                 let mut config = configured;
                 match field {
                     0 => config.caustics_strength = bad,
@@ -329,10 +357,37 @@ mod tests {
                     5 => config.fast_refraction_strength = bad,
                     6 => config.fast_refraction_depth = bad,
                     7 => config.fast_refraction_limit = bad,
+                    8 => config.reflection_strength = bad,
+                    9 => config.reflection_tolerance = bad,
+                    10 => config.reflection_edge_fade = bad,
+                    11 => config.reflection_distance = bad,
                     _ => config.caustics_resolution = 129,
                 }
                 assert!(config.validate().is_err());
             }
+        }
+        for steps in [0, 15, 257, u32::MAX] {
+            assert!(
+                OpticsConfig {
+                    reflection_steps: steps,
+                    ..configured
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        for (strength, tolerance, fade, steps) in [(0.0, 0.25, 0.0, 16), (1.0, 4.0, 128.0, 256)] {
+            assert!(
+                OpticsConfig {
+                    reflection_strength: strength,
+                    reflection_tolerance: tolerance,
+                    reflection_edge_fade: fade,
+                    reflection_steps: steps,
+                    ..configured
+                }
+                .validate()
+                .is_ok()
+            );
         }
     }
 
@@ -352,7 +407,7 @@ mod tests {
                 ..Default::default()
             },
             OpticsConfig {
-                view: 15,
+                view: 16,
                 ..Default::default()
             },
         ] {

@@ -1020,8 +1020,95 @@ fn model_water_lighting(gpu: &Gpu) -> Result<(), Error> {
         return Err(format!("screen planar coverage has holes: {covered}/{samples}").into());
     }
     eprintln!("GPU screen planar coverage: {covered}/{samples}");
-    settings.caustics = true;
+    settings.refraction = false;
+    settings.reflections = true;
+    settings.view = 0;
+    let sky_only = raster_image(gpu, &renderer, &uniform, settings, size)?;
+    settings.screen_space_reflections = true;
+    let open_water = raster_image(gpu, &renderer, &uniform, settings, size)?;
+    if open_water != sky_only {
+        return Err("screen reflections changed sky fallback over an empty surface".into());
+    }
     settings.model.position = model_position;
+    renderer.prepare_scene(gpu, &settings, wgpu::TextureFormat::Rgba32Float)?;
+    let reflected = raster_image(gpu, &renderer, &uniform, settings, size)?;
+    settings.screen_space_reflections = false;
+    let sky_only = raster_image(gpu, &renderer, &uniform, settings, size)?;
+    let reflected_pixels = reflected
+        .iter()
+        .zip(&sky_only)
+        .filter(|(a, b)| {
+            a[..3]
+                .iter()
+                .zip(&b[..3])
+                .any(|(x, y)| (x - y).abs() > 0.005)
+        })
+        .count();
+    if reflected_pixels < 10 {
+        return Err(format!(
+            "screen reflections missed the exposed model: {reflected_pixels} pixels"
+        )
+        .into());
+    }
+    settings.screen_space_reflections = true;
+    settings.view = 15;
+    let diagnostic = raster_image(gpu, &renderer, &uniform, settings, size)?;
+    settings.screen_space_reflections = false;
+    let disabled = raster_image(gpu, &renderer, &uniform, settings, size)?;
+    for ((full, sky), (shown, off)) in reflected
+        .iter()
+        .zip(&sky_only)
+        .zip(diagnostic.iter().zip(&disabled))
+    {
+        if full[..3]
+            .iter()
+            .zip(&sky[..3])
+            .any(|(a, b)| (a - b).abs() > 0.005)
+            && (shown[..3].iter().any(|v| !v.is_finite())
+                || shown[..3].iter().all(|v| *v <= 0.0)
+                || off[..3].iter().any(|v| v.abs() > 0.00001))
+        {
+            return Err("SSR-only view lost reflected radiance or black fallback".into());
+        }
+    }
+    settings.view = 0;
+    settings.screen_space_reflections = true;
+    for strength in [0.0, 0.5] {
+        settings.reflection_strength = strength;
+        let actual = raster_image(gpu, &renderer, &uniform, settings, size)?;
+        for ((pixel, sky), full) in actual.iter().zip(&sky_only).zip(&reflected) {
+            for channel in 0..3 {
+                let expected = sky[channel] + strength * (full[channel] - sky[channel]);
+                if !pixel[channel].is_finite() || (pixel[channel] - expected).abs() > 0.0001 {
+                    return Err("SSR strength did not blend against the sky fallback".into());
+                }
+            }
+        }
+    }
+    settings.reflection_strength = 1.0;
+    settings.reflection_steps = 16;
+    let limited = raster_image(gpu, &renderer, &uniform, settings, size)?;
+    let limited_pixels = limited
+        .iter()
+        .zip(&sky_only)
+        .filter(|(a, b)| {
+            a[..3]
+                .iter()
+                .zip(&b[..3])
+                .any(|(x, y)| (x - y).abs() > 0.005)
+        })
+        .count();
+    if limited_pixels >= reflected_pixels {
+        return Err("SSR traversal budget did not limit model reflections".into());
+    }
+    settings.reflection_steps = 128;
+    settings.screen_space_reflections = false;
+    eprintln!(
+        "GPU screen reflections: {reflected_pixels} model reflection pixels, empty sky fallback, strength and traversal budget OK"
+    );
+    settings.refraction = true;
+    settings.reflections = false;
+    settings.caustics = true;
     use crate::ocean::parameters::optics::OpticalMethod;
     for (size, level, method) in [
         ([129, 97], 0.5, OpticalMethod::Physical),

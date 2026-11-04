@@ -1,5 +1,5 @@
 use crate::ocean::parameters::sky::SkyConfig;
-pub const VIEW_NAMES: [&str; 15] = [
+pub const VIEW_NAMES: [&str; 16] = [
     "正常着色",
     "水中光程（米）",
     "透射率",
@@ -15,6 +15,7 @@ pub const VIEW_NAMES: [&str; 15] = [
     "焦散入射光（线性 RGB）",
     "折射方向",
     "折射命中（绿／红）",
+    "仅 SSR（未命中黑色）",
 ];
 
 /// Kept separate from the legacy enable flags so old enabled configs stay physical.
@@ -74,6 +75,17 @@ pub struct OpticsConfig {
     pub view: u32,
     pub path_range: f32,
     pub reflections: bool,
+    pub screen_space_reflections: bool,
+    /// Maximum reflected ray length in meters.
+    pub reflection_distance: f32,
+    /// Blend weight of a valid SSR hit against the sky reflection.
+    pub reflection_strength: f32,
+    /// Maximum hierarchical depth-block visits per reflected ray.
+    pub reflection_steps: u32,
+    /// Multiplier of the pixel-footprint-based intersection tolerance.
+    pub reflection_tolerance: f32,
+    /// Screen-edge fade width in render-target pixels; zero disables fading.
+    pub reflection_edge_fade: f32,
     pub color_bands: bool,
     pub checker_size: f32,
     #[serde(default = "SkyConfig::legacy")]
@@ -109,6 +121,12 @@ impl Default for OpticsConfig {
             view: 0,
             path_range: 50.0,
             reflections: true,
+            screen_space_reflections: false,
+            reflection_distance: 100.0,
+            reflection_strength: 1.0,
+            reflection_steps: 128,
+            reflection_tolerance: 1.0,
+            reflection_edge_fade: 4.0,
             color_bands: false,
             checker_size: 4.0,
             sky: SkyConfig::default(),
@@ -144,6 +162,19 @@ impl OpticsConfig {
 
     pub fn validate(&self) -> Result<(), String> {
         for (name, value, low, high) in [
+            ("SSR strength", self.reflection_strength, 0.0, 1.0),
+            (
+                "SSR tolerance multiplier",
+                self.reflection_tolerance,
+                0.25,
+                4.0,
+            ),
+            (
+                "SSR edge fade (pixels)",
+                self.reflection_edge_fade,
+                0.0,
+                128.0,
+            ),
             (
                 "fast refraction strength",
                 self.fast_refraction_strength,
@@ -172,6 +203,12 @@ impl OpticsConfig {
             ),
             ("water refractive index", self.water_ior, 1.0, 1.6),
             (
+                "reflection distance (m)",
+                self.reflection_distance,
+                1.0,
+                500.0,
+            ),
+            (
                 "refraction distance (m)",
                 self.refraction_distance,
                 1.0,
@@ -181,6 +218,9 @@ impl OpticsConfig {
             if !value.is_finite() || !(low..=high).contains(&value) {
                 return Err(format!("{name} must be finite and in {low}..={high}"));
             }
+        }
+        if !(16..=256).contains(&self.reflection_steps) {
+            return Err("SSR steps must be in 16..=256".into());
         }
         if ![128, 256, 512].contains(&self.caustics_resolution) {
             return Err("caustics resolution must be 128, 256 or 512".into());
@@ -219,7 +259,7 @@ impl OpticsConfig {
             }
         }
         if self.view >= VIEW_NAMES.len() as u32 {
-            return Err("water view must be in 0..=14".into());
+            return Err("water view must be in 0..=15".into());
         }
         Ok(())
     }

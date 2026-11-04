@@ -29,7 +29,7 @@ pub struct Renderer {
     seabed: Seabed,
     caustics: super::caustics::Caustics,
     screen_depth: super::screen_depth::ScreenDepth,
-    model_refraction: std::cell::Cell<bool>,
+    needs_screen_depth: std::cell::Cell<bool>,
     optics: wgpu::Buffer,
     sky_lut: SkyLut,
     layout: wgpu::BindGroupLayout,
@@ -416,7 +416,7 @@ impl Renderer {
             seabed,
             caustics,
             screen_depth,
-            model_refraction: std::cell::Cell::new(false),
+            needs_screen_depth: std::cell::Cell::new(false),
             optics,
             sky_lut,
             layout,
@@ -647,12 +647,16 @@ impl Renderer {
     pub fn update_optics(&self, gpu: &Gpu, optics: &OpticsConfig) {
         self.shore.configure(gpu, optics);
         self.caustics.configure(optics);
-        self.model_refraction.set(
-            optics.model.enabled
-                && optics.refraction
-                && optics.refraction_method
-                    == crate::ocean::parameters::optics::OpticalMethod::Physical,
-        );
+        let screen_refraction = optics.model.enabled
+            && optics.refraction
+            && optics.refraction_method
+                == crate::ocean::parameters::optics::OpticalMethod::Physical;
+        let screen_reflection = optics.reflections
+            && optics.screen_space_reflections
+            && optics.reflection_strength > 0.0
+            && matches!(optics.view, 0 | 15);
+        self.needs_screen_depth
+            .set(screen_refraction || screen_reflection);
         self.sky_lut.update(gpu, &optics.sky);
         let value: OpticsUniform = optics.uniform();
         gpu.queue
@@ -693,7 +697,7 @@ impl Renderer {
         mark(encoder, 4);
         self.seabed.encode(encoder);
         mark(encoder, 5);
-        if self.model_refraction.get() {
+        if self.needs_screen_depth.get() {
             self.screen_depth.encode(encoder);
         }
         mark(encoder, 6);

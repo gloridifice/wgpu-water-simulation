@@ -7,6 +7,7 @@ pub(in crate::ocean) mod model;
 mod nearshore;
 mod offshore;
 pub(in crate::ocean) mod optics;
+mod reflection;
 mod scene;
 pub(in crate::ocean) mod spray;
 mod surface;

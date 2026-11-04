@@ -32,6 +32,7 @@ fn main() -> Result<(), Error> {
     let mut no_spray = false;
     let mut optics_ab = false;
     let mut optics_methods = false;
+    let mut screen_optics_ab = false;
     let mut frames = 120u32;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -46,9 +47,13 @@ fn main() -> Result<(), Error> {
                 optics_ab = true;
                 optics_methods = true;
             }
+            "--screen-optics-ab" => {
+                optics_ab = true;
+                screen_optics_ab = true;
+            }
             "--help" | "-h" => {
                 println!(
-                    "ocean-profile --config PATH --output NEW_DIR [--resolution N] [--frames 120] [--no-spray] [--optics-ab | --optics-methods]\nRead-only config; 30 warm-up frames, fixed 1/60 simulated second, 1280x800 offscreen.\nGPU timestamps cover FFT, offshore foam, complete SWE, spray particles, rendering. Detailed render stages are included when inside-pass timestamps are supported.\nWrites profile.json, effective.json, final-state.bin and final.rgba; no UI/present timing."
+                    "ocean-profile --config PATH --output NEW_DIR [--resolution N] [--frames 120] [--no-spray] [--optics-ab | --optics-methods | --screen-optics-ab]\nRead-only config; 30 warm-up frames, fixed 1/60 simulated second, 1280x800 offscreen.\nGPU timestamps cover FFT, offshore foam, complete SWE, spray particles, rendering. Detailed render stages are included when inside-pass timestamps are supported.\nWrites profile.json, effective.json, final-state.bin and final.rgba; no UI/present timing."
                 );
                 return Ok(());
             }
@@ -59,6 +64,14 @@ fn main() -> Result<(), Error> {
         return Err("frames must be 1..1000".into());
     }
     let mut settings = load_config(&config.ok_or("--config is required")?)?;
+    if screen_optics_ab
+        && (optics_methods || !settings.optics.model.enabled || settings.optics.view != 0)
+    {
+        return Err(
+            "--screen-optics-ab requires a model scene with normal shading and no --optics-methods"
+                .into(),
+        );
+    }
     if let Some(n) = resolution {
         settings.optics.shore.resolution = n;
     }
@@ -120,7 +133,9 @@ fn main() -> Result<(), Error> {
             return Err("--optics-ab requires encoder/pass timestamps".into());
         }
         let variants = if optics_ab { 4 } else { 1 };
-        let variant_names = if optics_methods {
+        let variant_names = if screen_optics_ab {
+            ["off", "physical_refraction", "ssr", "both"]
+        } else if optics_methods {
             [
                 "off",
                 "fast_refraction",
@@ -130,7 +145,9 @@ fn main() -> Result<(), Error> {
         } else {
             ["off", "caustics", "refraction", "both"]
         };
-        let selected = if optics_methods {
+        let selected = if screen_optics_ab {
+            0
+        } else if optics_methods {
             3
         } else if optics_ab {
             usize::from(settings.optics.caustics) + 2 * usize::from(settings.optics.refraction)
@@ -220,7 +237,13 @@ fn main() -> Result<(), Error> {
                 for slot in 0..4 {
                     let variant = (slot + frame) % 4;
                     let mut optics = settings.optics;
-                    if optics_methods {
+                    if screen_optics_ab {
+                        optics.refraction = variant & 1 != 0;
+                        optics.refraction_method =
+                            water_simulation::ocean::parameters::optics::OpticalMethod::Physical;
+                        optics.reflections = true;
+                        optics.screen_space_reflections = variant & 2 != 0;
+                    } else if optics_methods {
                         use water_simulation::ocean::parameters::optics::OpticalMethod;
                         if variant == 0 {
                             optics.caustics = false;
@@ -451,7 +474,7 @@ fn main() -> Result<(), Error> {
                 "render_components":if detailed {RenderTiming::NAMES.as_slice()} else {&[]},
                 "render_median_gpu_ms":render_medians,"initial_frame_gpu_ms":initial_gpu_ms,
                 "initial_frame_render_gpu_ms":initial_render_gpu_ms,
-                "optics_ab":optics_ab,"optics_ab_variants":variant_names,"optics_methods":optics_methods,
+                "optics_ab":optics_ab,"optics_ab_variants":variant_names,"optics_methods":optics_methods,"screen_optics_ab":screen_optics_ab,
                 "optics_ab_median_gpu_ms":ab_medians,"optics_ab_render_median_ms":ab_totals,
                 "initial_frame_optics_ab_gpu_ms":initial_ab,
                 "final_image_variant":if optics_ab {(frames+32)%4} else {selected as u32},

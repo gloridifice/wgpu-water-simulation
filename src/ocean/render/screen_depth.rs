@@ -1,4 +1,4 @@
-//! Per-frame screen-depth bounds for model refraction. No CPU readback.
+//! Per-frame screen-depth bounds shared by SSR and model refraction.
 use crate::ocean::gpu::context::Gpu;
 
 pub(super) struct ScreenDepth {

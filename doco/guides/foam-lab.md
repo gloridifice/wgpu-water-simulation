@@ -44,9 +44,12 @@ cargo run --release --features ocean --bin foam-lab -- --benchmark --resolutions
 cargo run --release --features ocean --bin ocean-profile -- --config configs/ocean-settings.json --output target/ocean-profile
 # 同进程、同一模拟状态交错测量光学开关组合。
 cargo run --release --features ocean --bin ocean-profile -- --config configs/experiments/reef-front-ridge.json --output target/optics-ab --optics-ab
+cargo run --release --features ocean --bin ocean-profile -- --config configs/experiments/reef-front-ridge.json --output target/screen-optics-ab --screen-optics-ab
 # 冻结已生效参数复测，避免个人配置在两次运行之间改变。
 cargo run --release --features ocean --bin ocean-profile -- --config target/ocean-profile/effective.json --resolution 512 --output target/ocean-profile-512
 ```
+
+`--screen-optics-ab` 在模型场景的正常着色下，逐帧轮换基线、仅物理折射、仅 SSR、两者同时开启四组。各组固定焦散及模拟参数，保留天空反射和太阳高光。用 `screen_depth_pyramid` 读深度金字塔耗时，用各组与同帧基线的 `water_shading` 差值估算光学开关的增量。输出中的常规渲染统计对应基线，四组的原始计时见 `samples[].optics_ab_gpu_ms`。
 
 `ocean-profile` 严格只读加载显式配置，使用实际模型资产和生产模拟／绘制调用；不覆盖个人设置。默认先运行 30 个预热帧，再采样 120 帧；`--frames` 可设为 1～1000。固定每帧推进 1/60 模拟秒、画面 1280×800，不使用保存的暂停状态或播放速度，不包含窗口、GUI、垂直同步和呈现。`--resolution` 只覆盖 SWE 精度，`--no-spray` 关闭浪花供同状态 A/B，不关闭水面泡沫。
 

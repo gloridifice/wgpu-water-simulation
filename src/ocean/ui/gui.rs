@@ -49,6 +49,13 @@ fn ocean_view(
         let delta = ui.ctx().input(|input| input.pointer.delta());
         camera.yaw -= delta.x * 0.005;
         camera.pitch = (camera.pitch + delta.y * 0.005).clamp(0.07, 1.35);
+    } else if response.dragged_by(egui::PointerButton::Middle) {
+        let delta = if response.drag_started_by(egui::PointerButton::Middle) {
+            response.total_drag_delta().unwrap_or_default()
+        } else {
+            response.drag_delta()
+        };
+        camera.pan_drag(glam::Vec2::new(delta.x, delta.y), size.y);
     }
     if response.hovered() {
         let amount = ui.ctx().input(|input| input.smooth_scroll_delta.y) / 50.0;
@@ -521,6 +528,7 @@ impl Gui {
             Panel::Optics => self.optics_panel(ui),
             Panel::Caustics => self.caustics_panel(ui),
             Panel::Refraction => self.refraction_panel(ui),
+            Panel::Reflection => self.reflection_panel(ui),
             Panel::FoamMaterial => self.foam_material_panel(ui, camera),
             Panel::Surface => self.surface_panel(ui),
             Panel::SprayAppearance => {

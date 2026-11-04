@@ -49,6 +49,7 @@ pub enum Panel {
     Optics,
     Caustics,
     Refraction,
+    Reflection,
     FoamMaterial,
     Surface,
     SprayAppearance,
@@ -58,7 +59,7 @@ pub enum Panel {
     Unknown,
 }
 impl Panel {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::View,
         Self::Scene,
         Self::Model,
@@ -71,6 +72,7 @@ impl Panel {
         Self::Optics,
         Self::Caustics,
         Self::Refraction,
+        Self::Reflection,
         Self::FoamMaterial,
         Self::Surface,
         Self::SprayAppearance,
@@ -91,6 +93,7 @@ impl Panel {
             Self::Optics => "水体与天空",
             Self::Caustics => "焦散",
             Self::Refraction => "折射",
+            Self::Reflection => "SSR",
             Self::FoamMaterial => "泡沫外观",
             Self::Surface => "表面与沙地",
             Self::SprayAppearance => "浪花外观",
@@ -154,7 +157,7 @@ impl Layout {
         }
     }
     /// One-time migration keeps existing splits, active tabs and closed panels.
-    fn add_water_effect_tabs(&mut self) {
+    fn add_water_effect_tabs(&mut self, panels: &[Panel]) {
         fn insert(layout: &mut Layout, panel: Panel) -> bool {
             match layout {
                 Layout::Tabs { tabs, .. } if tabs.contains(&Panel::Optics) => {
@@ -167,7 +170,7 @@ impl Layout {
                 _ => false,
             }
         }
-        for panel in [Panel::Caustics, Panel::Refraction] {
+        for &panel in panels {
             if !self.contains(panel) && !insert(self, panel) {
                 self.add(panel);
             }
@@ -470,7 +473,12 @@ pub fn default_layout(id: WorkspaceId) -> Layout {
         WorkspaceId::Shading => Layout::split(
             Axis::Vertical,
             0.58,
-            Layout::tabs(vec![Panel::Optics, Panel::Caustics, Panel::Refraction]),
+            Layout::tabs(vec![
+                Panel::Optics,
+                Panel::Caustics,
+                Panel::Refraction,
+                Panel::Reflection,
+            ]),
             Layout::tabs(vec![
                 Panel::FoamMaterial,
                 Panel::Surface,

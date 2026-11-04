@@ -104,57 +104,79 @@ fn wasd_moves_only_in_focused_view_without_parameter_editing() {
 }
 
 #[test]
-fn orbit_is_owned_by_view_drag_not_sidebar_drag() {
-    let ctx = egui::Context::default();
-    let mut camera = Camera::new(128.0);
-    let initial = camera.yaw;
-    let mut frame = |events| {
-        let _ = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1000.0, 600.0),
-                )),
-                events,
-                ..Default::default()
-            },
-            |root_ui| {
-                egui::Panel::left("controls")
-                    .exact_size(200.0)
-                    .show_inside(root_ui, |ui| {
-                        ui.label("Controls");
+fn camera_drags_are_owned_by_view_and_keep_orbit_separate_from_pan() {
+    for pointer_button in [egui::PointerButton::Primary, egui::PointerButton::Middle] {
+        let ctx = egui::Context::default();
+        let mut camera = Camera::new(128.0);
+        let initial = camera;
+        let mut frame = |events| {
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |root_ui| {
+                    egui::Panel::left("controls")
+                        .exact_size(200.0)
+                        .show_inside(root_ui, |ui| {
+                            ui.label("Controls");
+                        });
+                    egui::CentralPanel::default().show_inside(root_ui, |ui| {
+                        let size = ocean_view(ui, egui::TextureId::User(0), &mut camera, 128.0);
+                        assert!(size[0] > 700 && size[0] < 800);
+                        assert!(size[1] > 500 && size[1] <= 600);
                     });
-                egui::CentralPanel::default().show_inside(root_ui, |ui| {
-                    let size = ocean_view(ui, egui::TextureId::User(0), &mut camera, 128.0);
-                    assert!(size[0] > 700 && size[0] < 800);
-                    assert!(size[1] > 500 && size[1] <= 600);
-                });
-            },
+                },
+            );
+            camera
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: pointer_button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![]);
+        frame(vec![
+            egui::Event::PointerMoved(egui::pos2(50.0, 150.0)),
+            button(egui::pos2(50.0, 150.0), true),
+        ]);
+        assert_eq!(
+            frame(vec![egui::Event::PointerMoved(egui::pos2(400.0, 150.0))]),
+            initial,
+            "a sidebar drag entering the view must not move the camera"
         );
-        camera.yaw
-    };
-    let button = |pos, pressed| egui::Event::PointerButton {
-        pos,
-        button: egui::PointerButton::Primary,
-        pressed,
-        modifiers: egui::Modifiers::NONE,
-    };
-    frame(vec![]);
-    frame(vec![
-        egui::Event::PointerMoved(egui::pos2(50.0, 150.0)),
-        button(egui::pos2(50.0, 150.0), true),
-    ]);
-    assert_eq!(
-        frame(vec![egui::Event::PointerMoved(egui::pos2(100.0, 180.0))]),
-        initial
-    );
-    frame(vec![button(egui::pos2(100.0, 180.0), false)]);
-    frame(vec![
-        egui::Event::PointerMoved(egui::pos2(400.0, 150.0)),
-        button(egui::pos2(400.0, 150.0), true),
-    ]);
-    assert_ne!(
-        frame(vec![egui::Event::PointerMoved(egui::pos2(460.0, 180.0))]),
-        initial
-    );
+        frame(vec![button(egui::pos2(400.0, 150.0), false)]);
+        assert_eq!(frame(vec![button(egui::pos2(400.0, 150.0), true)]), initial);
+        let dragged = frame(vec![egui::Event::PointerMoved(egui::pos2(460.0, 180.0))]);
+        assert_eq!(dragged.distance, initial.distance);
+        if pointer_button == egui::PointerButton::Primary {
+            assert_ne!(dragged.yaw, initial.yaw);
+            assert_ne!(dragged.pitch, initial.pitch);
+            assert_eq!(dragged.target, initial.target);
+        } else {
+            assert_ne!(dragged.target, initial.target, "middle drag must pan");
+            assert_eq!(dragged.yaw, initial.yaw);
+            assert_eq!(dragged.pitch, initial.pitch);
+            let uniform = dragged.uniform(OceanConfig::default(), 1.0);
+            let matrix = glam::Mat4::from_cols_array_2d(&uniform.view_projection);
+            let scene = matrix.project_point3(glam::Vec3::ZERO);
+            assert!(scene.x > 0.0 && scene.y < 0.0, "scene must follow the drag");
+        }
+        let outside = frame(vec![egui::Event::PointerMoved(egui::pos2(100.0, 180.0))]);
+        assert_ne!(
+            outside, dragged,
+            "view drag stays captured outside the view"
+        );
+        frame(vec![button(egui::pos2(100.0, 180.0), false)]);
+        assert_eq!(
+            frame(vec![egui::Event::PointerMoved(egui::pos2(400.0, 150.0))]),
+            outside,
+            "releasing the button must stop camera movement"
+        );
+    }
 }

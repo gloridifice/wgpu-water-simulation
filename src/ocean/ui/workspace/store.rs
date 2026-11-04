@@ -18,7 +18,7 @@ struct Document {
 impl Document {
     fn capture(workspaces: &Workspaces) -> Self {
         Self {
-            version: 2,
+            version: 3,
             active: workspaces.active,
             workspaces: WorkspaceId::ALL
                 .into_iter()
@@ -79,7 +79,7 @@ impl WorkspaceStore {
             serde_json::from_slice(&fs::read(&self.path).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
         let version = value["version"].as_u64();
-        if !matches!(version, Some(1 | 2)) {
+        if !matches!(version, Some(1..=3)) {
             return Err("不支持的布局版本".into());
         }
         let entries = value["workspaces"].as_object().ok_or("缺少工作区布局")?;
@@ -92,7 +92,13 @@ impl WorkspaceStore {
                 {
                     Ok(mut layout) => {
                         if version == Some(1) && id == WorkspaceId::Shading {
-                            layout.add_water_effect_tabs();
+                            layout.add_water_effect_tabs(&[
+                                super::Panel::Caustics,
+                                super::Panel::Refraction,
+                            ]);
+                        }
+                        if matches!(version, Some(1 | 2)) && id == WorkspaceId::Shading {
+                            layout.add_water_effect_tabs(&[super::Panel::Reflection]);
                         }
                         workspaces.items[id.index()] = Workspace::new(layout);
                     }
@@ -248,6 +254,30 @@ mod tests {
         let mut reopened = Workspaces::default();
         WorkspaceStore::open(&session, &mut reopened);
         assert!(!reopened.items[WorkspaceId::Shading.index()].contains(Panel::Caustics));
+        let mut legacy = serde_json::to_value(Document::capture(&reopened)).unwrap();
+        legacy["version"] = serde_json::json!(2);
+        let shading = reopened.items[WorkspaceId::Shading.index()]
+            .layout
+            .filtered(&|p| p != Panel::Reflection)
+            .unwrap();
+        legacy["workspaces"]["shading"] = serde_json::to_value(&shading).unwrap();
+        fs::write(&store.path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let mut upgraded = Workspaces::default();
+        let mut upgraded_store = WorkspaceStore::open(&session, &mut upgraded);
+        let ws = &mut upgraded.items[WorkspaceId::Shading.index()];
+        assert!(ws.contains(Panel::Reflection));
+        assert_eq!(
+            ws.layout.filtered(&|p| p != Panel::Reflection).unwrap(),
+            shading
+        );
+        ws.prepare(&crate::ocean::parameters::optics::OpticsConfig::default());
+        let tab = ws.dock.find_tab(&Panel::Reflection).unwrap();
+        ws.dock.remove_tab(tab);
+        ws.capture();
+        upgraded_store.update(&upgraded, Instant::now(), true);
+        let mut reopened = Workspaces::default();
+        WorkspaceStore::open(&session, &mut reopened);
+        assert!(!reopened.items[WorkspaceId::Shading.index()].contains(Panel::Reflection));
         fs::write(&store.path, b"broken layout").unwrap();
         let mut damaged = WorkspaceStore::open(&session, &mut Workspaces::default());
         assert!(damaged.blocked);

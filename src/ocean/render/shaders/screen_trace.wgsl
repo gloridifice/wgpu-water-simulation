@@ -6,7 +6,7 @@ fn screen_world(pixel:vec2<i32>, depth:f32) -> vec3<f32> {
 }
 // Traverse projected tiles front-to-back. NDC depth is linear along this
 // screen-space segment; reconstruct the visible sample for world ray distance.
-fn trace_screen(origin:vec3<f32>, ray:vec3<f32>, maximum:f32) -> ScreenHit {
+fn trace_screen(origin:vec3<f32>, ray:vec3<f32>, maximum:f32, above_water:bool) -> ScreenHit {
     let miss=ScreenHit(vec3(0.0),-1.0,vec2(0),false);
     let start=camera.view_projection*vec4(origin,1.0);
     let delta=camera.view_projection*vec4(ray,0.0);
@@ -41,7 +41,9 @@ fn trace_screen(origin:vec3<f32>, ray:vec3<f32>, maximum:f32) -> ScreenHit {
     if enter>=leave { return miss; }
     let top=textureNumLevels(scene_ranges)-1u;
     var level=top; var t=enter;
-    for(var visit=0u;visit<128u;visit++) {
+    let budget=select(128u,u32(optics.reflection_trace.x),above_water);
+    let tolerance_scale=select(1.0,optics.reflection_trace.y,above_water);
+    for(var visit=0u;visit<budget;visit++) {
         if t>=leave { return miss; }
         let width=f32(1u<<level);
         let location=clamp(q+dq*t+sign(dq)*0.001,vec2(0.0),size-vec2(0.0001));
@@ -56,7 +58,7 @@ fn trace_screen(origin:vec3<f32>, ray:vec3<f32>, maximum:f32) -> ScreenHit {
         let range=textureLoad(scene_ranges,cell,i32(level)).xy;
         let z0=a.z+dz*t; let z1=a.z+dz*end;
         let inverse_w=max(dot(inverse_w_row,vec4(a.xy,range.x,1.0)),0.0);
-        let padding=max(0.000001,1.5*pixel_angle*depth_scale*inverse_w);
+        let padding=max(0.000001,1.5*pixel_angle*depth_scale*inverse_w)*tolerance_scale;
         let possible=range.x<1.0 && min(z0,z1)<=range.y+padding && max(z0,z1)>=range.x-padding;
         if possible && level>0u { level-=1u; continue; }
         if possible {
@@ -66,9 +68,16 @@ fn trace_screen(origin:vec3<f32>, ray:vec3<f32>, maximum:f32) -> ScreenHit {
             let distance=dot(opaque-origin,ray);
             let world=origin+ray*distance;
             let adjacent=screen_world(cell+vec2(1,1),range.x);
-            let tolerance=max(0.03,1.5*length(adjacent-opaque));
+            let tolerance=max(0.03,1.5*length(adjacent-opaque))*tolerance_scale;
             if distance>0.01 && distance<=maximum && length(world-opaque)<tolerance {
-                return ScreenHit(world,distance,cell,true);
+                // Reflections use the opaque geometry exposed above the local wave.
+                if !above_water {
+                    return ScreenHit(world,distance,cell,true);
+                }
+                let grid=(opaque.xz/camera.ocean.y+vec2(0.5))*camera.ocean.x;
+                if opaque.y>surface(grid,vec2(0.0)).y {
+                    return ScreenHit(world,distance,cell,true);
+                }
             }
         }
         t=max(end,t+0.0000001);
