@@ -3,19 +3,19 @@
   "ocean": {
     "resolution": 128,
     "length": 128.0,
-    "phillips_length": 10.0,
-    "amplitude": 0.04,
+    "phillips_length": 6.0,
+    "amplitude": 0.07,
     "mesh_resolution": 128,
-    "wind_angle": 2.268928,
+    "wind_angle": -0.9599311,
     "seed": 42
   },
   "draft": {
     "resolution": 128,
     "length": 128.0,
-    "phillips_length": 10.0,
-    "amplitude": 0.04,
+    "phillips_length": 6.0,
+    "amplitude": 0.07,
     "mesh_resolution": 128,
-    "wind_angle": 2.268928,
+    "wind_angle": -0.9599311,
     "seed": 42
   },
   "foam": {
@@ -25,13 +25,13 @@
   },
   "optics": {
     "model": {
-      "enabled": false,
+      "enabled": true,
       "position": [
         0.0,
         13.0,
         -8.7735
       ],
-      "scale": 1.0,
+      "scale": 2.0,
       "yaw_deg": 0.0,
       "sea_level": 0.5,
       "center": [
@@ -52,7 +52,7 @@
       ],
       "sponge_width": 20.0,
       "extension_width": 12.0,
-      "show_bounds": true
+      "show_bounds": false
     },
     "shore": {
       "colliders": [
@@ -68,31 +68,36 @@
       "enabled": true,
       "resolution": 256,
       "order": 2,
-      "input_gain": 1.0,
+      "input_gain": 1.6,
       "filter_enabled": false,
       "filter_cutoff": 12.0,
       "filter_transition": 12.0,
-      "normal_strength": 1.0,
+      "normal_strength": 0.57,
       "water_foam_color": [
         0.87,
         0.92,
         0.9
       ],
       "foam_texture": 1,
-      "foam_texture_size": 12.0,
-      "foam_micro_normal": 0.65,
+      "foam_texture_size": 6.7,
+      "foam_micro_normal": 1.05,
       "foam_opacity_scale": 2.0,
-      "foam_roughness": 0.85,
+      "foam_roughness": 0.73,
       "foam_material_view": 0,
-      "foam_prototype": false,
-      "foam_texture_period": 9.0,
+      "foam_prototype": true,
+      "foam_texture_period": 6.0,
       "foam_texture_distortion": true,
       "foam_dual_phase": true,
       "foam_species_view": 0,
-      "foam_fresh_half_life": 0.8,
-      "foam_residual_half_life": 0.47,
-      "foam_conversion": 0.65,
-      "breaking_depth": 4.0,
+      "foam_fresh_threshold_mode": 1,
+      "foam_fresh_threshold": 0.5,
+      "foam_fresh_noise_frequency": 0.8,
+      "foam_fresh_noise_detail_frequency": 2.5,
+      "foam_fresh_noise_detail_weight": 0.3,
+      "foam_fresh_half_life": 1.1,
+      "foam_residual_half_life": 1.0,
+      "foam_conversion": 0.14,
+      "breaking_depth": 2.0,
       "generation": 4.0,
       "foam_generation_threshold": 0.25,
       "foam_generation_transition": 0.4,
@@ -100,17 +105,17 @@
       "foam_front_distance": 1.0,
       "foam_ridge_enabled": false,
       "foam_ridge_width": 1.0,
-      "foam_ridge_prominence": 0.1,
+      "foam_ridge_prominence": 0.02,
       "foam_emission_enabled": true,
       "foam_velocity_threshold": 0.1,
       "foam_velocity_transition": 0.5,
       "foam_background_multiplier": 0.15,
-      "foam_follow": 1.0,
+      "foam_follow": 0.39,
       "foam_response_time": 2.0,
       "foam_drag_enabled": true,
       "foam_birth_speed": 1.0,
       "foam_transport_order": 1,
-      "decay": 0.3,
+      "decay": 0.5,
       "foam_compression_threshold": 0.1,
       "foam_density_reference": 2.0,
       "foam_height_max": 0.05,
@@ -123,13 +128,13 @@
       "enabled": true,
       "debug": false,
       "rate": 150.0,
-      "slope": 0.13,
-      "rise": 0.3,
+      "slope": 1.2,
+      "rise": 0.25,
       "depth": 0.02,
-      "upward": 2.0,
+      "upward": 2.6,
       "forward": 0.5,
-      "lifetime": 1.2,
-      "size": 0.2,
+      "lifetime": 2.0,
+      "size": 1.0,
       "size_range": [
         0.65,
         1.35
@@ -173,8 +178,8 @@
     "sky": {
       "enabled": true,
       "albedo": [
-        0.25000003,
-        0.5500002,
+        0.25,
+        0.55,
         0.75
       ],
       "color": [
@@ -187,20 +192,20 @@
     }
   },
   "camera": {
-    "yaw": 4.1639943,
-    "pitch": 0.7860001,
-    "distance": 81.51085,
+    "yaw": 25.94202,
+    "pitch": 0.9460002,
+    "distance": 121.59996,
     "target": [
-      0.0,
-      0.0
+      13.111123,
+      10.149482
     ],
-    "gain": 0.32,
+    "gain": 0.3,
     "choppy": true,
     "chop_amount": 0.65,
     "foam_debug": 0,
-    "foam": true
+    "foam": false
   },
-  "speed": 1.0,
+  "speed": 1.15,
   "paused": false,
   "configurations": {
     "default": {
@@ -294,6 +299,11 @@
           "foam_texture_distortion": true,
           "foam_dual_phase": false,
           "foam_species_view": 0,
+          "foam_fresh_threshold_mode": 1,
+          "foam_fresh_threshold": 0.5,
+          "foam_fresh_noise_frequency": 0.8,
+          "foam_fresh_noise_detail_frequency": 2.5,
+          "foam_fresh_noise_detail_weight": 0.3,
           "foam_fresh_half_life": 1.4,
           "foam_residual_half_life": 9.0,
           "foam_conversion": 0.65,
@@ -502,6 +512,11 @@
               "foam_texture_distortion": true,
               "foam_dual_phase": true,
               "foam_species_view": 0,
+              "foam_fresh_threshold_mode": 1,
+              "foam_fresh_threshold": 0.5,
+              "foam_fresh_noise_frequency": 0.8,
+              "foam_fresh_noise_detail_frequency": 2.5,
+              "foam_fresh_noise_detail_weight": 0.3,
               "foam_fresh_half_life": 0.8,
               "foam_residual_half_life": 0.47,
               "foam_conversion": 0.65,
@@ -710,6 +725,11 @@
               "foam_texture_distortion": true,
               "foam_dual_phase": false,
               "foam_species_view": 0,
+              "foam_fresh_threshold_mode": 1,
+              "foam_fresh_threshold": 0.5,
+              "foam_fresh_noise_frequency": 0.8,
+              "foam_fresh_noise_detail_frequency": 2.5,
+              "foam_fresh_noise_detail_weight": 0.3,
               "foam_fresh_half_life": 1.4,
               "foam_residual_half_life": 9.0,
               "foam_conversion": 0.65,
@@ -918,6 +938,11 @@
               "foam_texture_distortion": true,
               "foam_dual_phase": true,
               "foam_species_view": 0,
+              "foam_fresh_threshold_mode": 1,
+              "foam_fresh_threshold": 0.5,
+              "foam_fresh_noise_frequency": 0.8,
+              "foam_fresh_noise_detail_frequency": 2.5,
+              "foam_fresh_noise_detail_weight": 0.3,
               "foam_fresh_half_life": 1.1,
               "foam_residual_half_life": 1.0,
               "foam_conversion": 0.14,
@@ -1034,6 +1059,6 @@
         }
       }
     ],
-    "active": 0
+    "active": 2
   }
 }
