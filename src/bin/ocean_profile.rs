@@ -99,7 +99,7 @@ fn main() -> Result<(), Error> {
         let foam = Foam::new(&gpu, &ocean.fields, settings.ocean.resolution);
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let (width, height) = (1280, 800);
-        let mut renderer = Renderer::new(&gpu, &ocean, &foam, format, width, height);
+        let mut renderer = Renderer::new_display(&gpu, &ocean, &foam, format, width, height);
         renderer.set_shore_resolution(
             &gpu,
             &ocean,

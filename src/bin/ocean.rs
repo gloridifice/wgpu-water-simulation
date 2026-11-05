@@ -16,10 +16,11 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --amplitude A    Phillips power multiplier (default: 0.002)
   --phillips-length M  Phillips L, independent of patch size
   --wind-angle DEG Wind direction in degrees
-  --mesh-resolution N  Mesh cells per axis, 8..512 (default: 128)
+  --mesh-resolution N  Mesh density budget, 8..512 (default: 128)
+  --triangular-mesh / --square-mesh  Offshore draw topology (default: square)
   --seed N         Deterministic ocean seed (default: 42)
   --verify         Headless GPU IFFT vs independent direct DFT; then exit
-  --verify-optics  Headless caustics/refraction GPU checks only
+  --verify-optics  Headless water optics and HDR/Bloom GPU checks
   --verify-terrain Headless GPU model-bed/lake/conservation/regrid checks only
   --spray          Enable nearshore GPU textured spray (place after scene preset)
   --spray-debug    Show normalized spray emission intensity (also enables spray)
@@ -157,6 +158,8 @@ fn run() -> Result<(), Error> {
             "--phillips-length" => config.phillips_length = value(&mut args, &arg)?,
             "--wind-angle" => config.wind_angle = value::<f32>(&mut args, &arg)?.to_radians(),
             "--mesh-resolution" => config.mesh_resolution = value(&mut args, &arg)?,
+            "--triangular-mesh" => config.triangular_mesh = true,
+            "--square-mesh" => config.triangular_mesh = false,
             "--seed" => config.seed = value(&mut args, &arg)?,
             "--beach" => optics = OpticsConfig::beach_scene(),
             "--model" => optics = OpticsConfig::model_scene(),

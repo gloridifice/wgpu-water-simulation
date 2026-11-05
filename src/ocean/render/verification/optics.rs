@@ -25,7 +25,7 @@ fn image(
     raster_image(gpu, renderer, camera, optics, size)
 }
 
-fn raster_image(
+pub(super) fn raster_image(
     gpu: &Gpu,
     renderer: &Renderer,
     camera: &crate::ocean::camera::CameraUniform,
@@ -706,6 +706,7 @@ fn swe_resolution(gpu: &Gpu) -> Result<(), Error> {
 /// Analytic flat/tilted receiver irradiance and Snell path, then actual animated FFT.
 pub fn water_lighting(gpu: &Gpu) -> Result<(), Error> {
     super::surface::run(gpu)?;
+    super::mesh::run(gpu)?;
     crate::ocean::render::caustics::verify(gpu)?;
     model_water_lighting(gpu)?;
     fast_refraction(gpu)?;

@@ -146,14 +146,18 @@ mod amplitude_tests {
         );
     }
     #[test]
-    fn mesh_density_does_not_change_spectrum() {
+    fn mesh_settings_do_not_change_spectrum() {
         let config = OceanConfig::default();
-        assert_eq!(
-            initial_spectrum(config),
-            initial_spectrum(OceanConfig {
-                mesh_resolution: 47,
-                ..config
-            })
-        );
+        let reference = initial_spectrum(config);
+        for (mesh_resolution, triangular_mesh) in [(47, false), (128, true), (47, true)] {
+            assert_eq!(
+                reference,
+                initial_spectrum(OceanConfig {
+                    mesh_resolution,
+                    triangular_mesh,
+                    ..config
+                })
+            );
+        }
     }
 }

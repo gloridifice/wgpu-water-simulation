@@ -23,8 +23,7 @@ pub struct Renderer {
     pub(crate) model_assets: Option<std::sync::Arc<crate::ocean::render::model::ModelAssets>>,
     bind: wgpu::BindGroup,
     uniform: wgpu::Buffer,
-    indices: wgpu::Buffer,
-    index_count: u32,
+    mesh: super::mesh::OceanMesh,
     depth: wgpu::TextureView,
     seabed: Seabed,
     caustics: super::caustics::Caustics,
@@ -39,27 +38,34 @@ pub struct Renderer {
     spray: Option<crate::ocean::simulation::spray::SprayParticles>,
     spray_depth_dirty: bool,
     format: wgpu::TextureFormat,
-}
-
-fn grid_indices(device: &wgpu::Device, n: u32) -> wgpu::Buffer {
-    let mut indices = Vec::with_capacity((n * n * 6) as usize);
-    for z in 0..n {
-        for x in 0..n {
-            let a = z * (n + 1) + x;
-            let b = a + 1;
-            let c = a + n + 1;
-            indices.extend_from_slice(&[a, c, b, b, c, c + 1]);
-        }
-    }
-    buffer(
-        device,
-        "water grid indices",
-        &indices,
-        wgpu::BufferUsages::INDEX,
-    )
+    post_process: Option<super::post_process::PostProcess>,
 }
 
 impl Renderer {
+    /// Window/snapshot output: retain scene highlights until the final SDR pass.
+    /// `new` remains the raw linear path used by numerical GPU verification.
+    pub fn new_display(
+        gpu: &Gpu,
+        ocean: &Ocean,
+        foam: &Foam,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let mut renderer = Self::new(
+            gpu,
+            ocean,
+            foam,
+            super::post_process::HDR_FORMAT,
+            width,
+            height,
+        );
+        renderer.post_process = Some(super::post_process::PostProcess::new(
+            gpu, format, width, height,
+        ));
+        renderer
+    }
+
     pub fn new(
         gpu: &Gpu,
         ocean: &Ocean,
@@ -357,6 +363,11 @@ impl Renderer {
                 .into(),
             ),
         });
+        let mesh_layout = [wgpu::VertexBufferLayout {
+            array_stride: 8,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+        }];
         let pipeline = |vertex, fragment, write_depth| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(fragment),
@@ -365,7 +376,11 @@ impl Renderer {
                     module: &shader,
                     entry_point: Some(vertex),
                     compilation_options: Default::default(),
-                    buffers: &[],
+                    buffers: if vertex == "water_vertex" {
+                        &mesh_layout
+                    } else {
+                        &[]
+                    },
                 },
                 primitive: wgpu::PrimitiveState {
                     cull_mode: None,
@@ -396,10 +411,8 @@ impl Renderer {
         let sky = pipeline("sky_vertex", "sky_fragment", false);
         let water = pipeline("water_vertex", "water_fragment", true);
         let local_water = pipeline("local_water_vertex", "water_fragment", true);
-        let n = ocean.config.mesh_resolution;
-        let index_count = n * n * 6;
-        let indices = grid_indices(device, n);
-        let local_indices = grid_indices(device, shore.resolution);
+        let mesh = super::mesh::OceanMesh::new(device, ocean.config);
+        let local_indices = super::mesh::square_indices(device, shore.resolution);
         Self {
             shore,
             sky,
@@ -410,8 +423,7 @@ impl Renderer {
             model_assets: None,
             bind,
             uniform,
-            indices,
-            index_count,
+            mesh,
             depth: Self::depth_view(device, width, height),
             seabed,
             caustics,
@@ -426,7 +438,17 @@ impl Renderer {
             spray: None,
             spray_depth_dirty: false,
             format,
+            post_process: None,
         }
+    }
+
+    /// Change only offshore draw topology. Simulation buffers and histories stay live.
+    pub fn set_ocean_mesh(
+        &mut self,
+        device: &wgpu::Device,
+        config: crate::ocean::parameters::ocean::OceanConfig,
+    ) {
+        self.mesh = super::mesh::OceanMesh::new(device, config);
     }
 
     /// Rebind every reader to the new nearshore storage; FFT resources stay live.
@@ -441,10 +463,15 @@ impl Renderer {
         if self.shore.resolution == resolution {
             return;
         }
+        let format = if self.post_process.is_some() {
+            self.format
+        } else {
+            format
+        };
         let mut model = self.seabed.model.take();
         self.spray = None;
         self.shore = Shore::with_resolution(gpu, ocean, resolution);
-        self.local_indices = grid_indices(&gpu.device, resolution);
+        self.local_indices = super::mesh::square_indices(&gpu.device, resolution);
         self.shore.timer = crate::ocean::gpu::timer::GpuTimer::new(gpu);
         self.caustics = super::caustics::Caustics::new(
             gpu,
@@ -476,6 +503,11 @@ impl Renderer {
         optics: &OpticsConfig,
         format: wgpu::TextureFormat,
     ) -> Result<(), Error> {
+        let format = if self.post_process.is_some() {
+            self.format
+        } else {
+            format
+        };
         optics.model.validate()?;
         if optics.model.enabled && self.model_assets.is_none() {
             self.model_assets = Some(std::sync::Arc::new(
@@ -530,6 +562,9 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        if let Some(post) = &mut self.post_process {
+            post.resize(device, width, height);
+        }
         self.depth = Self::depth_view(device, width, height);
         self.spray_depth_dirty = true;
         self.seabed.resize(device, width, height);
@@ -645,6 +680,15 @@ impl Renderer {
     }
 
     pub fn update_optics(&self, gpu: &Gpu, optics: &OpticsConfig) {
+        if let Some(post) = &self.post_process {
+            post.configure(
+                optics.post_process,
+                optics.view != 0
+                    || (optics.swe_enabled()
+                        && (optics.shore.view != 0 || optics.shore.foam_material_view != 0))
+                    || (optics.spray.enabled && optics.spray.debug),
+            );
+        }
         self.shore.configure(gpu, optics);
         self.caustics.configure(optics);
         let screen_refraction = optics.model.enabled
@@ -701,10 +745,14 @@ impl Renderer {
             self.screen_depth.encode(encoder);
         }
         mark(encoder, 6);
+        let scene_target = self
+            .post_process
+            .as_ref()
+            .map_or(target, |post| &post.scene);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("sky, seabed and integrated water"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
+                view: scene_target,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -733,9 +781,10 @@ impl Renderer {
         }
         pass.set_bind_group(0, &self.bind, &[]);
         pass.set_pipeline(&self.water);
-        pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
-        // 3×3 周期块。边界采样取模，因此几何位置和法线都连续。
-        pass.draw_indexed(0..self.index_count, 0, 0..9);
+        pass.set_vertex_buffer(0, self.mesh.vertices.slice(..));
+        pass.set_index_buffer(self.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+        // Both topologies share periodic boundary vertices across the 3×3 tiles.
+        pass.draw_indexed(0..self.mesh.index_count, 0, 0..9);
         if self.model_active {
             pass.set_pipeline(&self.local_water);
             pass.set_index_buffer(self.local_indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -749,8 +798,12 @@ impl Renderer {
         }
         drop(pass);
         if let (Some(particles), Some(source)) = (&self.spray, &self.shore.spray) {
-            particles.render(encoder, target, source);
+            particles.render(encoder, scene_target, source);
         }
         mark(encoder, 9);
+        if let Some(post) = &self.post_process {
+            post.encode(gpu, encoder, target, camera.misc[2] != 0.0);
+        }
+        mark(encoder, 10);
     }
 }

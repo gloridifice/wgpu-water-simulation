@@ -64,7 +64,7 @@ impl Gui {
                         }
                     });
             });
-            parameter(ui, "每轴网格数", help("每轴网格数"), |ui| {
+            parameter(ui, "远海网格密度", help("远海网格密度"), |ui| {
                 ui.add(ParameterSlider::new(
                     &mut self.draft.mesh_resolution,
                     8..=512,
@@ -103,6 +103,12 @@ impl Gui {
             ui.colored_label(egui::Color32::LIGHT_RED, e);
         }
         group(ui, "波形", |ui| {
+            let mut triangular = current.triangular_mesh;
+            toggle(ui, "近正三角形网格", &mut triangular);
+            if triangular != current.triangular_mesh {
+                self.draft.triangular_mesh = triangular;
+                apply.get_or_insert(current).triangular_mesh = triangular;
+            }
             number(ui, "波高增益", &mut camera.gain, 0.0..=3.0, false);
             toggle(ui, "水平挤浪", &mut camera.choppy);
             if camera.choppy {

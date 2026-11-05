@@ -84,6 +84,10 @@ impl SavedSettings {
                     self.ocean.mesh_resolution = ocean.mesh_resolution;
                     self.draft.mesh_resolution = ocean.mesh_resolution;
                 }
+                "--triangular-mesh" | "--square-mesh" => {
+                    self.ocean.triangular_mesh = ocean.triangular_mesh;
+                    self.draft.triangular_mesh = ocean.triangular_mesh;
+                }
                 "--length" => {
                     self.ocean.length = ocean.length;
                     self.draft.length = ocean.length;

@@ -1,5 +1,7 @@
 mod caustics;
+mod mesh;
 pub mod optics;
+mod post_process;
 mod renderer;
 mod screen_depth;
 mod timing;

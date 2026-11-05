@@ -16,6 +16,7 @@ pub async fn run() -> Result<(), Error> {
     offshore::foam::verify(&gpu)?;
     nearshore::verify_terrain(&gpu)?;
     nearshore::verify(&gpu)?;
+    verification::post_process::run(&gpu)?;
     verification::optics::water_lighting(&gpu)?;
     optics::verify(&gpu)?;
     verification::optics::run(&gpu)?;
@@ -27,5 +28,6 @@ pub async fn run() -> Result<(), Error> {
 pub async fn water_lighting() -> Result<(), Error> {
     let gpu = Gpu::new(&wgpu::Instance::default(), None).await?;
     eprintln!("GPU water lighting: {}", gpu.name);
+    verification::post_process::run(&gpu)?;
     verification::optics::water_lighting(&gpu)
 }

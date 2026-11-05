@@ -7,6 +7,8 @@ pub struct OceanConfig {
     pub phillips_length: f32,
     pub amplitude: f32,
     pub mesh_resolution: u32,
+    /// Render-only staggered near-equilateral mesh; missing legacy fields stay square.
+    pub triangular_mesh: bool,
     pub wind_angle: f32,
     pub seed: u64,
 }
@@ -19,6 +21,7 @@ impl Default for OceanConfig {
             phillips_length: 14.0 * 14.0 / 9.81,
             amplitude: 0.002,
             mesh_resolution: 128,
+            triangular_mesh: false,
             wind_angle: 0.5,
             seed: 42,
         }

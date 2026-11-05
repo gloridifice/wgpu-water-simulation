@@ -107,9 +107,8 @@ fn foam_vertex_surface(water: vec3<f32>) -> vec3<f32> {
     let wet = smoothstep(0.008, 0.02, history.z);
     return water + vec3(0.0, shore.visual.y * weight * wet, 0.0);
 }
-fn water_vertex_data(index: u32, instance: u32) -> WaterOut {
-    let n = u32(camera.misc.y);
-    let grid = vec2<f32>(f32(index % (n + 1u)), f32(index / (n + 1u))) * camera.ocean.x / f32(n);
+fn water_vertex_data(uv: vec2<f32>, instance: u32) -> WaterOut {
+    let grid = uv * camera.ocean.x;
     let tile = vec2<i32>(i32(instance % 3u) - 1, i32(instance / 3u) - 1);
     let offset = vec2<f32>(tile) * camera.ocean.y;
     return water_from_grid(grid,offset,0u);
@@ -132,8 +131,8 @@ fn water_from_grid(grid: vec2<f32>, offset: vec2<f32>, local_grid: u32) -> Water
         (grid/camera.ocean.x-vec2(0.5))*camera.ocean.y+offset);
 }
 @vertex
-fn water_vertex(@builtin(vertex_index) index: u32, @builtin(instance_index) instance: u32) -> WaterOut {
-    return water_vertex_data(index, instance);
+fn water_vertex(@location(0) uv: vec2<f32>, @builtin(instance_index) instance: u32) -> WaterOut {
+    return water_vertex_data(uv, instance);
 }
 @vertex
 fn local_water_vertex(@builtin(vertex_index) index: u32) -> WaterOut {

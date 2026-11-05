@@ -83,6 +83,7 @@ impl Gui {
                 depth_graph(ui, &self.optics)
             });
         }
+        self.post_process_controls(ui);
         group(ui, "光学诊断", |ui| {
             let names: Vec<_> = VIEW_NAMES
                 .iter()

@@ -26,7 +26,7 @@ pub async fn snapshot(
     let (width, height) = (1280, 800);
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let foam_field = Foam::new(&gpu, &ocean.fields, config.resolution);
-    let mut renderer = Renderer::new(&gpu, &ocean, &foam_field, format, width, height);
+    let mut renderer = Renderer::new_display(&gpu, &ocean, &foam_field, format, width, height);
     renderer.set_shore_resolution(
         &gpu,
         &ocean,

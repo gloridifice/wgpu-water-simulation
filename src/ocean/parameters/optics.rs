@@ -41,6 +41,7 @@ impl OpticalMethod {
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OpticsConfig {
+    pub post_process: crate::ocean::parameters::post_process::PostProcessConfig,
     pub model: crate::ocean::parameters::model::ModelConfig,
     pub shore: crate::ocean::parameters::shore::ShoreConfig,
     pub spray: crate::ocean::parameters::spray::SprayConfig,
@@ -95,6 +96,7 @@ pub struct OpticsConfig {
 impl Default for OpticsConfig {
     fn default() -> Self {
         Self {
+            post_process: crate::ocean::parameters::post_process::PostProcessConfig::default(),
             model: crate::ocean::parameters::model::ModelConfig::default(),
             shore: crate::ocean::parameters::shore::ShoreConfig::default(),
             spray: crate::ocean::parameters::spray::SprayConfig::default(),
@@ -225,6 +227,7 @@ impl OpticsConfig {
         if ![128, 256, 512].contains(&self.caustics_resolution) {
             return Err("caustics resolution must be 128, 256 or 512".into());
         }
+        self.post_process.validate()?;
         self.model.validate()?;
         self.shore.validate()?;
         self.spray.validate()?;

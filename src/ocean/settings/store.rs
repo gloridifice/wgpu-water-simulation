@@ -271,11 +271,14 @@ mod tests {
     fn read_only_config_is_strict_and_preserves_legacy_bytes() {
         let dir = Directory::new();
         assert!(load_config(&dir.file()).is_err());
-        let legacy = br#"{"version":1,"optics":{"shore":{"foam_front_generation":6.5}},"camera":{"gain":0.3}}"#;
+        let legacy = br#"{"version":1,"ocean":{"mesh_resolution":47},"optics":{"shore":{"foam_front_generation":6.5}},"camera":{"gain":0.3}}"#;
         fs::write(dir.file(), legacy).unwrap();
         let settings = load_config(&dir.file()).unwrap();
         assert_eq!(settings.optics.shore.foam_front_generation, 6.5);
         assert_eq!(settings.camera.gain, 0.3);
+        assert_eq!(settings.ocean.mesh_resolution, 47);
+        assert!(!settings.ocean.triangular_mesh);
+        assert!(!settings.draft.triangular_mesh);
         assert!(!settings.optics.shore.foam_ridge_enabled);
         assert!(settings.optics.shore.foam_emission_enabled);
         assert!(!settings.optics.shore.foam_dual_phase);
@@ -402,6 +405,8 @@ mod tests {
         let saved_bytes = fs::read(dir.file()).unwrap();
 
         state.optics.depth = 12.0;
+        state.ocean.triangular_mesh = true;
+        state.draft.triangular_mesh = true;
         let mut library = store.configurations().clone();
         library.save_as("未写盘的方案", state.clone()).unwrap();
         store.set_configurations(&library);
@@ -409,6 +414,7 @@ mod tests {
         assert_eq!(fs::read(dir.file()).unwrap(), saved_bytes);
         let (restored, reopened) = SettingsStore::open(dir.file());
         assert_eq!(restored.optics.depth, 8.0);
+        assert!(!restored.ocean.triangular_mesh);
         assert!(reopened.configurations().profiles().is_empty());
 
         store.update(state.clone(), true);
@@ -684,6 +690,7 @@ mod tests {
         s.optics.depth = 19.0;
         let ocean = OceanConfig {
             length: 256.0,
+            triangular_mesh: true,
             ..Default::default()
         };
         s.apply_cli(
@@ -697,6 +704,24 @@ mod tests {
         assert_eq!(s.draft.length, 256.0);
         assert_eq!(s.optics.depth, 19.0);
         assert_eq!(s.camera.distance, Camera::default().distance * 2.0);
+        assert!(!s.ocean.triangular_mesh);
+        s.apply_cli(
+            ocean,
+            OpticsConfig::default(),
+            &["--triangular-mesh".into()],
+        );
+        assert!(s.ocean.triangular_mesh && s.draft.triangular_mesh);
+        s.apply_cli(
+            OceanConfig {
+                triangular_mesh: false,
+                ..ocean
+            },
+            OpticsConfig::default(),
+            &["--square-mesh".into()],
+        );
+        assert!(!s.ocean.triangular_mesh && !s.draft.triangular_mesh);
+        assert_eq!(s.ocean.seed, 7);
+        assert_eq!(s.draft.seed, 9);
         let mut optics = OpticsConfig::default();
         optics.shore.order = 2;
         optics.shore.foam_opacity_scale = 8.0;

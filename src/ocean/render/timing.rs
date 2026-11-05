@@ -5,7 +5,7 @@ pub struct RenderTiming<'a> {
     pub offset: u32,
 }
 impl RenderTiming<'_> {
-    pub const NAMES: [&str; 9] = [
+    pub const NAMES: [&str; 10] = [
         "sky_lut",
         "height_pyramid",
         "caustic_trace",
@@ -15,6 +15,7 @@ impl RenderTiming<'_> {
         "sky_and_opaque_draw",
         "water_shading",
         "bounds_and_spray_draw",
+        "hdr_bloom_composite",
     ];
     pub const QUERY_COUNT: u32 = Self::NAMES.len() as u32 + 1;
     pub const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY

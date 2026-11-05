@@ -61,7 +61,7 @@ impl State {
         surface.configure(&gpu.device, &config);
         let ocean = Ocean::new(&gpu, ocean_config)?;
         let foam_field = Foam::new(&gpu, &ocean.fields, ocean_config.resolution);
-        let mut renderer = Renderer::new(
+        let mut renderer = Renderer::new_display(
             &gpu,
             &ocean,
             &foam_field,
@@ -125,9 +125,20 @@ impl State {
     }
 
     fn rebuild_ocean(&mut self, config: OceanConfig) -> Result<(), Error> {
+        config.validate()?;
+        let spectrum = OceanConfig {
+            mesh_resolution: self.ocean.config.mesh_resolution,
+            triangular_mesh: self.ocean.config.triangular_mesh,
+            ..config
+        };
+        if spectrum == self.ocean.config {
+            self.renderer.set_ocean_mesh(&self.gpu.device, config);
+            self.ocean.config = config;
+            return Ok(());
+        }
         let ocean = Ocean::new(&self.gpu, config)?;
         let foam_field = Foam::new(&self.gpu, &ocean.fields, config.resolution);
-        let mut renderer = Renderer::new(
+        let mut renderer = Renderer::new_display(
             &self.gpu,
             &ocean,
             &foam_field,
