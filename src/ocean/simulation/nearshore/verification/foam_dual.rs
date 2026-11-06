@@ -246,6 +246,35 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             {
                 return Err("dual material coordinates did not follow the shared SWE flow".into());
             }
+            // All N/R appearance settings must produce identical complete solver
+            // state, including R, water, wetness and advected material history.
+            let appearance = (
+                p.foam_fresh_threshold,
+                p.foam_fresh_material,
+                p.foam_fresh_shading,
+                p.foam_fresh_opacity,
+                p.foam_residual_opacity,
+            );
+            for mode in [0.0, 1.0, 2.0] {
+                p.foam_fresh_threshold[0] = mode;
+                p.foam_fresh_material = [3.0, 3.5, 3.0, 0.15];
+                p.foam_fresh_shading[0] = 5.0;
+                p.foam_fresh_opacity = [1.0, 0.0, 0.1, 0.0];
+                p.foam_residual_opacity = [1.0, 10.0, 5.0, 0.0];
+                if dispatch(gpu, &shore, &mut p, order)? != result {
+                    return Err(format!(
+                        "N appearance changed SWE state: order {order}, mode {mode}"
+                    )
+                    .into());
+                }
+            }
+            (
+                p.foam_fresh_threshold,
+                p.foam_fresh_material,
+                p.foam_fresh_shading,
+                p.foam_fresh_opacity,
+                p.foam_residual_opacity,
+            ) = appearance;
             // Local mode must not feed either density into water dynamics.
             p.foam_lifetime[0] = 0.0;
             let legacy = dispatch(gpu, &shore, &mut p, order)?;
@@ -373,12 +402,29 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
     if shore.parameters(&optics, 1.0, false, 0.0).options[3] != 0.0 {
         return Err("lifetime edit reset history".into());
     }
+    for mode in 0..=2 {
+        optics.shore.foam_fresh_threshold_mode = mode;
+        optics.shore.foam_fresh_texture = 3;
+        optics.shore.foam_fresh_texture_size = 3.5;
+        optics.shore.foam_fresh_micro_normal = 3.0;
+        optics.shore.foam_fresh_roughness = 0.15;
+        optics.shore.foam_fresh_coverage_reference = 5.0;
+        optics.shore.foam_fresh_density_opacity = true;
+        optics.shore.foam_fresh_opacity_range = 0.0;
+        optics.shore.foam_fresh_opacity_power = 0.1;
+        optics.shore.foam_residual_density_opacity = true;
+        optics.shore.foam_residual_opacity_range = 10.0;
+        optics.shore.foam_residual_opacity_power = 5.0;
+        if shore.parameters(&optics, 1.0, false, 0.0).options[3] != 0.0 {
+            return Err("N appearance edit reset history".into());
+        }
+    }
     optics.shore.foam_dual_phase = false;
     if shore.parameters(&optics, 1.0, false, 0.0).options[3] != 1.0 {
         return Err("dual mode switch did not reset history".into());
     }
     println!(
-        "Dual foam SWE: Euler/RK2 shared transport, compression/dilation, N-only birth, no legacy drag/decay, water isolation, dry/overtopped colliders, paused edits, pause/dry/reset/live settings OK"
+        "Dual foam SWE: Euler/RK2 shared transport, compression/dilation, N-only birth, no legacy drag/decay, water and N-appearance isolation, dry/overtopped colliders, paused edits, pause/dry/reset/live settings OK"
     );
     Ok(())
 }

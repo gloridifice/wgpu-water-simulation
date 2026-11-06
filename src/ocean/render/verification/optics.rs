@@ -461,38 +461,43 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
     let mut bare_camera = camera;
     bare_camera.misc[0] = 0.0;
     let bare = image(gpu, &renderer, &ocean, &bare_camera, species_settings, size)?;
-    for (visible, hidden, residual) in [(1, 2, 0.0_f32), (2, 1, 4.0)] {
-        let texture = vec![[0.0_f32, 0.0, 0.0, residual]; cells];
-        gpu.queue.write_buffer(
-            &renderer.shore.field,
-            (4 * cells * 16) as u64,
-            bytemuck::cast_slice(&texture),
-        );
-        species_settings.shore.foam_species_view = 0;
-        let both = image(gpu, &renderer, &ocean, &camera, species_settings, size)?;
-        species_settings.shore.foam_species_view = visible;
-        let selected = image(gpu, &renderer, &ocean, &camera, species_settings, size)?;
-        species_settings.shore.foam_species_view = hidden;
-        let excluded = image(gpu, &renderer, &ocean, &camera, species_settings, size)?;
-        if both != selected || excluded != bare {
-            return Err(format!(
-                "foam species {visible} isolation changed visible shading or leaked hidden foam"
-            )
-            .into());
-        }
-        let changed = selected
-            .iter()
-            .zip(&bare)
-            .filter(|(a, b)| (0..3).any(|c| (a[c] - b[c]).abs() > 0.005))
-            .count();
-        if changed < 8 {
-            return Err(format!(
-                "foam species {visible} fixture produced no visible coverage: {changed}"
-            )
-            .into());
+    for mode in 0..=2 {
+        species_settings.shore.foam_fresh_threshold_mode = mode;
+        for (visible, hidden, residual) in [(1, 2, 0.0_f32), (2, 1, 4.0)] {
+            let texture = vec![[0.0_f32, 0.0, 0.0, residual]; cells];
+            gpu.queue.write_buffer(
+                &renderer.shore.field,
+                (4 * cells * 16) as u64,
+                bytemuck::cast_slice(&texture),
+            );
+            species_settings.shore.foam_species_view = 0;
+            let both = image(gpu, &renderer, &ocean, &camera, species_settings, size)?;
+            species_settings.shore.foam_species_view = visible;
+            let selected = image(gpu, &renderer, &ocean, &camera, species_settings, size)?;
+            species_settings.shore.foam_species_view = hidden;
+            let excluded = image(gpu, &renderer, &ocean, &camera, species_settings, size)?;
+            if both != selected || excluded != bare {
+                return Err(format!(
+                    "foam species {visible} isolation changed visible shading or leaked hidden foam"
+                )
+                .into());
+            }
+            let changed = selected
+                .iter()
+                .zip(&bare)
+                .filter(|(a, b)| (0..3).any(|c| (a[c] - b[c]).abs() > 0.005))
+                .count();
+            if changed < 8 {
+                return Err(format!(
+                    "foam species {visible} fixture produced no visible coverage: {changed}"
+                )
+                .into());
+            }
         }
     }
-    println!("GPU foam species: pure N/R preserve selected shading and hide the other species OK");
+    println!(
+        "GPU foam species: all 3 N modes preserve selected shading and hide the other species OK"
+    );
     // Fixed-coordinate rendering must ignore stored motion, while the enabled
     // path must respond to it. Exercise the real render bindings and shaders.
     species_settings.shore.foam_species_view = 0;
@@ -530,6 +535,205 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
     }
     println!(
         "GPU foam texture distortion: disabled ignores motion, enabled responds, zero offset agrees OK"
+    );
+    fresh_material_raster(gpu, &renderer, &ocean, &camera, species_settings, size)?;
+    Ok(())
+}
+
+// Real configuration -> uniform -> raster checks. The legacy NSH path is the
+// compatibility oracle for pure N; mixed N/R checks protect species isolation.
+fn fresh_material_raster(
+    gpu: &Gpu,
+    renderer: &Renderer,
+    ocean: &Ocean,
+    camera: &crate::ocean::camera::CameraUniform,
+    mut settings: OpticsConfig,
+    size: [u32; 2],
+) -> Result<(), Error> {
+    settings.shore.foam_material_view = 0;
+    settings.shore.foam_species_view = 1;
+    settings.shore.foam_fresh_threshold_mode = 2;
+    settings.shore.foam_texture = 3;
+    settings.shore.foam_texture_size = 37.0;
+    settings.shore.foam_micro_normal = 0.1;
+    settings.shore.foam_roughness = 0.25;
+    settings.shore.foam_density_reference = 7.0;
+    let cells = (renderer.shore.resolution as usize).pow(2);
+    let bytes = gpu.read_buffer(&renderer.shore.field, renderer.shore.field.size())?;
+    let mut seed: Vec<[f32; 4]> = bytemuck::cast_slice(&bytes).to_vec();
+    for i in 0..cells {
+        seed[i][0] = 1.2;
+        seed[3 * cells + i][2..].fill(0.0);
+        seed[4 * cells + i] = [0.0; 4];
+    }
+    gpu.queue
+        .write_buffer(&renderer.shore.field, 0, bytemuck::cast_slice(&seed));
+    let differences = |a: &[[f32; 4]], b: &[[f32; 4]]| {
+        a.iter()
+            .zip(b)
+            .filter(|(a, b)| (0..3).any(|c| (a[c] - b[c]).abs() > 2e-6))
+            .count()
+    };
+    let mut previous = None;
+    for source in 1..=3 {
+        settings.shore.foam_fresh_texture = source;
+        let textured = image(gpu, renderer, ocean, camera, settings, size)?;
+        let mut legacy = settings;
+        legacy.shore.foam_dual_phase = false;
+        legacy.shore.foam_prototype = false;
+        legacy.shore.foam_texture = source;
+        legacy.shore.foam_texture_size = settings.shore.foam_fresh_texture_size;
+        legacy.shore.foam_micro_normal = settings.shore.foam_fresh_micro_normal;
+        legacy.shore.foam_roughness = settings.shore.foam_fresh_roughness;
+        legacy.shore.foam_density_reference = settings.shore.foam_fresh_coverage_reference;
+        let expected = image(gpu, renderer, ocean, camera, legacy, size)?;
+        if textured.iter().flatten().any(|v| !v.is_finite())
+            || differences(&textured, &expected) != 0
+        {
+            return Err(
+                format!("N texture {source} did not preserve legacy NSH appearance").into(),
+            );
+        }
+        if previous
+            .as_ref()
+            .is_some_and(|before: &Vec<[f32; 4]>| differences(before, &textured) < 8)
+        {
+            return Err("N texture selection did not reach the raster".into());
+        }
+        previous = Some(textured);
+    }
+    settings.shore.foam_fresh_texture = 1;
+    let baseline = image(gpu, renderer, ocean, camera, settings, size)?;
+    for parameter in 0..4 {
+        let mut changed = settings;
+        match parameter {
+            0 => changed.shore.foam_fresh_texture_size = 3.5,
+            1 => changed.shore.foam_fresh_micro_normal = 3.0,
+            2 => changed.shore.foam_fresh_roughness = 0.15,
+            _ => changed.shore.foam_fresh_coverage_reference = 5.0,
+        }
+        let actual = image(gpu, renderer, ocean, camera, changed, size)?;
+        if actual.iter().flatten().any(|v| !v.is_finite()) || differences(&baseline, &actual) < 8 {
+            return Err(format!("N NSH parameter {parameter} did not reach the raster").into());
+        }
+    }
+    // Nonzero N and R: N material controls cannot affect the isolated residual,
+    // including its own lighting/normal and opacity diagnostics.
+    for i in 0..cells {
+        seed[i][0] = 2.4;
+        seed[4 * cells + i][3] = 1.2;
+    }
+    gpu.queue
+        .write_buffer(&renderer.shore.field, 0, bytemuck::cast_slice(&seed));
+    for debug in [0, 3, 4] {
+        settings.shore.foam_species_view = 2;
+        settings.shore.foam_material_view = debug;
+        settings.shore.foam_fresh_threshold_mode = 1;
+        let residual = image(gpu, renderer, ocean, camera, settings, size)?;
+        for mode in 0..=2 {
+            let mut changed = settings;
+            changed.shore.foam_fresh_threshold_mode = mode;
+            changed.shore.foam_fresh_texture = 3;
+            changed.shore.foam_fresh_texture_size = 3.5;
+            changed.shore.foam_fresh_micro_normal = 3.0;
+            changed.shore.foam_fresh_roughness = 0.15;
+            changed.shore.foam_fresh_coverage_reference = 5.0;
+            changed.shore.foam_fresh_density_opacity = true;
+            changed.shore.foam_fresh_opacity_range = 4.0;
+            changed.shore.foam_fresh_opacity_power = 2.0;
+            if image(gpu, renderer, ocean, camera, changed, size)? != residual {
+                return Err(format!("N mode {mode} changed isolated R, debug {debug}").into());
+            }
+        }
+    }
+    settings.shore.foam_material_view = 0;
+    settings.shore.foam_species_view = 0;
+    for view in [6, 9, 10] {
+        settings.shore.view = view;
+        settings.shore.foam_fresh_threshold_mode = 0;
+        settings.shore.foam_fresh_coverage_reference = 2.0;
+        settings.shore.foam_fresh_density_opacity = false;
+        settings.shore.foam_residual_density_opacity = false;
+        let density = image(gpu, renderer, ocean, camera, settings, size)?;
+        settings.shore.foam_fresh_threshold_mode = 2;
+        settings.shore.foam_fresh_coverage_reference = 5.0;
+        settings.shore.foam_fresh_density_opacity = true;
+        settings.shore.foam_fresh_opacity_range = 4.0;
+        settings.shore.foam_fresh_opacity_power = 2.0;
+        settings.shore.foam_residual_density_opacity = true;
+        settings.shore.foam_residual_opacity_range = 4.0;
+        settings.shore.foam_residual_opacity_power = 2.0;
+        if image(gpu, renderer, ocean, camera, settings, size)? != density {
+            return Err(format!("N NSH appearance changed density view {view}").into());
+        }
+    }
+    concentration_opacity_raster(gpu, renderer, ocean, camera, settings, size)?;
+    println!(
+        "GPU N NSH: 3 textures match legacy, independent size/normal/roughness/coverage controls, mixed-species R lighting/normal/opacity and raw N/R/total density isolation OK"
+    );
+    Ok(())
+}
+
+fn concentration_opacity_raster(
+    gpu: &Gpu,
+    renderer: &Renderer,
+    ocean: &Ocean,
+    camera: &crate::ocean::camera::CameraUniform,
+    mut settings: OpticsConfig,
+    size: [u32; 2],
+) -> Result<(), Error> {
+    // The caller seeded N=R=1.2. Restrict the analytic comparison to the
+    // uniform interior identified by raw R density, not patch-edge interpolation.
+    settings.shore.view = 10;
+    let density = image(gpu, renderer, ocean, camera, settings, size)?;
+    let level = 1.2 / settings.shore.foam_density_reference;
+    let density_color = [level, 1.0 - level, 0.0];
+    settings.shore.view = 0;
+    settings.shore.foam_fresh_coverage_reference = 2.0;
+    settings.shore.foam_fresh_opacity_range = 4.0;
+    settings.shore.foam_fresh_opacity_power = 2.0;
+    settings.shore.foam_residual_opacity_range = 4.0;
+    settings.shore.foam_residual_opacity_power = 2.0;
+    let mut bare_camera = *camera;
+    bare_camera.misc[0] = 0.0;
+    let bare = image(gpu, renderer, ocean, &bare_camera, settings, size)?;
+    for mode in 0..=2 {
+        settings.shore.foam_fresh_threshold_mode = mode;
+        for species in [1, 2] {
+            settings.shore.foam_species_view = species;
+            settings.shore.foam_fresh_density_opacity = false;
+            settings.shore.foam_residual_density_opacity = false;
+            let baseline = image(gpu, renderer, ocean, camera, settings, size)?;
+            settings.shore.foam_fresh_density_opacity = species == 1;
+            settings.shore.foam_residual_density_opacity = species == 2;
+            let applied = image(gpu, renderer, ocean, camera, settings, size)?;
+            if applied.iter().flatten().any(|v| !v.is_finite()) {
+                return Err("concentration opacity produced nonfinite raster".into());
+            }
+            let mut changed = 0;
+            for (i, pixel) in applied.iter().enumerate() {
+                if !(0..3).all(|c| (density[i][c] - density_color[c]).abs() < 1e-6) {
+                    continue;
+                }
+                for c in 0..3 {
+                    // pow(1.2 / 4, 2) = 0.09. Scaling color AND alpha moves
+                    // the result toward bare water; RGB-only darkening fails.
+                    let expected = bare[i][c] + 0.09 * (baseline[i][c] - bare[i][c]);
+                    if (pixel[c] - expected).abs() > 2e-5 {
+                        return Err(format!("concentration opacity did not scale premultiplied color/alpha: mode {mode}, species {species}").into());
+                    }
+                }
+                if (0..3).any(|c| (pixel[c] - baseline[i][c]).abs() > 0.001) {
+                    changed += 1;
+                }
+            }
+            if changed < 8 {
+                return Err(format!("concentration opacity fixture lacked visible foam: mode {mode}, species {species}").into());
+            }
+        }
+    }
+    println!(
+        "GPU concentration opacity raster: N/R independent factors, all 3 N modes, real CPU-to-GPU range/power wiring, premultiplied color and alpha blend toward bare water OK"
     );
     Ok(())
 }

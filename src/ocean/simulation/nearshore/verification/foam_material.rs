@@ -9,7 +9,9 @@ const OPACITIES: usize = DENSITIES * FIXTURES * 3;
 const NORMALS: usize = 8;
 const SAMPLE_SIDE: usize = 16;
 const SAMPLES: usize = SAMPLE_SIDE * SAMPLE_SIDE;
-const COUNT: usize = OPACITIES + NORMALS + 3 * 3 * SAMPLES;
+const TEXTURES: usize = 3 * 3 * SAMPLES;
+const CONCENTRATION_FACTORS: usize = 6 * 3 * 4 * 2;
+const COUNT: usize = OPACITIES + NORMALS + TEXTURES + CONCENTRATION_FACTORS;
 
 pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
     let textures = FoamTextures::new(gpu);
@@ -74,7 +76,16 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
         return;
     }
     let sample=index-1763u;
-    if sample>=2304u { return; }
+    if sample>=2304u {
+        let factor=sample-2304u;
+        if factor>=144u { return; }
+        let density=array(-1.0,0.0,0.25,1.0,2.0,12.0)[factor%6u];
+        let range=array(0.0,1.0,10.0)[(factor/6u)%3u];
+        let power=array(0.1,0.5,1.0,5.0)[(factor/18u)%4u];
+        let enabled=f32(factor/72u);
+        nsh_results[index]=vec4(concentration_opacity(density,vec4(enabled,range,power,0.0)),0.0,0.0,0.0);
+        return;
+    }
     let layer=i32(sample/(3u*256u));
     let kind=(sample/256u)%3u;
     let point=sample%256u;
@@ -179,7 +190,29 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
         "Prototype pores GPU: zero density/dry invisibility, monotone decay and surviving holes OK"
     );
     verify_normals(&values[OPACITIES..OPACITIES + NORMALS])?;
-    verify_textures(&values[OPACITIES + NORMALS..])?;
+    verify_textures(&values[OPACITIES + NORMALS..OPACITIES + NORMALS + TEXTURES])?;
+    for (case, value) in values[OPACITIES + NORMALS + TEXTURES..].iter().enumerate() {
+        let density = [-1.0_f64, 0.0, 0.25, 1.0, 2.0, 12.0][case % 6];
+        let range = [0.0_f64, 1.0, 10.0][(case / 6) % 3];
+        let power = [0.1_f64, 0.5, 1.0, 5.0][(case / 18) % 4];
+        let expected = if case < 72 {
+            1.0
+        } else if range == 0.0 {
+            f64::from(density > 0.0)
+        } else {
+            (density / range).clamp(0.0, 1.0).powf(power)
+        };
+        if (f64::from(value[0]) - expected).abs() > 2e-6 {
+            return Err(format!(
+                "concentration opacity case {case}: {} != {expected}",
+                value[0]
+            )
+            .into());
+        }
+    }
+    println!(
+        "Concentration opacity GPU: independent f64 power reference, disabled bypass, clamp, zero range, zero concentration and p=0.1/0.5/1/5 OK"
+    );
     println!(
         "NSH GPU: continuous exponential opacity above density reference, preserved pores/dry guards, monotone density/scale response, transformed normals, 3 linear RGBA layers/repeat/mip means OK"
     );

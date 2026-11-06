@@ -488,6 +488,25 @@ impl Shore {
                 c.foam_fresh_noise_detail_frequency,
             ],
             foam_fresh_noise: [c.foam_fresh_noise_detail_weight, 0.0, 0.0, 0.0],
+            foam_fresh_material: [
+                c.foam_fresh_texture as f32,
+                c.foam_fresh_texture_size,
+                c.foam_fresh_micro_normal,
+                c.foam_fresh_roughness,
+            ],
+            foam_fresh_shading: [c.foam_fresh_coverage_reference, 0.0, 0.0, 0.0],
+            foam_fresh_opacity: [
+                f32::from(c.foam_fresh_density_opacity),
+                c.foam_fresh_opacity_range,
+                c.foam_fresh_opacity_power,
+                0.0,
+            ],
+            foam_residual_opacity: [
+                f32::from(c.foam_residual_density_opacity),
+                c.foam_residual_opacity_range,
+                c.foam_residual_opacity_power,
+                0.0,
+            ],
             options: [c.generation, c.view as f32, self.resolution as f32, 0.0],
             collider_meta: [collider_count as f32, 0.0, 0.0, 0.0],
             model: [

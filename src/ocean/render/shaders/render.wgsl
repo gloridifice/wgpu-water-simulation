@@ -253,16 +253,66 @@ fn residual_opacity(density: f32, depth: f32, grain: f32, width: f32, scale: f32
     return (1.0-smoothstep(coverage-aa,coverage+aa,band))
         *smoothstep(0.0,0.02,coverage)*smoothstep(0.003,0.02,depth);
 }
+// Additional optical factor, separate from pore coverage and simulated density.
+// A zero range is the limiting step: positive concentration is fully normalized.
+fn concentration_opacity(density: f32, settings: vec4<f32>) -> f32 {
+    if settings.x<0.5 { return 1.0; }
+    if settings.y<=0.0 { return select(0.0,1.0,density>0.0); }
+    return pow(clamp(density/settings.y,0.0,1.0),settings.z);
+}
 fn material_grid(material: vec2<f32>) -> f32 {
     let p=material*2.0;
     let d=abs(fract(p-0.5)-0.5);
     let line=vec2(1.0)-smoothstep(vec2(0.0),max(fwidth(p),vec2(0.001)),d);
     return max(line.x,line.y);
 }
+// The same NSH renderer serves legacy foam and N, with independent settings.
+// settings: source (1..3), tile size m, micro normal, optical density scale.
+fn nsh_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<f32>, density: f32, depth: f32, settings: vec4<f32>, coverage_reference: f32, roughness: f32) -> FoamAppearance {
+    let layer=i32(settings.x)-1;
+    let uv=material/settings.y;
+    let coarse=textureSample(foam_nsh,foam_nsh_sampler,uv,layer);
+    let fine=textureSample(foam_nsh,foam_nsh_sampler,uv*10.0,layer);
+    let pattern=0.72*coarse.ba+0.28*fine.ba;
+    let opacity=nsh_opacity(density,depth,pattern.x,max(0.04,fwidth(pattern.x)),coverage_reference,settings.w);
+    let wx=dpdx(world.xz); let wy=dpdy(world.xz);
+    let mx=dpdx(material); let my=dpdy(material);
+    let determinant=wx.x*wy.y-wx.y*wy.x;
+    var jacobian=vec4(1.0,0.0,0.0,1.0);
+    if abs(determinant)>0.00000001 {
+        jacobian=vec4((mx*wy.y-my*wx.y)/determinant,(my*wx.x-mx*wy.x)/determinant);
+    }
+    let slope=0.72*nsh_slope(coarse)+0.28*nsh_slope(fine);
+    let n=nsh_normal(base,slope,jacobian,settings.z);
+    let light=max(dot(n,camera.sun.xyz),0.0);
+    let half_vector=normalize(view+camera.sun.xyz);
+    let exponent=max(2.0,2.0/pow(roughness,4.0)-2.0);
+    let highlight=pow(max(dot(n,half_vector),0.0),exponent)*light*0.04;
+    let color=shore.water_foam_color.rgb*(0.65+0.35*light)+vec3(highlight);
+    return FoamAppearance(color*opacity,opacity,pattern,n);
+}
 fn foam_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, view: vec3<f32>, density: f32, species: vec2<f32>, depth: f32) -> FoamAppearance {
     if shore.foam_lifetime.x>0.5 {
-        // Replace only N's threshold field. Keep the density response, soft
-        // transition, per-phase composition and R material identical.
+        let old=0.55*prototype_noise(material*2.5)+0.30*prototype_noise(material*7.0)+0.15*prototype_noise(material*17.0);
+        let fresh_amount=select(species.x,0.0,shore.density.w>1.5);
+        let residual_amount=select(species.y,0.0,shore.density.w>0.5 && shore.density.w<1.5);
+        let fresh_factor=concentration_opacity(fresh_amount,shore.foam_fresh_opacity);
+        let residue=residual_opacity(residual_amount,depth,old,fwidth(old),shore.foam_material.w)
+            *concentration_opacity(residual_amount,shore.foam_residual_opacity);
+        let color=shore.water_foam_color.rgb*(0.65+0.35*max(dot(base,camera.sun.xyz),0.0));
+        if shore.foam_fresh_threshold.x>1.5 {
+            let fresh=nsh_material_phase(material,world,base,view,fresh_amount,depth,
+                vec4(shore.foam_fresh_material.xyz,shore.foam_material.w),
+                shore.foam_fresh_shading.x,shore.foam_fresh_material.w);
+            // Scale both premultiplied color and alpha, not just RGB, so the
+            // factor reveals the layer underneath instead of darkening the foam.
+            let white=fresh.opacity*fresh_factor;
+            // N is over R. Its micro normal/lighting never shades the residual.
+            return FoamAppearance(fresh.premultiplied*fresh_factor+color*(0.72*residue*(1.0-white)),
+                white+residue*(1.0-white),vec2(fresh.pattern.x,old),
+                select(base,fresh.normal,white>0.0));
+        }
+        // Preserve the constant/noise density response and soft transitions.
         var fresh=shore.foam_fresh_threshold.y;
         if shore.foam_fresh_threshold.x>0.5 {
             // Decorrelate the two octave orientations as well as their frequencies.
@@ -271,12 +321,7 @@ fn foam_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, v
             fresh=(1.0-weight)*filtered_fresh_noise(material*shore.foam_fresh_threshold.z)
                 +weight*filtered_fresh_noise(fine*shore.foam_fresh_threshold.w+vec2(17.3,-9.1));
         }
-        let old=0.55*prototype_noise(material*2.5)+0.30*prototype_noise(material*7.0)+0.15*prototype_noise(material*17.0);
-        let fresh_amount=select(species.x,0.0,shore.density.w>1.5);
-        let residual_amount=select(species.y,0.0,shore.density.w>0.5 && shore.density.w<1.5);
-        let white=prototype_opacity(fresh_amount,depth,fresh,0.5*fwidth(fresh),shore.foam_material.w);
-        let residue=residual_opacity(residual_amount,depth,old,fwidth(old),shore.foam_material.w);
-        let color=shore.water_foam_color.rgb*(0.65+0.35*max(dot(base,camera.sun.xyz),0.0));
+        let white=prototype_opacity(fresh_amount,depth,fresh,0.5*fwidth(fresh),shore.foam_material.w)*fresh_factor;
         return FoamAppearance(color*(white+0.72*residue*(1.0-white)),
             white+residue*(1.0-white),vec2(fresh,old),base);
     }
@@ -286,28 +331,8 @@ fn foam_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, v
         let color=shore.water_foam_color.rgb*(0.65+0.35*max(dot(base,camera.sun.xyz),0.0));
         return FoamAppearance(color*opacity,opacity,vec2(grain,0.0),base);
     }
-    let layer=i32(shore.foam_material.x)-1;
-    let uv=material/shore.foam_material.y;
-    let coarse=textureSample(foam_nsh,foam_nsh_sampler,uv,layer);
-    let fine=textureSample(foam_nsh,foam_nsh_sampler,uv*10.0,layer);
-    let pattern=0.72*coarse.ba+0.28*fine.ba;
-    let opacity=nsh_opacity(density,depth,pattern.x,max(0.04,fwidth(pattern.x)),shore.density.y,shore.foam_material.w);
-    let wx=dpdx(world.xz); let wy=dpdy(world.xz);
-    let mx=dpdx(material); let my=dpdy(material);
-    let determinant=wx.x*wy.y-wx.y*wy.x;
-    var jacobian=vec4(1.0,0.0,0.0,1.0);
-    if abs(determinant)>0.00000001 {
-        jacobian=vec4((mx*wy.y-my*wx.y)/determinant,(my*wx.x-mx*wy.x)/determinant);
-    }
-    let slope=0.72*nsh_slope(coarse)+0.28*nsh_slope(fine);
-    let n=nsh_normal(base,slope,jacobian,shore.foam_material.z);
-    let light=max(dot(n,camera.sun.xyz),0.0);
-    let half_vector=normalize(view+camera.sun.xyz);
-    let roughness=shore.foam_shading.y;
-    let exponent=max(2.0,2.0/pow(roughness,4.0)-2.0);
-    let highlight=pow(max(dot(n,half_vector),0.0),exponent)*light*0.04;
-    let color=shore.water_foam_color.rgb*(0.65+0.35*light)+vec3(highlight);
-    return FoamAppearance(color*opacity,opacity,pattern,n);
+    return nsh_material_phase(material,world,base,view,density,depth,
+        shore.foam_material,shore.density.y,shore.foam_shading.y);
 }
 
 @fragment

@@ -20,8 +20,12 @@ struct ShoreParams {
     foam_material: vec4<f32>, // source (0 legacy, 1..3 NSH), tile size m, micro normal, opacity density scale
     foam_shading: vec4<f32>, // prototype pores, roughness, material debug, coordinate reset period (s; 0=continuous)
     foam_lifetime: vec4<f32>, // dual mode, fresh/residual exit rates /s, conversion fraction
-    foam_fresh_threshold: vec4<f32>, // mode (0 constant/1 noise), constant, main/detail frequencies /m; render only
+    foam_fresh_threshold: vec4<f32>, // mode (0 constant/1 noise/2 NSH), constant, main/detail frequencies /m; render only
     foam_fresh_noise: vec4<f32>, // detail weight, reserved; render only
+    foam_fresh_material: vec4<f32>, // N-only NSH source (1..3), size m, micro normal, roughness
+    foam_fresh_shading: vec4<f32>, // N-only pore coverage reference, reserved
+    foam_fresh_opacity: vec4<f32>, // N concentration opacity: enabled, range, power, reserved
+    foam_residual_opacity: vec4<f32>, // R concentration opacity: enabled, range, power, reserved
     options: vec4<f32>, // foam generation /s, debug view, resolution, reset
     collider_meta: vec4<f32>, // packed active count, reserved
     model: vec4<f32>, // enabled, minimum bed, fallback bed, sponge width

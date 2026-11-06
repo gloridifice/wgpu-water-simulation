@@ -61,12 +61,24 @@ pub struct ShoreConfig {
     pub foam_dual_phase: bool,
     // Render only: 0 both, 1 fresh N, 2 residual R.
     pub foam_species_view: u32,
-    // Render only: 0 constant threshold, 1 two-octave noise (legacy default).
+    // Render only: 0 constant threshold, 1 two-octave noise (legacy default), 2 NSH.
     pub foam_fresh_threshold_mode: u32,
     pub foam_fresh_threshold: f32,
     pub foam_fresh_noise_frequency: f32,
     pub foam_fresh_noise_detail_frequency: f32,
     pub foam_fresh_noise_detail_weight: f32,
+    // Independent N-only NSH appearance; never changes the stored concentrations.
+    pub foam_fresh_texture: u32,
+    pub foam_fresh_texture_size: f32,
+    pub foam_fresh_micro_normal: f32,
+    pub foam_fresh_roughness: f32,
+    pub foam_fresh_coverage_reference: f32,
+    pub foam_fresh_density_opacity: bool,
+    pub foam_fresh_opacity_range: f32,
+    pub foam_fresh_opacity_power: f32,
+    pub foam_residual_density_opacity: bool,
+    pub foam_residual_opacity_range: f32,
+    pub foam_residual_opacity_power: f32,
     pub foam_fresh_half_life: f32,
     pub foam_residual_half_life: f32,
     pub foam_conversion: f32,
@@ -129,6 +141,17 @@ impl Default for ShoreConfig {
             foam_fresh_noise_frequency: 0.8,
             foam_fresh_noise_detail_frequency: 2.5,
             foam_fresh_noise_detail_weight: 0.3,
+            foam_fresh_texture: 1,
+            foam_fresh_texture_size: 12.0,
+            foam_fresh_micro_normal: 0.65,
+            foam_fresh_roughness: 0.85,
+            foam_fresh_coverage_reference: 2.0,
+            foam_fresh_density_opacity: false,
+            foam_fresh_opacity_range: 1.0,
+            foam_fresh_opacity_power: 1.0,
+            foam_residual_density_opacity: false,
+            foam_residual_opacity_range: 1.0,
+            foam_residual_opacity_power: 1.0,
             foam_fresh_half_life: 1.4,
             foam_residual_half_life: 9.0,
             foam_conversion: 0.65,
@@ -221,6 +244,49 @@ impl ShoreConfig {
                 self.foam_fresh_noise_detail_weight,
                 0.0,
                 1.0,
+            ),
+            (
+                "fresh foam texture size (m)",
+                self.foam_fresh_texture_size,
+                0.25,
+                64.0,
+            ),
+            (
+                "fresh foam micro normal",
+                self.foam_fresh_micro_normal,
+                0.0,
+                3.0,
+            ),
+            ("fresh foam roughness", self.foam_fresh_roughness, 0.15, 1.0),
+            (
+                "fresh foam coverage reference",
+                self.foam_fresh_coverage_reference,
+                0.01,
+                20.0,
+            ),
+            (
+                "fresh opacity concentration range",
+                self.foam_fresh_opacity_range,
+                0.0,
+                10.0,
+            ),
+            (
+                "fresh opacity power",
+                self.foam_fresh_opacity_power,
+                0.1,
+                5.0,
+            ),
+            (
+                "residual opacity concentration range",
+                self.foam_residual_opacity_range,
+                0.0,
+                10.0,
+            ),
+            (
+                "residual opacity power",
+                self.foam_residual_opacity_power,
+                0.1,
+                5.0,
             ),
             ("breaking depth", self.breaking_depth, 0.5, 5.0),
             ("shore foam generation", self.generation, 0.0, 15.0),
@@ -345,7 +411,8 @@ impl ShoreConfig {
         if self.foam_texture >= FOAM_TEXTURE_NAMES.len() as u32
             || self.foam_material_view >= FOAM_MATERIAL_VIEWS.len() as u32
             || self.foam_species_view > 2
-            || self.foam_fresh_threshold_mode > 1
+            || self.foam_fresh_threshold_mode > 2
+            || !(1..FOAM_TEXTURE_NAMES.len() as u32).contains(&self.foam_fresh_texture)
         {
             return Err("invalid foam material selection".into());
         }
@@ -485,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_threshold_settings_preserve_old_configs_and_validate_both_modes() {
+    fn fresh_appearance_settings_preserve_old_configs_and_validate_all_modes() {
         let old: super::ShoreConfig = serde_json::from_str(r#"{"generation":2.5}"#).unwrap();
         assert_eq!(old.generation, 2.5);
         assert_eq!(old.foam_fresh_threshold_mode, 1);
@@ -493,16 +560,40 @@ mod tests {
         assert_eq!(old.foam_fresh_noise_frequency, 0.8);
         assert_eq!(old.foam_fresh_noise_detail_frequency, 2.5);
         assert_eq!(old.foam_fresh_noise_detail_weight, 0.3);
-        for mode in 0..=1 {
-            for (threshold, main, detail, weight) in
-                [(0.0, 0.05, 0.05, 0.0), (1.0, 20.0, 60.0, 1.0)]
-            {
+        assert_eq!(old.foam_fresh_texture, 1);
+        assert_eq!(old.foam_fresh_texture_size, 12.0);
+        assert_eq!(old.foam_fresh_micro_normal, 0.65);
+        assert_eq!(old.foam_fresh_roughness, 0.85);
+        assert_eq!(old.foam_fresh_coverage_reference, 2.0);
+        assert!(!old.foam_fresh_density_opacity);
+        assert!(!old.foam_residual_density_opacity);
+        assert_eq!(old.foam_fresh_opacity_range, 1.0);
+        assert_eq!(old.foam_residual_opacity_range, 1.0);
+        assert_eq!(old.foam_fresh_opacity_power, 1.0);
+        assert_eq!(old.foam_residual_opacity_power, 1.0);
+        for mode in 0..=2 {
+            for (source, size, normal, roughness, reference) in [
+                (1, 0.25, 0.0, 0.15, 0.01),
+                (2, 12.0, 0.65, 0.85, 2.0),
+                (3, 64.0, 3.0, 1.0, 20.0),
+            ] {
                 let config = super::ShoreConfig {
                     foam_fresh_threshold_mode: mode,
-                    foam_fresh_threshold: threshold,
-                    foam_fresh_noise_frequency: main,
-                    foam_fresh_noise_detail_frequency: detail,
-                    foam_fresh_noise_detail_weight: weight,
+                    foam_fresh_threshold: 1.0,
+                    foam_fresh_noise_frequency: 20.0,
+                    foam_fresh_noise_detail_frequency: 60.0,
+                    foam_fresh_noise_detail_weight: 1.0,
+                    foam_fresh_texture: source,
+                    foam_fresh_texture_size: size,
+                    foam_fresh_micro_normal: normal,
+                    foam_fresh_roughness: roughness,
+                    foam_fresh_coverage_reference: reference,
+                    foam_fresh_density_opacity: source == 2,
+                    foam_fresh_opacity_range: (source - 1) as f32 * 5.0,
+                    foam_fresh_opacity_power: if source == 1 { 0.1 } else { 5.0 },
+                    foam_residual_density_opacity: source != 2,
+                    foam_residual_opacity_range: (3 - source) as f32 * 5.0,
+                    foam_residual_opacity_power: if source == 3 { 0.1 } else { 5.0 },
                     ..old
                 };
                 config.validate().unwrap();
@@ -510,12 +601,32 @@ mod tests {
                     serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
                 assert_eq!(
                     config, restored,
-                    "mode {mode} must retain both modes' parameters"
+                    "mode {mode} must retain every mode's parameters"
                 );
             }
         }
         for patch in [
-            r#"{"foam_fresh_threshold_mode":2}"#,
+            r#"{"foam_fresh_threshold_mode":3}"#,
+            r#"{"foam_fresh_texture":0}"#,
+            r#"{"foam_fresh_texture":4}"#,
+            r#"{"foam_fresh_texture_size":0}"#,
+            r#"{"foam_fresh_texture_size":64.01}"#,
+            r#"{"foam_fresh_micro_normal":-0.01}"#,
+            r#"{"foam_fresh_micro_normal":3.01}"#,
+            r#"{"foam_fresh_roughness":0.14}"#,
+            r#"{"foam_fresh_roughness":1.01}"#,
+            r#"{"foam_fresh_coverage_reference":0}"#,
+            r#"{"foam_fresh_coverage_reference":20.01}"#,
+            r#"{"foam_fresh_opacity_range":-0.01}"#,
+            r#"{"foam_fresh_opacity_range":10.01}"#,
+            r#"{"foam_fresh_opacity_power":0}"#,
+            r#"{"foam_fresh_opacity_power":0.09}"#,
+            r#"{"foam_fresh_opacity_power":5.01}"#,
+            r#"{"foam_residual_opacity_range":-0.01}"#,
+            r#"{"foam_residual_opacity_range":10.01}"#,
+            r#"{"foam_residual_opacity_power":0}"#,
+            r#"{"foam_residual_opacity_power":0.09}"#,
+            r#"{"foam_residual_opacity_power":5.01}"#,
             r#"{"foam_fresh_threshold":-0.01}"#,
             r#"{"foam_fresh_threshold":1.01}"#,
             r#"{"foam_fresh_noise_frequency":0}"#,
@@ -548,10 +659,42 @@ mod tests {
                 foam_fresh_noise_detail_weight: f32::INFINITY,
                 ..old
             },
+            super::ShoreConfig {
+                foam_fresh_texture_size: f32::NAN,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_fresh_micro_normal: f32::INFINITY,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_fresh_roughness: f32::NAN,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_fresh_coverage_reference: f32::INFINITY,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_fresh_opacity_range: f32::NAN,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_fresh_opacity_power: f32::INFINITY,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_residual_opacity_range: f32::INFINITY,
+                ..old
+            },
+            super::ShoreConfig {
+                foam_residual_opacity_power: f32::NAN,
+                ..old
+            },
         ] {
             assert!(
                 invalid.validate().is_err(),
-                "accepted nonfinite threshold settings"
+                "accepted nonfinite appearance settings"
             );
         }
     }
