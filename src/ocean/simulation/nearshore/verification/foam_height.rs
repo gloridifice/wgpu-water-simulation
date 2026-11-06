@@ -51,7 +51,7 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                     r#"
 @group(0) @binding(12) var<storage, read_write> result: array<vec4<f32>>;
 @compute @workgroup_size(1) fn height_probe() {
-    let vertex = water_vertex_data(40u, 4u);
+    let vertex = water_vertex_data(vec2(0.5), 4u);
     result[0] = vertex.position;
     result[1] = vec4(vertex.world, 1.0);
     result[2] = vec4(vertex.normal, 0.0);
