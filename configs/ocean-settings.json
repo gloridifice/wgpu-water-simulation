@@ -3,19 +3,21 @@
   "ocean": {
     "resolution": 128,
     "length": 128.0,
-    "phillips_length": 6.0,
-    "amplitude": 0.07,
+    "phillips_length": 10.0,
+    "amplitude": 0.04,
     "mesh_resolution": 128,
-    "wind_angle": -0.9599311,
+    "triangular_mesh": false,
+    "wind_angle": 2.268928,
     "seed": 42
   },
   "draft": {
     "resolution": 128,
     "length": 128.0,
-    "phillips_length": 6.0,
-    "amplitude": 0.07,
+    "phillips_length": 10.0,
+    "amplitude": 0.04,
     "mesh_resolution": 128,
-    "wind_angle": -0.9599311,
+    "triangular_mesh": false,
+    "wind_angle": 2.268928,
     "seed": 42
   },
   "foam": {
@@ -24,14 +26,24 @@
     "decay": 2.9
   },
   "optics": {
+    "post_process": {
+      "enabled": false,
+      "tonemapping_enabled": true,
+      "bloom_enabled": true,
+      "exposure": 0.0,
+      "strength": 0.1,
+      "threshold": 1.0,
+      "soft_knee": 0.5,
+      "radius": 1.0
+    },
     "model": {
-      "enabled": true,
+      "enabled": false,
       "position": [
         0.0,
         13.0,
         -8.7735
       ],
-      "scale": 2.0,
+      "scale": 1.0,
       "yaw_deg": 0.0,
       "sea_level": 0.5,
       "center": [
@@ -52,7 +64,7 @@
       ],
       "sponge_width": 20.0,
       "extension_width": 12.0,
-      "show_bounds": false
+      "show_bounds": true
     },
     "shore": {
       "colliders": [
@@ -68,24 +80,24 @@
       "enabled": true,
       "resolution": 256,
       "order": 2,
-      "input_gain": 1.6,
+      "input_gain": 1.0,
       "filter_enabled": false,
       "filter_cutoff": 12.0,
       "filter_transition": 12.0,
-      "normal_strength": 0.57,
+      "normal_strength": 1.0,
       "water_foam_color": [
         0.87,
         0.92,
         0.9
       ],
       "foam_texture": 1,
-      "foam_texture_size": 6.7,
-      "foam_micro_normal": 1.05,
+      "foam_texture_size": 12.0,
+      "foam_micro_normal": 0.65,
       "foam_opacity_scale": 2.0,
-      "foam_roughness": 0.73,
+      "foam_roughness": 0.85,
       "foam_material_view": 0,
-      "foam_prototype": true,
-      "foam_texture_period": 6.0,
+      "foam_prototype": false,
+      "foam_texture_period": 9.0,
       "foam_texture_distortion": true,
       "foam_dual_phase": true,
       "foam_species_view": 0,
@@ -93,11 +105,11 @@
       "foam_fresh_threshold": 0.5,
       "foam_fresh_noise_frequency": 0.8,
       "foam_fresh_noise_detail_frequency": 2.5,
-      "foam_fresh_noise_detail_weight": 0.3,
-      "foam_fresh_half_life": 1.1,
-      "foam_residual_half_life": 1.0,
-      "foam_conversion": 0.14,
-      "breaking_depth": 2.0,
+      "foam_fresh_noise_detail_weight": 0.48,
+      "foam_fresh_half_life": 0.8,
+      "foam_residual_half_life": 0.47,
+      "foam_conversion": 0.65,
+      "breaking_depth": 4.0,
       "generation": 4.0,
       "foam_generation_threshold": 0.25,
       "foam_generation_transition": 0.4,
@@ -105,20 +117,20 @@
       "foam_front_distance": 1.0,
       "foam_ridge_enabled": false,
       "foam_ridge_width": 1.0,
-      "foam_ridge_prominence": 0.02,
+      "foam_ridge_prominence": 0.1,
       "foam_emission_enabled": true,
       "foam_velocity_threshold": 0.1,
       "foam_velocity_transition": 0.5,
       "foam_background_multiplier": 0.15,
-      "foam_follow": 0.39,
+      "foam_follow": 1.0,
       "foam_response_time": 2.0,
       "foam_drag_enabled": true,
       "foam_birth_speed": 1.0,
       "foam_transport_order": 1,
-      "decay": 0.5,
+      "decay": 0.3,
       "foam_compression_threshold": 0.1,
       "foam_density_reference": 2.0,
-      "foam_height_max": 0.05,
+      "foam_height_max": 0.1,
       "foam_height_threshold": 0.1,
       "foam_height_transition": 1.9,
       "drying_time": 18.0,
@@ -128,13 +140,13 @@
       "enabled": true,
       "debug": false,
       "rate": 150.0,
-      "slope": 1.2,
-      "rise": 0.25,
+      "slope": 0.13,
+      "rise": 0.3,
       "depth": 0.02,
-      "upward": 2.6,
+      "upward": 2.0,
       "forward": 0.5,
-      "lifetime": 2.0,
-      "size": 1.0,
+      "lifetime": 1.2,
+      "size": 0.2,
       "size_range": [
         0.65,
         1.35
@@ -157,8 +169,8 @@
     "depth": 6.0,
     "beach": true,
     "beach_slope": 0.18,
-    "sand_tile_size": 4.0,
-    "sand_rotation_deg": 0.0,
+    "sand_tile_size": 16.0,
+    "sand_rotation_deg": -90.0,
     "shore_x": -20.0,
     "sigma_t": [
       0.22,
@@ -173,13 +185,19 @@
     "view": 0,
     "path_range": 35.0,
     "reflections": true,
+    "screen_space_reflections": false,
+    "reflection_distance": 100.0,
+    "reflection_strength": 1.0,
+    "reflection_steps": 128,
+    "reflection_tolerance": 1.0,
+    "reflection_edge_fade": 4.0,
     "color_bands": false,
     "checker_size": 4.0,
     "sky": {
       "enabled": true,
       "albedo": [
-        0.25,
-        0.55,
+        0.25000003,
+        0.5500002,
         0.75
       ],
       "color": [
@@ -192,20 +210,20 @@
     }
   },
   "camera": {
-    "yaw": 25.94202,
-    "pitch": 0.9460002,
-    "distance": 121.59996,
+    "yaw": 7.571998,
+    "pitch": 0.76600075,
+    "distance": 54.638386,
     "target": [
-      13.111123,
-      10.149482
+      -8.910677,
+      -6.3502507
     ],
-    "gain": 0.3,
+    "gain": 0.32,
     "choppy": true,
     "chop_amount": 0.65,
     "foam_debug": 0,
-    "foam": false
+    "foam": true
   },
-  "speed": 1.15,
+  "speed": 1.0,
   "paused": false,
   "configurations": {
     "default": {
@@ -216,6 +234,7 @@
         "phillips_length": 10.0,
         "amplitude": 0.04,
         "mesh_resolution": 128,
+        "triangular_mesh": false,
         "wind_angle": -0.17453292,
         "seed": 42
       },
@@ -225,6 +244,7 @@
         "phillips_length": 10.0,
         "amplitude": 0.04,
         "mesh_resolution": 128,
+        "triangular_mesh": false,
         "wind_angle": -0.17453292,
         "seed": 42
       },
@@ -234,6 +254,16 @@
         "decay": 2.9
       },
       "optics": {
+        "post_process": {
+          "enabled": false,
+          "tonemapping_enabled": true,
+          "bloom_enabled": true,
+          "exposure": 0.0,
+          "strength": 0.1,
+          "threshold": 1.0,
+          "soft_knee": 0.5,
+          "radius": 1.0
+        },
         "model": {
           "enabled": false,
           "position": [
@@ -383,6 +413,12 @@
         "view": 0,
         "path_range": 35.0,
         "reflections": true,
+        "screen_space_reflections": false,
+        "reflection_distance": 100.0,
+        "reflection_strength": 1.0,
+        "reflection_steps": 128,
+        "reflection_tolerance": 1.0,
+        "reflection_edge_fade": 4.0,
         "color_bands": false,
         "checker_size": 4.0,
         "sky": {
@@ -429,6 +465,7 @@
             "phillips_length": 10.0,
             "amplitude": 0.04,
             "mesh_resolution": 128,
+            "triangular_mesh": false,
             "wind_angle": 2.268928,
             "seed": 42
           },
@@ -438,6 +475,7 @@
             "phillips_length": 10.0,
             "amplitude": 0.04,
             "mesh_resolution": 128,
+            "triangular_mesh": false,
             "wind_angle": 2.268928,
             "seed": 42
           },
@@ -447,6 +485,16 @@
             "decay": 2.9
           },
           "optics": {
+            "post_process": {
+              "enabled": false,
+              "tonemapping_enabled": true,
+              "bloom_enabled": true,
+              "exposure": 0.0,
+              "strength": 0.1,
+              "threshold": 1.0,
+              "soft_knee": 0.5,
+              "radius": 1.0
+            },
             "model": {
               "enabled": false,
               "position": [
@@ -596,6 +644,12 @@
             "view": 0,
             "path_range": 35.0,
             "reflections": true,
+            "screen_space_reflections": false,
+            "reflection_distance": 100.0,
+            "reflection_strength": 1.0,
+            "reflection_steps": 128,
+            "reflection_tolerance": 1.0,
+            "reflection_edge_fade": 4.0,
             "color_bands": false,
             "checker_size": 4.0,
             "sky": {
@@ -642,6 +696,7 @@
             "phillips_length": 6.0,
             "amplitude": 0.07,
             "mesh_resolution": 128,
+            "triangular_mesh": false,
             "wind_angle": -0.9599311,
             "seed": 42
           },
@@ -651,6 +706,7 @@
             "phillips_length": 6.0,
             "amplitude": 0.07,
             "mesh_resolution": 128,
+            "triangular_mesh": false,
             "wind_angle": -0.9599311,
             "seed": 42
           },
@@ -660,6 +716,16 @@
             "decay": 2.9
           },
           "optics": {
+            "post_process": {
+              "enabled": false,
+              "tonemapping_enabled": true,
+              "bloom_enabled": true,
+              "exposure": 0.0,
+              "strength": 0.1,
+              "threshold": 1.0,
+              "soft_knee": 0.5,
+              "radius": 1.0
+            },
             "model": {
               "enabled": true,
               "position": [
@@ -809,6 +875,12 @@
             "view": 0,
             "path_range": 35.0,
             "reflections": true,
+            "screen_space_reflections": false,
+            "reflection_distance": 100.0,
+            "reflection_strength": 1.0,
+            "reflection_steps": 128,
+            "reflection_tolerance": 1.0,
+            "reflection_edge_fade": 4.0,
             "color_bands": false,
             "checker_size": 4.0,
             "sky": {
@@ -855,6 +927,7 @@
             "phillips_length": 6.0,
             "amplitude": 0.07,
             "mesh_resolution": 128,
+            "triangular_mesh": false,
             "wind_angle": -0.9599311,
             "seed": 42
           },
@@ -864,6 +937,7 @@
             "phillips_length": 6.0,
             "amplitude": 0.07,
             "mesh_resolution": 128,
+            "triangular_mesh": false,
             "wind_angle": -0.9599311,
             "seed": 42
           },
@@ -873,6 +947,16 @@
             "decay": 2.9
           },
           "optics": {
+            "post_process": {
+              "enabled": false,
+              "tonemapping_enabled": true,
+              "bloom_enabled": true,
+              "exposure": 0.0,
+              "strength": 0.1,
+              "threshold": 1.0,
+              "soft_knee": 0.5,
+              "radius": 1.0
+            },
             "model": {
               "enabled": true,
               "position": [
@@ -1022,6 +1106,12 @@
             "view": 0,
             "path_range": 35.0,
             "reflections": true,
+            "screen_space_reflections": false,
+            "reflection_distance": 100.0,
+            "reflection_strength": 1.0,
+            "reflection_steps": 128,
+            "reflection_tolerance": 1.0,
+            "reflection_edge_fade": 4.0,
             "color_bands": false,
             "checker_size": 4.0,
             "sky": {
@@ -1059,6 +1149,6 @@
         }
       }
     ],
-    "active": 2
+    "active": 0
   }
 }
