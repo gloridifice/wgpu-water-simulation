@@ -99,7 +99,14 @@ impl PostProcess {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("HDR / Bloom"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post_process.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                concat!(
+                    include_str!("shaders/agx.wgsl"),
+                    "\n",
+                    include_str!("shaders/post_process.wgsl")
+                )
+                .into(),
+            ),
         });
         let pipeline = |entry, format| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -246,7 +253,11 @@ impl PostProcess {
     ) {
         let config = self.config.get();
         let enabled = config.enabled && !self.debug.get() && !camera_debug;
-        let strength = if enabled { config.strength } else { 0.0 };
+        let strength = if enabled && config.bloom_enabled {
+            config.strength
+        } else {
+            0.0
+        };
         let uniform = [
             [
                 config.threshold,
@@ -254,7 +265,12 @@ impl PostProcess {
                 strength,
                 config.exposure.exp2(),
             ],
-            [config.radius, f32::from(enabled), 0.0, 0.0],
+            [
+                config.radius,
+                f32::from(enabled),
+                f32::from(config.tonemapping_enabled),
+                0.0,
+            ],
         ];
         gpu.queue
             .write_buffer(&self.uniform, 0, bytemuck::cast_slice(&uniform));

@@ -1,4 +1,8 @@
-// HDR highlight fixture for the headless post-processing verification.
+// HDR fixtures for the headless production post-processing verification.
+@group(0) @binding(0) var<storage, read> patches: array<vec4<f32>>;
+@fragment fn color_chart(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    return patches[u32(position.x)];
+}
 @vertex fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     let p = vec2(f32((index << 1u) & 2u), f32(index & 2u));
     return vec4(p * 2.0 - vec2(1.0), 0.0, 1.0);

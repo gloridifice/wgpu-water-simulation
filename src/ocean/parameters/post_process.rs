@@ -1,8 +1,12 @@
-//! Display-only HDR/Bloom controls; old sessions keep their original appearance.
+//! Display-only HDR/Bloom controls; legacy disabled sessions remain bypassed.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PostProcessConfig {
     pub enabled: bool,
+    /// AgX display mapping, independent of Bloom; gated by the master switch.
+    pub tonemapping_enabled: bool,
+    /// Bloom can be used with or without tone mapping; strength zero also skips it.
+    pub bloom_enabled: bool,
     /// Exposure compensation in stops, applied before the bright-pass threshold.
     pub exposure: f32,
     pub strength: f32,
@@ -18,6 +22,8 @@ impl Default for PostProcessConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            tonemapping_enabled: true,
+            bloom_enabled: true,
             exposure: 0.0,
             strength: 0.1,
             threshold: 1.0,
@@ -61,11 +67,18 @@ mod tests {
         assert_eq!(partial.depth, 17.0);
         assert!(partial.post_process.enabled);
         assert_eq!(partial.post_process.strength, 0.7);
-        let saved = serde_json::to_string(&partial).unwrap();
-        assert_eq!(
-            serde_json::from_str::<OpticsConfig>(&saved).unwrap(),
-            partial
-        );
+        assert!(partial.post_process.tonemapping_enabled);
+        assert!(partial.post_process.bloom_enabled);
+        for (mapping, bloom) in [(false, false), (false, true), (true, false), (true, true)] {
+            let mut config = partial;
+            config.post_process.tonemapping_enabled = mapping;
+            config.post_process.bloom_enabled = bloom;
+            let saved = serde_json::to_string(&config).unwrap();
+            assert_eq!(
+                serde_json::from_str::<OpticsConfig>(&saved).unwrap(),
+                config
+            );
+        }
         for bad in [f32::NAN, f32::INFINITY, -0.1, 20.1] {
             let mut config = partial;
             config.post_process.threshold = bad;

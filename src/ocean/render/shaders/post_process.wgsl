@@ -2,7 +2,7 @@
 struct Settings {
     // threshold, soft-knee fraction, bloom strength, exposure multiplier
     bloom: vec4<f32>,
-    // filter radius, enabled, unused, unused
+    // filter radius, post-processing enabled, AgX enabled, unused
     options: vec4<f32>,
 }
 @group(0) @binding(0) var source: texture_2d<f32>;
@@ -67,12 +67,6 @@ fn tent(uv: vec2<f32>) -> vec3<f32> {
     // Normalized accumulation keeps a uniform field independent of level count.
     return vec4(0.5 * (sample_source(input.uv) + tent(input.uv)), 1.0);
 }
-fn filmic(color: vec3<f32>) -> vec3<f32> {
-    // ACES fitted curve, SDR output; not an HDR-display transfer function.
-    let c = max(color, vec3(0.0));
-    return clamp((c * (2.51 * c + vec3(0.03))) /
-                 (c * (2.43 * c + vec3(0.59)) + vec3(0.14)), vec3(0.0), vec3(1.0));
-}
 @fragment fn composite(input: Vertex) -> @location(0) vec4<f32> {
     // Exact texel read avoids a second filtering of the main scene.
     let scene = textureLoad(source, vec2<i32>(input.position.xy), 0).rgb;
@@ -83,5 +77,8 @@ fn filmic(color: vec3<f32>) -> vec3<f32> {
     if settings.bloom.z > 0.0 {
         color += settings.bloom.z * textureSampleLevel(low, linear_clamp, input.uv, 0.0).rgb;
     }
-    return vec4(filmic(color), 1.0);
+    if settings.options.z > 0.5 {
+        color = agx_tonemap(color);
+    }
+    return vec4(color, 1.0);
 }
