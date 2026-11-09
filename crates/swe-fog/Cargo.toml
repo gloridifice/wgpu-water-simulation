@@ -1,0 +1,22 @@
+[package]
+name = "swe-fog"
+version = "0.1.0"
+edition = "2024"
+default-run = "swe-fog"
+publish = false
+
+[dependencies]
+common = { path = "../common" }
+wgpu = "29.0.1"
+winit = "0.30.13"
+glam = { version = "0.30", features = ["serde"] }
+bytemuck = { version = "1.23", features = ["derive"] }
+pollster = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+half = "2"
+png = "0.18"
+egui = { version = "0.34.3", features = ["serde"] }
+egui_dock = { version = "0.19.1", features = ["serde"] }
+yummy_egui = { version = "0.1.2", features = ["dock"] }

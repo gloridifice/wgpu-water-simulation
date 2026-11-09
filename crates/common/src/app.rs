@@ -3,7 +3,7 @@ use crate::{Error, gpu::Gpu};
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{DeviceEvent, DeviceId, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     window::{Window, WindowAttributes, WindowId},
 };
@@ -66,6 +66,8 @@ pub trait WindowScene {
     fn event(&mut self, event: WindowEvent) -> bool;
     /// Return true only for a successfully presented frame.
     fn draw(&mut self) -> Result<bool, Error>;
+    /// Optional raw input for captured-pointer applications; regular UI apps ignore it.
+    fn device_event(&mut self, _event: DeviceEvent) {}
     fn exiting(&mut self) {}
 }
 
@@ -131,6 +133,11 @@ pub fn run<S: WindowScene, F: FnOnce(Arc<Window>) -> Result<S, Error>>(
                         event_loop.exit();
                     }
                 }
+            }
+        }
+        fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+            if let Some(scene) = &mut self.scene {
+                scene.device_event(event);
             }
         }
         fn about_to_wait(&mut self, _: &ActiveEventLoop) {

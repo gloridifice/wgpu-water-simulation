@@ -6,24 +6,40 @@
 
 - Rust 2024 workspace，根包 `water-simulation` 默认启用 `ocean` feature；默认成员只有根包，`cargo run` 启动 GPU Ocean。
 - `src/bin/ocean.rs` 提供 GPU 海洋入口、验证与预览参数。
+- `crates/swe-fog/` 提供独立 Rust / wgpu 贴地雾库及同名程序；`cargo run -p swe-fog` 启动 64 米网格地面、第三人称胶囊、玩家拨雾与参数面板，`--bake` / `--verify` / `--snapshot` / `--dump` 分别负责显式烘焙、实际 GPU 验证和导出。它不依赖根包，也不接入海洋 FFT 或 Shore。
 - `src/bin/slider_lab.rs` 与 `src/ocean/labs/slider_lab/` 提供独立矩形滑块外观窗口，与正式面板共用 `yummy_egui::ParameterSlider`，复用库默认主题与参数网格；实验调节仅影响本窗口，不运行模拟、不读写配置。启动与交互见 [滑块外观实验](guides/slider-lab.md)。
 - `src/bin/ocean_profile.rs` 提供只读配置的离屏生产路径剖析：固定 1/60 模拟秒推进，预热后分开记录 FFT、远海泡沫、完整 SWE（含浪花源与复制）、粒子和绘制的 GPU timestamp；末尾回读状态／图像作 A/B，不包含 UI 或呈现。支持 pass 内时间戳时通过 `render/timing.rs` 细分绘制阶段而不拆分 render pass，初始化帧与预热后的统计分开；query 按设备上限分批；`--optics-ab` 在同一模拟状态上轮换四种焦散／折射组合进行配对测量，不额外推进物理；`--optics-methods` 则对照全关、物理焦散搭配快速折射、物理焦散搭配物理折射和原配置。运行说明同见 [泡沫诊断与基准测试](guides/foam-lab.md#生产路径离屏剖析)。
 - `src/bin/foam_lab.rs` 提供独立离线泡沫输送对照：默认诊断入口调用生产泡沫通量／源项／纹理运动，在固定解析水流下输出密度快照及误差；`foam_lab/benchmark.rs` 的 `--benchmark` 模式则调用生产 SWE 管线，在固定稀疏／密集／模型地形／障碍物及模型双浓度＋非零入射波输入下预热并重复计时、导出单步状态。两者均不读写个人配置，见 [泡沫诊断与基准测试](guides/foam-lab.md)。
 - `crates/tui-2d-prototype/` 是独立 CPU 包：`src/main.rs` 统一选择二维 PIC／一维浅水及 TUI／批处理，`src/pic/`、`src/solver.rs` 提供不依赖终端的求解器，`src/tui/`、`src/shallow_tui/` 负责交互。测试与 `pic_probe` 示例归该包所有，Cargo 包名为 `tui-2d-prototype`，库名为 `tui_2d_prototype`，二进制仍名为 `water-simulation`；从根目录用 `cargo run -p tui-2d-prototype` 启动。
-- `crates/common/` 是独立公共框架库，根包仅在 `ocean` feature 下依赖它；公共库不依赖根包或任何模拟业务。根包不依赖 CPU 包、Ratatui 或 Crossterm；根包、公共库与 CPU 包共用根 `Cargo.lock` 和构建目录，`cargo test --workspace` 覆盖这三个包；组件库 `yummy_egui` 从 crates.io 获取，不是 workspace 成员。`crates/tall-cell-fluid/` 保持独立 workspace，不纳入此工作区。
+- `crates/common/` 是独立公共框架库，根包仅在 `ocean` feature 下依赖它；公共库不依赖根包或任何模拟业务。根包不依赖 CPU 包、Ratatui 或 Crossterm；根包、公共库、Fog 与 CPU 包共用根 `Cargo.lock` 和构建目录，`cargo test --workspace` 覆盖这四个包；组件库 `yummy_egui` 从 crates.io 获取，不是 workspace 成员。`crates/tall-cell-fluid/` 保持独立 workspace，不纳入此工作区。
 
 ## 公共桌面框架
 
-`crates/common/` 提供以下已接入 Ocean 的机制；不持有海洋参数、面板注册表或模拟推进规则：
+`crates/common/` 提供以下已接入 Ocean 与 Fog 的机制；不持有海洋参数、面板注册表或模拟推进规则：
 
-- `app.rs`：`WindowScene` 与单窗口事件循环、窗口创建、有限呈现帧数、最小化跳帧和 Surface 恢复。业务事件先由应用交给 egui，再决定快捷键；计算与绘制顺序由应用控制。
+- `app.rs`：`WindowScene` 与单窗口事件循环、窗口创建、有限呈现帧数、最小化跳帧和 Surface 恢复。业务事件先由应用交给 egui，再决定快捷键；计算与绘制顺序由应用控制。可选原始设备事件通过 `WindowScene::device_event` 传递给捕获鼠标的应用，默认空实现不改变 Ocean 的视口拖拽策略。
 - `gpu/`：同一个 wgpu 设备、队列、显式回读与非阻塞 timestamp 采样。Ocean 的求解阶数、子步和模拟时间元数据由原 `gpu/timer.rs` 适配，公共计时器只报告真实 GPU 毫秒。
 - `ui/`：egui-winit/wgpu 接线与原生纹理视口，保持现有 sRGB／egui 颜色约定。字体由应用安装，控件和主题继续使用 crates.io yummy_egui。
 - `ui/layout.rs`：按应用面板类型参数化的规范布局、校验、Dock 转换与临时隐藏位置恢复。Ocean 保留五分类、名称、默认布局、参数依赖和 v1/v2→v3 迁移。
 - `settings/`：泛型工作状态、只读默认快照、命名配置、手动保存、坏文件备份与同目录原子替换；`sidecar.rs` 独立负责布局节流保存、错误与显式修复许可。应用提供序列化类型、校验、文件名和版本策略；Ocean 保持原顶层 JSON、配置路径与保存语义。
 - `camera.rs`：不依赖海洋参数的轨道相机姿态、透视矩阵和水平平移；Ocean 的旧相机配置和 CameraUniform 仍在原模块，不改变字段或 GPU 二进制布局。
 
-公共库只抽取桌面机制，不提供统一求解器、完整场景渲染器或角色物理。独立实验窗口仍有自己的应用适配；雾程序尚未迁移。框架边界、Ocean 回归证据与验证命令见 [公共框架指南](guides/common.md)。
+公共库只抽取桌面机制，不提供统一求解器、完整场景渲染器或角色物理。独立实验窗口仍有自己的应用适配；Fog 使用公共循环和可选原始鼠标输入，不复制另一套桌面框架。框架边界、Ocean 回归证据与验证命令见 [公共框架指南](guides/common.md)。
+
+## GPU 贴地雾
+
+`crates/swe-fog/` 内部按 `app/`、`parameters.rs`、`interactions.rs`、`scene.rs` / `scene/`、`terrain.rs`、`simulation/`、`render/`、`verify.rs` 分工。运行时不依赖 Godot；Phantom Camera 与 CharacterBody3D 的能力由本 crate 的静态场景相机/角色控制替代，不携带插件源码。
+
+- `terrain.rs` 从显式世界空间 floor/obstacle 三角形烘焙单层最高地面、无效格和共享阻断面，含退化投影竖墙。版本化二进制资产记录矩形范围、分辨率、来源摘要和重叠计数。默认 JSON 场景与实际 128² 烘焙资产位于 crate 的 `assets/` 并编译期嵌入；自定义资产损坏/过期严格报错，不在运行时补烘焙或假定零地面。
+- `simulation/mod.rs` 管一个主 wgpu Device 上的缓冲、固定请求、GPU CFL/retry 调度与 RGBA32F 发布场。四份守恒状态在一个 storage 内分块，重构/限流/舍入修正在同一逐格记录中；连同地形、掩码、共享面、控制和事件共七个 storage 绑定，不依赖提高默认八个绑定上限。不可变动态偏移 uniform 选择计算阶段，不依赖 push constants 或每 dispatch 覆盖同一上传值。
+- `simulation/shaders/swe.wgsl` 保留静水重构、Rusanov、MUSCL、SSP-RK2、独立 m 输送、风/消散解析分裂、拒绝重试及统一有效重力。GPU 控制缓冲管理实际接受时间、积压/丢弃、故障和 h/速度归约；正常运行每 0.5 秒至多异步读取 64 字节，不回读全场。显式导出/验证可阻塞读取完整状态。
+- `interactions.rs` 管有界事件队列、实际物理运动的移动脉冲节拍、起跳/落地冲击和程序化两层 RG16F 速度数据。冲量只在请求的 CFL 前一次作用于动量；持续来源按 ID 更新，和风合并解析拖曳。事件语义、坐标及 16+48 字节 ABI 见 [贴地雾规范](specs/swe-fog.md)。
+- `scene.rs` 用固定 60 Hz、正常重力和高度场/通行面约束实现胶囊行走/跳跃；玩家渲染位置插值不反馈到物理事件。`scene/camera_collision.rs` 使用相同静态三角形裁切球形跟随臂，公共 Orbit 只提供相机数学。
+- `render/` 是针对二维高度层的独立积分器，不复制 Godot froxel。它对静态三角形和胶囊求最近可见点，以整数 XZ DDA 分段、通行面约束双线性重建和局部垂直原函数积分生成白雾；每格两个局部段，每像素四条固定子视线。无时间重投影/抖动，RGBA32F 使用显式 textureLoad，不要求 FLOAT32_FILTERABLE。当前只作 SDR/sRGB 合成，静态三角形上限 4096、雾积分远端 64 米，不含体积阴影、HDR/Bloom 或 Ocean 同屏水雾合成。
+- `app/ui.rs` 注册三分类布局、业务参数、命名配置及显式保存入口；数字拖动中持续重置雾，开关不重置。会话与布局使用 common，文件名与 Ocean 隔离。模拟和场景/雾绘制分别异步采集真实 timestamp；绘制指标不含 egui 或呈现，也不声称是纯雾净成本。
+- `verify.rs` 使用实际 GPU 管线检查平衡、守恒、薄墙、交互、解析源与薄层/遮挡/相机积分；采样对照使用实际不透明度，避免背景恒定像素线宽干扰。CPU/egui/CLI 检查归 crate 的测试边界；窗口截图不能代替实际桌面键鼠验收。
+
+运行、导出、迁移差异及未验收限制见 [Fog 指南](guides/fog.md)。
 
 ## GPU 海洋
 
