@@ -3048,6 +3048,7 @@ dependencies = [
  "common",
  "egui",
  "egui_dock",
+ "egui_extras",
  "glam",
  "half",
  "png 0.18.1",

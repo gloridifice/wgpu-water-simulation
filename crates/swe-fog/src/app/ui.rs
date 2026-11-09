@@ -12,7 +12,7 @@ use common::{
 };
 use serde::{Deserialize, Serialize};
 use winit::window::Window;
-use yummy_egui::{SelectionList, parameter, parameter_table};
+use yummy_egui::{IconButton, SelectionList, parameter, parameter_table};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Panel {
@@ -102,6 +102,7 @@ pub struct Interface {
     pub library: ConfigurationLibrary<Session>,
     workspaces: Vec<Workspace<Panel>>,
     active: usize,
+    icons: [egui::Image<'static>; 5],
     sidecar: Option<Sidecar<LayoutDocument>>,
     writable: bool,
     name: String,
@@ -136,6 +137,21 @@ impl Interface {
         store: Option<&SettingsStore<Session>>,
     ) -> Self {
         let mut backend = Egui::new(window, gpu, format);
+        egui_extras::install_image_loaders(&backend.context);
+        let sources = [
+            include_str!("../../assets/icons/haze.svg"),
+            include_str!("../../assets/icons/palette.svg"),
+            include_str!("../../assets/icons/sliders-horizontal.svg"),
+            include_str!("../../assets/icons/panel-left-open.svg"),
+            include_str!("../../assets/icons/rotate-ccw.svg"),
+        ];
+        // Cache white SVGs once; tint follows the current theme and selection.
+        let icons = std::array::from_fn(|i| {
+            egui::Image::from_bytes(
+                format!("bytes://fog-navigation-{i}.svg"),
+                sources[i].replace("currentColor", "#ffffff").into_bytes(),
+            )
+        });
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "MiSans".into(),
@@ -193,6 +209,7 @@ impl Interface {
                 .unwrap_or_else(|| ConfigurationLibrary::new(session.clone())),
             workspaces,
             active,
+            icons,
             sidecar,
             writable: store.is_some(),
             name: String::new(),
@@ -228,17 +245,37 @@ impl Interface {
         let output=context.run_ui(input,|root|{
             if root.input_mut(|i|i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND,egui::Key::S)))&&self.writable{actions.save=true;}
             egui::Panel::top("fog header").show_inside(root,|ui|{
-                ui.horizontal_wrapped(|ui|{yummy_egui::h3(ui,"SWE / FOG");if ui.button(if session.paused{"继续"}else{"暂停"}).clicked(){session.paused = !session.paused;}
+                ui.horizontal(|ui|{ui.label(egui::RichText::new("SWE / FOG").strong());if ui.button(if session.paused{"继续"}else{"暂停"}).clicked(){session.paused = !session.paused;}
                     if ui.button("重置雾场").clicked(){actions.reset=true;}
                     if ui.add_enabled(self.writable,egui::Button::new("保存")).on_disabled_hover_text("只读配置或 --no-settings 模式不写盘").clicked(){actions.save=true;}
                     let label=if status.save_failed{ui.colored_label(egui::Color32::LIGHT_RED,&status.save)}else{ui.label(&status.save)};
                     label.on_hover_text(status.save_path.as_deref().unwrap_or("本地保存已禁用"));
-                    ui.menu_button("操作",|ui|{ui.label("单击视图捕获鼠标；Esc 释放");ui.label("WASD 移动，空格跳跃，Q 退出");ui.label("左拖数值，Shift 精调，双击输入");ui.label("数字改动重置雾，开关不重置");});ui.separator();ui.label(format!("FPS {:.1} · GPU {}",status.fps,status.gpu));});
-                let d=status.diagnostics;ui.label(format!("模拟 {:.2} s · g={:.3} m/s² · h {:.3}–{:.3} m · 最大速度 {:.2} cm/s",d.simulated_time,if session.fog.gravity_enabled{session.fog.reduced_gravity}else{0.0},d.min_height,d.max_height,d.max_speed*100.0));
-                if let Some(e)=&status.error{ui.colored_label(egui::Color32::LIGHT_RED,e);}
-                if let Some(w)=&status.warning{ui.colored_label(egui::Color32::YELLOW,w);}
+                    ui.menu_button("操作",|ui|{ui.label("单击视图捕获鼠标；Esc 释放");ui.label("WASD 移动，空格跳跃，Q 退出");ui.label("左拖数值，Shift 精调，双击输入");ui.label("数字改动重置雾，开关不重置");});ui.separator();
+                    if let Some(e)=&status.error{ui.colored_label(egui::Color32::LIGHT_RED,"错误").on_hover_text(e);}
+                    if let Some(w)=&status.warning{ui.colored_label(egui::Color32::YELLOW,"警告").on_hover_text(w);}
+                    ui.label(format!("FPS {:.1}",status.fps)).on_hover_text(format!("GPU {}",status.gpu));
+                    ui.menu_button("诊断",|ui|{
+                        let d=status.diagnostics;
+                        ui.label(format!("GPU {}",status.gpu));
+                        ui.label(format!("模拟 {:.2} s · g={:.3} m/s²",d.simulated_time,if session.fog.gravity_enabled{session.fog.reduced_gravity}else{0.0}));
+                        ui.label(format!("h {:.3}–{:.3} m · 最大速度 {:.2} cm/s",d.min_height,d.max_height,d.max_speed*100.0));
+                    });
+                });
             });
-            egui::Panel::left("fog navigation").exact_size(62.0).show_inside(root,|ui|{for (i,name) in ["模拟","外观","配置"].into_iter().enumerate(){if ui.selectable_label(self.active==i,name).clicked(){self.active=i;}}ui.separator();ui.menu_button("面板",|ui|{for p in <Panel as PanelId>::ALL.iter().copied().filter(|p|*p!=Panel::View){if ui.button(p.name()).clicked(){workspaces[self.active].add(p);ui.close();}}});if ui.button("重排").on_hover_text("重置当前布局；损坏的布局文件将允许修复。不重置模拟或相机。").clicked(){reset_layout=true;}});
+            egui::Panel::left("fog navigation").exact_size(48.0).show_inside(root,|ui|{
+                for (i,name) in ["模拟","外观","配置"].into_iter().enumerate(){
+                    let color=if self.active==i{ui.visuals().selection.stroke.color}else{ui.visuals().text_color()};
+                    let response=ui.add(IconButton::new(self.icons[i].clone().tint(color)).size(32.0).icon_size(22.0).label(name));
+                    if self.active==i{ui.painter().rect_stroke(response.rect,4.0,ui.visuals().selection.stroke,egui::StrokeKind::Inside);}
+                    if response.clicked(){self.active=i;}
+                }
+                ui.separator();
+                let add=ui.add(IconButton::new(self.icons[3].clone().tint(ui.visuals().text_color())).size(32.0).icon_size(22.0).label("添加面板"));
+                egui::Popup::menu(&add).show(|ui|{
+                    for p in <Panel as PanelId>::ALL.iter().copied().filter(|p|*p!=Panel::View){if ui.button(p.name()).clicked(){workspaces[self.active].add(p);ui.close();}}
+                });
+                if ui.add(IconButton::new(self.icons[4].clone().tint(ui.visuals().text_color())).size(32.0).icon_size(22.0).label("重排：重置当前布局；损坏的布局文件将允许修复。不重置模拟或相机。")).clicked(){reset_layout=true;}
+            });
             egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(root,|ui|{
                 let active=self.active;let workspace=&mut workspaces[active];workspace.prepare(|p|p!=Panel::Unknown);
                 egui_dock::DockArea::new(&mut workspace.dock).id(egui::Id::new(("fog dock",active))).style(style.clone()).show_leaf_close_all_buttons(false).show_inside(ui,&mut Tabs(|panel,ui:&mut egui::Ui|{
