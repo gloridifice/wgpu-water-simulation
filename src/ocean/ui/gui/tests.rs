@@ -6,7 +6,13 @@ fn default_workspace_keeps_view_right_of_controls_and_resizes() {
     theme.apply(&ctx);
     crate::ocean::ui::fonts::install(&ctx);
     let dock_style = theme.dock_style().clone();
-    let mut dock = Workspaces::default().items.into_iter().next().unwrap().dock;
+    let mut dock = Workspaces::default()
+        .items
+        .into_iter()
+        .next()
+        .unwrap()
+        .dock
+        .clone();
     let mut previous_width = 0.0;
     for width in [1200.0, 1600.0] {
         let mut rects = std::collections::HashMap::new();

@@ -80,9 +80,7 @@ fn ocean_view(
 }
 
 pub struct Gui {
-    pub context: egui::Context,
-    pub input: egui_winit::State,
-    renderer: egui_wgpu::Renderer,
+    pub backend: common::ui::Egui,
     pub draft: OceanConfig,
     pub speed: f32,
     pub performance: crate::ocean::ui::performance::Performance,
@@ -105,13 +103,22 @@ pub struct Gui {
     dock_style: egui_dock::Style,
     show_dock_padding: bool,
     pub viewport_size: [u32; 2],
-    pub viewport_view: wgpu::TextureView,
-    viewport_texture: wgpu::Texture,
-    viewport_id: egui::TextureId,
+    pub viewport: common::ui::Viewport,
     pub(super) sigma_editor: CoefficientEditor,
     pub(super) source_editor: CoefficientEditor,
 }
 
+impl std::ops::Deref for Gui {
+    type Target = common::ui::Egui;
+    fn deref(&self) -> &Self::Target {
+        &self.backend
+    }
+}
+impl std::ops::DerefMut for Gui {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.backend
+    }
+}
 impl Gui {
     pub fn new(
         window: &Window,
@@ -119,9 +126,9 @@ impl Gui {
         format: wgpu::TextureFormat,
         config: OceanConfig,
     ) -> Self {
-        let context = egui::Context::default();
+        let mut backend = common::ui::Egui::new(window, gpu, format);
+        let context = backend.context.clone();
         let theme = yummy_egui::Theme::default();
-        theme.apply(&context);
         super::fonts::install(&context);
         let dock_style = theme.dock_style().clone();
         egui_extras::install_image_loaders(&context);
@@ -139,27 +146,9 @@ impl Gui {
                 sources[i].replace("currentColor", "#ffffff").into_bytes(),
             )
         });
-        let input = egui_winit::State::new(
-            context.clone(),
-            egui::ViewportId::ROOT,
-            window,
-            Some(window.scale_factor() as f32),
-            window.theme(),
-            Some(gpu.device.limits().max_texture_dimension_2d as usize),
-        );
-        let mut renderer = egui_wgpu::Renderer::new(&gpu.device, format, Default::default());
-        let viewport_texture = Self::view_texture(gpu, format, [1, 1]);
-        let viewport_view = viewport_texture.create_view(&Default::default());
-        let sampled_view = viewport_texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(format.remove_srgb_suffix()),
-            ..Default::default()
-        });
-        let viewport_id =
-            renderer.register_native_texture(&gpu.device, &sampled_view, wgpu::FilterMode::Linear);
+        let viewport = common::ui::Viewport::new(&mut backend, gpu, format);
         Self {
-            context,
-            input,
-            renderer,
+            backend,
             draft: config,
             speed: 1.0,
             performance: crate::ocean::ui::performance::Performance::default(),
@@ -184,9 +173,7 @@ impl Gui {
             dock_style,
             show_dock_padding: false,
             viewport_size: [1, 1],
-            viewport_texture,
-            viewport_view,
-            viewport_id,
+            viewport,
             sigma_editor: CoefficientEditor::new(OpticsConfig::default().sigma_t, 0.1),
             source_editor: CoefficientEditor::new(OpticsConfig::default().source, 0.01),
         }
@@ -434,7 +421,7 @@ impl Gui {
                             &mut PanelViewer(|panel, ui: &mut egui::Ui| {
                                 if panel == Panel::View {
                                     self.viewport_size =
-                                        ocean_view(ui, self.viewport_id, camera, current.length);
+                                        ocean_view(ui, self.viewport.id, camera, current.length);
                                     return;
                                 }
                                 ui.push_id((active, panel), |ui| {
@@ -561,37 +548,9 @@ impl Gui {
         }
     }
 
-    fn view_texture(gpu: &Gpu, format: wgpu::TextureFormat, size: [u32; 2]) -> wgpu::Texture {
-        gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("docked ocean view"),
-            size: wgpu::Extent3d {
-                width: size[0],
-                height: size[1],
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[format.remove_srgb_suffix()],
-        })
-    }
     pub fn resize_view(&mut self, gpu: &Gpu, format: wgpu::TextureFormat) {
-        self.viewport_texture = Self::view_texture(gpu, format, self.viewport_size);
-        self.viewport_view = self.viewport_texture.create_view(&Default::default());
-        let sampled_view = self
-            .viewport_texture
-            .create_view(&wgpu::TextureViewDescriptor {
-                format: Some(format.remove_srgb_suffix()),
-                ..Default::default()
-            });
-        self.renderer.update_egui_texture_from_wgpu_texture(
-            &gpu.device,
-            &sampled_view,
-            wgpu::FilterMode::Linear,
-            self.viewport_id,
-        );
+        self.viewport
+            .resize(&mut self.backend, gpu, format, self.viewport_size);
     }
     pub fn encode(
         &mut self,
@@ -601,45 +560,7 @@ impl Gui {
         target: &wgpu::TextureView,
         output: egui::FullOutput,
     ) -> Vec<wgpu::CommandBuffer> {
-        self.input
-            .handle_platform_output(window, output.platform_output);
-        for (id, delta) in &output.textures_delta.set {
-            self.renderer
-                .update_texture(&gpu.device, &gpu.queue, *id, delta);
-        }
-        let jobs = self
-            .context
-            .tessellate(output.shapes, output.pixels_per_point);
-        let size = window.inner_size();
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [size.width, size.height],
-            pixels_per_point: output.pixels_per_point,
-        };
-        let commands =
-            self.renderer
-                .update_buffers(&gpu.device, &gpu.queue, encoder, &jobs, &screen);
-        {
-            let mut pass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui overlay"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: target,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    ..Default::default()
-                })
-                .forget_lifetime();
-            self.renderer.render(&mut pass, &jobs, &screen);
-        }
-        for id in &output.textures_delta.free {
-            self.renderer.free_texture(id);
-        }
-        commands
+        self.backend.encode(window, gpu, encoder, target, output)
     }
 }
 

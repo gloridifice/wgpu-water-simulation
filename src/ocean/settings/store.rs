@@ -1,234 +1,37 @@
-use super::{ConfigurationLibrary, SavedSettings};
-use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    io::{self, Write},
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
-
-/// Repository sessions are deliberately versioned; launches outside the repo
-/// retain the previous per-user fallback. Explicit --settings always wins.
+//! Ocean path/schema adapter over the shared typed settings store.
+use super::SavedSettings;
+use std::path::{Path, PathBuf};
+pub type SettingsStore = common::settings::SettingsStore<SavedSettings>;
 pub fn default_path() -> PathBuf {
-    let repository = PathBuf::from("configs/ocean-settings.json");
-    if repository.is_file() {
-        return repository;
-    }
-    let base = std::env::var_os("LOCALAPPDATA")
-        .or_else(|| std::env::var_os("APPDATA"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("water-simulation").join("ocean-settings.json")
+    common::settings::default_path("water-simulation", "ocean-settings.json")
 }
-
-/// Strict, read-only load for reproducible previews and snapshots. Never backs
-/// up, rewrites, or silently substitutes defaults for a broken input.
 pub fn load_config(path: &Path) -> Result<SavedSettings, String> {
-    read_document(path)?
-        .map(|document| document.current)
-        .ok_or_else(|| format!("configuration does not exist: {}", path.display()))
+    common::settings::load_config(path)
 }
-
-/// Keep session fields at the top level for compatibility with existing files.
-#[derive(Serialize, Deserialize)]
-struct SettingsDocument {
-    #[serde(flatten)]
-    current: SavedSettings,
-    #[serde(default)]
-    configurations: Option<ConfigurationLibrary>,
-}
-
-fn read_document(path: &Path) -> Result<Option<SettingsDocument>, String> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    let mut document: SettingsDocument =
-        serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    document.current.validate()?;
-    if let Some(library) = &mut document.configurations {
-        library.restore_selection();
-        library.validate()?;
-    }
-    Ok(Some(document))
-}
-
+#[cfg(test)]
+use {
+    super::ConfigurationLibrary,
+    std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    },
+};
+#[cfg(test)]
+type SettingsDocument = common::settings::SettingsDocument<SavedSettings>;
 #[cfg(test)]
 fn read(path: &Path) -> Result<Option<SavedSettings>, String> {
-    Ok(read_document(path)?.map(|d| d.current))
+    if !path.exists() {
+        return Ok(None);
+    }
+    load_config(path).map(Some)
 }
-
 #[cfg(test)]
 fn write_atomic(path: &Path, settings: &SavedSettings) -> Result<(), String> {
     settings.validate()?;
-    let bytes = serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?;
-    write_bytes_atomic(path, &bytes)
-}
-
-fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let temporary = parent.join(format!(
-        ".ocean-settings-{}-{nonce}.tmp",
-        std::process::id()
-    ));
-    let result = (|| -> io::Result<()> {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        drop(file);
-        // Same-directory replacement: the old JSON survives any failed write.
-        fs::rename(&temporary, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result.map_err(|e| e.to_string())
-}
-
-pub struct SettingsStore {
-    pub path: PathBuf,
-    pub status: String,
-    pub failed: bool,
-    observed: SavedSettings,
-    saved: Option<SavedSettings>,
-    configurations: ConfigurationLibrary,
-    saved_configurations: Option<ConfigurationLibrary>,
-    backup_before_write: bool,
-}
-
-impl SettingsStore {
-    pub fn open(path: PathBuf) -> (SavedSettings, Self) {
-        let result = read_document(&path);
-        let mut saved_configurations = None;
-        let (initial, saved, status, failed, backup_before_write) = match result {
-            Ok(Some(document)) => {
-                saved_configurations = document.configurations;
-                (
-                    document.current.clone(),
-                    Some(document.current),
-                    "已载入本地配置".into(),
-                    false,
-                    false,
-                )
-            }
-            Ok(None) => (
-                SavedSettings::default(),
-                None,
-                "新配置，尚未保存".into(),
-                false,
-                false,
-            ),
-            Err(error) => (
-                SavedSettings::default(),
-                None,
-                format!("载入失败：{error}；使用默认配置"),
-                true,
-                true,
-            ),
-        };
-        let store = Self {
-            path,
-            status,
-            failed,
-            observed: initial.clone(),
-            saved,
-            configurations: saved_configurations
-                .clone()
-                .unwrap_or_else(|| ConfigurationLibrary::new(initial.clone())),
-            saved_configurations,
-            backup_before_write,
-        };
-        (initial, store)
-    }
-
-    pub fn configurations(&self) -> &ConfigurationLibrary {
-        &self.configurations
-    }
-
-    pub fn set_configurations(&mut self, library: &ConfigurationLibrary) {
-        if &self.configurations != library {
-            self.configurations = library.clone();
-            self.refresh_edit_status();
-        }
-    }
-
-    fn refresh_edit_status(&mut self) {
-        // Keep failures visible until an explicit save succeeds.
-        if !self.failed {
-            self.status = if self.saved.as_ref() == Some(&self.observed)
-                && self.saved_configurations.as_ref() == Some(&self.configurations)
-            {
-                "无未保存的更改"
-            } else {
-                "有未保存的更改"
-            }
-            .into();
-        }
-    }
-
-    /// Observe live edits without writing; only an explicit user action saves.
-    pub fn update(&mut self, current: SavedSettings, save_requested: bool) {
-        if current != self.observed {
-            self.observed = current;
-            self.refresh_edit_status();
-        }
-        if !save_requested {
-            return;
-        }
-        match self.save() {
-            Ok(()) => {
-                self.saved = Some(self.observed.clone());
-                self.saved_configurations = Some(self.configurations.clone());
-                self.status = "保存成功".into();
-                self.failed = false;
-            }
-            Err(error) => {
-                self.status = format!("保存失败：{error}");
-                self.failed = true;
-            }
-        }
-    }
-
-    fn save(&mut self) -> Result<(), String> {
-        self.observed.validate()?;
-        self.configurations.validate()?;
-        if self.backup_before_write && self.path.exists() {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
-            let backup = self.path.with_extension(format!("invalid-{nonce}.json"));
-            let bytes = fs::read(&self.path).map_err(|e| e.to_string())?;
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&backup)
-                .map_err(|e| e.to_string())?;
-            file.write_all(&bytes)
-                .and_then(|_| file.sync_all())
-                .map_err(|e| e.to_string())?;
-            self.backup_before_write = false;
-        }
-        let document = SettingsDocument {
-            current: self.observed.clone(),
-            configurations: Some(self.configurations.clone()),
-        };
-        let bytes = serde_json::to_vec_pretty(&document).map_err(|e| e.to_string())?;
-        write_bytes_atomic(&self.path, &bytes)
-    }
+    common::settings::write_bytes_atomic(
+        path,
+        &serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?,
+    )
 }
 
 #[cfg(test)]

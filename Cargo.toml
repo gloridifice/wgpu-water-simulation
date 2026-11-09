@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/tui-2d-prototype"]
+members = [".", "crates/common", "crates/tui-2d-prototype"]
 default-members = ["."]
 exclude = ["crates/tall-cell-fluid"]
 resolver = "3"
@@ -12,7 +12,11 @@ default-run = "ocean"
 
 [features]
 default = ["ocean"]
-ocean = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_extras", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:yummy_egui", "dep:gltf", "dep:sha2"]
+ocean = ["dep:common", "dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_extras", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:yummy_egui", "dep:gltf", "dep:sha2"]
+
+[dependencies.common]
+path = "crates/common"
+optional = true
 
 [dependencies.wgpu]
 version = "29.0.1"

@@ -1,83 +1,55 @@
-//! Layout sidecars are independent from simulation sessions and named presets.
+//! Ocean layout versions; generic sidecar I/O, throttling and errors live in common.
 use super::{Layout, Workspace, WorkspaceId, Workspaces};
 use serde::Serialize;
-use std::{
-    collections::BTreeMap,
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
-
+use std::{collections::BTreeMap, path::Path, time::Instant};
 #[derive(Clone, Debug, PartialEq, Serialize)]
-struct Document {
+pub struct Document {
     version: u32,
     active: WorkspaceId,
     workspaces: BTreeMap<String, Layout>,
 }
 impl Document {
-    fn capture(workspaces: &Workspaces) -> Self {
+    fn capture(w: &Workspaces) -> Self {
         Self {
             version: 3,
-            active: workspaces.active,
+            active: w.active,
             workspaces: WorkspaceId::ALL
                 .into_iter()
-                .map(|id| (id.key().into(), workspaces.items[id.index()].layout.clone()))
+                .map(|id| (id.key().into(), w.items[id.index()].layout.clone()))
                 .collect(),
         }
     }
 }
-
 pub struct WorkspaceStore {
-    path: PathBuf,
-    pub error: Option<String>,
-    pub blocked: bool,
-    saved: Option<Document>,
-    observed: Option<Document>,
-    checked_at: Instant,
-    changed_at: Instant,
-    attempted_at: Option<Instant>,
+    inner: common::settings::sidecar::Sidecar<Document>,
+}
+impl std::ops::Deref for WorkspaceStore {
+    type Target = common::settings::sidecar::Sidecar<Document>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+impl std::ops::DerefMut for WorkspaceStore {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
 }
 impl WorkspaceStore {
     pub fn open(session: &Path, workspaces: &mut Workspaces) -> Self {
-        let stem = session.file_stem().unwrap_or_default().to_string_lossy();
-        let path = session.with_file_name(format!("{stem}.workspaces.json"));
-        let now = Instant::now();
         let mut store = Self {
-            path,
-            error: None,
-            blocked: false,
-            saved: None,
-            observed: None,
-            checked_at: now,
-            changed_at: now,
-            attempted_at: None,
+            inner: common::settings::sidecar::Sidecar::new(session),
         };
         match store.read(workspaces) {
-            Ok(true) => {
-                store.saved = Some(Document::capture(workspaces));
-                store.observed = store.saved.clone();
-            }
+            Ok(true) => store.inner.loaded(Document::capture(workspaces)),
             Ok(false) => {}
-            Err(error) => {
-                store.error = Some(format!("布局读取失败：{error}；已保留原文件"));
-                store.blocked = true;
-            }
+            Err(e) => store.inner.read_failed(e),
         }
         store
     }
     fn read(&self, workspaces: &mut Workspaces) -> Result<bool, String> {
-        let metadata = match fs::metadata(&self.path) {
-            Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-            Err(e) => return Err(e.to_string()),
+        let Some(value) = self.inner.read_json()? else {
+            return Ok(false);
         };
-        if metadata.len() > 1024 * 1024 {
-            return Err("文件超过 1 MiB".into());
-        }
-        let value: serde_json::Value =
-            serde_json::from_slice(&fs::read(&self.path).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
         let version = value["version"].as_u64();
         if !matches!(version, Some(1..=3)) {
             return Err("不支持的布局版本".into());
@@ -92,17 +64,16 @@ impl WorkspaceStore {
                 {
                     Ok(mut layout) => {
                         if version == Some(1) && id == WorkspaceId::Shading {
-                            layout.add_water_effect_tabs(&[
-                                super::Panel::Caustics,
-                                super::Panel::Refraction,
-                            ]);
+                            for p in [super::Panel::Caustics, super::Panel::Refraction] {
+                                layout.insert_near(super::Panel::Optics, p);
+                            }
                         }
                         if matches!(version, Some(1 | 2)) && id == WorkspaceId::Shading {
-                            layout.add_water_effect_tabs(&[super::Panel::Reflection]);
+                            layout.insert_near(super::Panel::Optics, super::Panel::Reflection);
                         }
                         workspaces.items[id.index()] = Workspace::new(layout);
                     }
-                    Err(error) => errors.push(format!("{}：{error}", id.name())),
+                    Err(e) => errors.push(format!("{}：{e}", id.name())),
                 }
             }
         }
@@ -112,88 +83,23 @@ impl WorkspaceStore {
                 Err(_) => errors.push("未知工作区，已选择场景".into()),
             }
         }
-        if !errors.is_empty() {
-            return Err(errors.join("；"));
-        }
-        Ok(true)
-    }
-    /// Only explicit reset/repair authorizes replacement of a damaged sidecar.
-    pub fn allow_repair(&mut self) {
-        self.blocked = false;
-        self.error = None;
-        self.saved = None;
-        self.attempted_at = None;
-    }
-    pub fn update(&mut self, workspaces: &Workspaces, now: Instant, force: bool) {
-        if self.blocked
-            || (!force && now.duration_since(self.checked_at) < Duration::from_millis(500))
-        {
-            return;
-        }
-        self.checked_at = now;
-        let current = Document::capture(workspaces);
-        if self.observed.as_ref() != Some(&current) {
-            self.observed = Some(current.clone());
-            self.changed_at = now;
-        }
-        if self.saved.as_ref() == Some(&current) {
-            return;
-        }
-        if !force
-            && (now.duration_since(self.changed_at) < Duration::from_millis(500)
-                || self
-                    .attempted_at
-                    .is_some_and(|last| now.duration_since(last) < Duration::from_secs(2)))
-        {
-            return;
-        }
-        self.attempted_at = Some(now);
-        match self.write(&current) {
-            Ok(()) => {
-                self.saved = Some(current);
-                self.error = None;
-                self.attempted_at = None;
-            }
-            Err(error) => self.error = Some(format!("布局保存失败：{error}")),
+        if errors.is_empty() {
+            Ok(true)
+        } else {
+            Err(errors.join("；"))
         }
     }
-    fn write(&self, document: &Document) -> Result<(), String> {
-        let bytes = serde_json::to_vec_pretty(document).map_err(|e| e.to_string())?;
-        let parent = self
-            .path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let temp = parent.join(format!(
-            ".ocean-workspaces-{}-{nonce}.tmp",
-            std::process::id()
-        ));
-        let result = (|| -> std::io::Result<()> {
-            let mut file = fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&temp)?;
-            file.write_all(&bytes)?;
-            file.write_all(b"\n")?;
-            file.sync_all()?;
-            drop(file);
-            fs::rename(&temp, &self.path)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temp);
-        }
-        result.map_err(|e| e.to_string())
+    pub fn update(&mut self, w: &Workspaces, now: Instant, force: bool) {
+        self.inner.update(Document::capture(w), now, force);
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     #[test]
     fn sidecar_roundtrip_isolated_from_session_and_corruption_requires_permission() {
         let dir = std::env::temp_dir().join(format!(
@@ -211,9 +117,8 @@ mod tests {
             active: WorkspaceId::Shallow,
             ..Default::default()
         };
-        workspaces
-            .current()
-            .add(crate::ocean::ui::workspace::Panel::Performance);
+        use crate::ocean::ui::workspace::Panel;
+        workspaces.current().add(Panel::Performance);
         let mut store = WorkspaceStore::open(&session, &mut workspaces);
         store.update(&workspaces, Instant::now(), true);
         assert!(store.error.is_none());
@@ -221,13 +126,8 @@ mod tests {
         let read = WorkspaceStore::open(&session, &mut restored);
         assert!(read.error.is_none());
         assert_eq!(restored.active, WorkspaceId::Shallow);
-        assert!(
-            restored
-                .current()
-                .contains(crate::ocean::ui::workspace::Panel::Performance)
-        );
+        assert!(restored.current().contains(Panel::Performance));
         assert_eq!(Document::capture(&restored), Document::capture(&workspaces));
-        use crate::ocean::ui::workspace::Panel;
         let mut legacy = serde_json::to_value(Document::capture(&restored)).unwrap();
         legacy["version"] = serde_json::json!(1);
         let shading = super::super::default_layout(WorkspaceId::Shading)

@@ -16,6 +16,12 @@ pub struct SavedSettings {
     pub paused: bool,
 }
 
+impl common::settings::Settings for SavedSettings {
+    fn validate(&self) -> Result<(), String> {
+        SavedSettings::validate(self)
+    }
+}
+
 impl Default for SavedSettings {
     fn default() -> Self {
         Self {

@@ -1,6 +1,8 @@
 //! Shared camera state and GPU layout, independent of the window.
 use crate::ocean::parameters::ocean::OceanConfig;
-use glam::{Mat4, Vec2, Vec3};
+#[cfg(test)]
+use glam::Mat4;
+use glam::{Vec2, Vec3};
 
 const VERTICAL_FOV: f32 = 55.0_f32.to_radians();
 
@@ -60,41 +62,35 @@ impl Camera {
         }
     }
 
+    fn orbit(&self) -> common::camera::Orbit {
+        common::camera::Orbit {
+            yaw: self.yaw,
+            pitch: self.pitch,
+            distance: self.distance,
+            target: Vec3::new(self.target[0], 0.0, self.target[1]),
+        }
+    }
     pub fn pan(&mut self, direction: Vec2, elapsed: f32) {
-        let direction = direction.normalize_or_zero();
-        let right = Vec2::new(self.yaw.cos(), -self.yaw.sin());
-        let forward = Vec2::new(-self.yaw.sin(), -self.yaw.cos());
-        let offset = (right * direction.x + forward * direction.y) * self.distance * 0.5 * elapsed;
-        self.target[0] += offset.x;
-        self.target[1] += offset.y;
+        let mut orbit = self.orbit();
+        orbit.pan(direction, elapsed);
+        self.target = [orbit.target.x, orbit.target.z];
     }
 
     /// Drag in logical points (right/down), with viewport height in the same units.
     pub fn pan_drag(&mut self, delta: Vec2, viewport_height: f32) {
-        let scale = 2.0 * self.distance * (VERTICAL_FOV * 0.5).tan() / viewport_height.max(1.0);
-        let right = Vec2::new(self.yaw.cos(), -self.yaw.sin());
-        let forward = Vec2::new(-self.yaw.sin(), -self.yaw.cos());
-        // Keep height fixed; compensate for the horizontal plane's screen foreshortening.
-        let offset = (-right * delta.x + forward * (delta.y / self.pitch.sin())) * scale;
-        self.target[0] += offset.x;
-        self.target[1] += offset.y;
+        let mut orbit = self.orbit();
+        orbit.pan_drag(delta, viewport_height, VERTICAL_FOV);
+        self.target = [orbit.target.x, orbit.target.z];
     }
 
     pub fn uniform(&self, config: OceanConfig, aspect: f32) -> CameraUniform {
-        let target = Vec3::new(self.target[0], 0.0, self.target[1]);
-        let eye = target
-            + Vec3::new(
-                self.yaw.sin() * self.pitch.cos(),
-                self.pitch.sin(),
-                self.yaw.cos() * self.pitch.cos(),
-            ) * self.distance;
-        let view = Mat4::look_at_rh(eye, target, Vec3::Y);
-        let projection = Mat4::perspective_rh(VERTICAL_FOV, aspect, 0.1, config.length * 8.0);
-        let matrix = projection * view;
+        let orbit = self.orbit();
+        let eye = orbit.eye();
+        let (matrix, inverse) = orbit.matrices(VERTICAL_FOV, aspect, 0.1, config.length * 8.0);
         let sun = Vec3::new(-0.35, 0.40, -0.65).normalize();
         CameraUniform {
             view_projection: matrix.to_cols_array_2d(),
-            inverse_view_projection: matrix.inverse().to_cols_array_2d(),
+            inverse_view_projection: inverse.to_cols_array_2d(),
             eye: eye.extend(1.0).to_array(),
             sun: sun.extend(0.0).to_array(),
             ocean: [

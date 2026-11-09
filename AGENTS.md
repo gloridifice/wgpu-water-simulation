@@ -17,8 +17,9 @@
 | `crates/tui-2d-prototype/src/{main.rs,pic/,tui/}` | CPU PIC 入口、求解与终端交互 |
 | `crates/tui-2d-prototype/src/{solver.rs,shallow_tui/}` | 一维浅水求解与终端交互 |
 | `src/bin/ocean.rs` | GPU 海洋入口及命令行参数 |
-| `src/ocean/app/`、`camera.rs` | 窗口、帧调度、快照与共享相机 |
-| `src/ocean/gpu/` | 设备上下文、回读与异步 GPU 计时 |
+| `crates/common/src/` | 公共窗口循环、GPU、egui/视口、Dock 布局、配置保存与相机数学；不得依赖模拟业务 |
+| `src/ocean/app/`、`camera.rs` | 海洋帧调度、快照、业务输入及兼容相机配置／GPU 布局 |
+| `src/ocean/gpu/` | common 设备兼容入口与海洋计时元数据适配 |
 | `src/ocean/parameters/` | 参数定义、默认值与校验，不依赖窗口或 GPU 资源 |
 | `src/ocean/simulation/offshore/` | 波谱、GPU FFT、远海泡沫及所属着色器 |
 | `src/ocean/simulation/nearshore/` | SWE、FFT 输入、近岸泡沫、状态读取及验证 |
@@ -46,7 +47,7 @@ cargo run --release -p tui-2d-prototype
 
 # 格式、静态检查与包含海洋模块的单元测试。
 cargo fmt --all --check
-cargo clippy --features ocean --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --features ocean --lib
 # CPU 包测试；--workspace 可同时覆盖根包与 CPU 包。
 cargo test -p tui-2d-prototype

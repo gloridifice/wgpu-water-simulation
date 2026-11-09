@@ -18,11 +18,9 @@ use crate::ocean::{
 };
 use std::{sync::Arc, time::Instant};
 use winit::{
-    application::ApplicationHandler,
     event::{ElementState, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::{Window, WindowId},
+    window::Window,
 };
 
 struct State {
@@ -41,7 +39,6 @@ struct State {
     paused: bool,
     render_size: [u32; 2],
     last: Instant,
-    frames: u32,
     settings: Option<SettingsStore>,
     applied_model: crate::ocean::parameters::model::ModelConfig,
     frame_timer: Option<crate::ocean::gpu::timer::GpuTimer>,
@@ -49,16 +46,14 @@ struct State {
 
 impl State {
     async fn new(window: Arc<Window>, ocean_config: OceanConfig) -> Result<Self, Error> {
-        let instance = wgpu::Instance::default();
-        let surface = instance.create_surface(window.clone())?;
-        let gpu = Gpu::new(&instance, Some(&surface)).await?;
+        let common::app::Desktop {
+            window,
+            surface,
+            instance,
+            gpu,
+            config,
+        } = common::app::Desktop::new(window).await?;
         eprintln!("GPU: {}", gpu.name);
-        let size = window.inner_size();
-        let mut config = surface
-            .get_default_config(&gpu.adapter, size.width.max(1), size.height.max(1))
-            .ok_or("adapter cannot present to this window")?;
-        config.present_mode = wgpu::PresentMode::AutoVsync;
-        surface.configure(&gpu.device, &config);
         let ocean = Ocean::new(&gpu, ocean_config)?;
         let foam_field = Foam::new(&gpu, &ocean.fields, ocean_config.resolution);
         let mut renderer = Renderer::new_display(
@@ -89,7 +84,6 @@ impl State {
             paused: false,
             render_size: [0, 0],
             last: Instant::now(),
-            frames: 0,
             settings: None,
             applied_model: crate::ocean::parameters::model::ModelConfig::default(),
         })
@@ -191,24 +185,15 @@ impl State {
             self.time += elapsed * self.gui.speed;
         }
         let acquire_start = Instant::now();
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.resize(self.config.width, self.config.height);
-                return Ok(false);
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface = self.instance.create_surface(self.window.clone())?;
-                self.resize(self.config.width, self.config.height);
-                return Ok(false);
-            }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return Ok(false);
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err("surface texture validation failed".into());
-            }
+        let Some(frame) = common::app::acquire(
+            &self.window,
+            &self.instance,
+            &mut self.surface,
+            &self.gpu,
+            &self.config,
+        )?
+        else {
+            return Ok(false);
         };
         let acquire = acquire_start.elapsed().as_secs_f64() * 1000.0;
         let view = frame.texture.create_view(&Default::default());
@@ -351,7 +336,7 @@ impl State {
         let simulation = simulation_start.elapsed().as_secs_f64() * 1000.0;
         let render_start = Instant::now();
         self.renderer
-            .encode(&self.gpu, &mut encoder, &self.gui.viewport_view, &camera);
+            .encode(&self.gpu, &mut encoder, &self.gui.viewport.view, &camera);
         let extra = self
             .gui
             .encode(&self.window, &self.gpu, &mut encoder, &view, gui_output);
@@ -379,100 +364,22 @@ impl State {
                 submit_present: finished.duration_since(submit_start).as_secs_f64() * 1000.0,
             },
         );
-        self.frames += 1;
         Ok(true)
     }
 }
 
-struct App {
-    initial: SavedSettings,
-    settings: Option<SettingsStore>,
-    state: Option<State>,
-    error: Option<String>,
-    frame_limit: Option<u32>,
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
-            return;
-        }
-        let result = (|| -> Result<State, Error> {
-            let window = Arc::new(
-                event_loop.create_window(
-                    Window::default_attributes()
-                        .with_title("Wgpu Water Simulation")
-                        .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0)),
-                )?,
-            );
-            pollster::block_on(State::new(window, self.initial.ocean))
-        })();
-        match result {
-            Ok(mut state) => {
-                state.gui.optics = self.initial.optics;
-                state.gui.draft = self.initial.draft;
-                state.gui.foam_settings = self.initial.foam;
-                state.gui.speed = self.initial.speed;
-                state.paused = self.initial.paused;
-                state.camera = self.initial.camera;
-                state.renderer.set_shore_resolution(
-                    &state.gpu,
-                    &state.ocean,
-                    state.gui.optics.shore.resolution,
-                    state.config.format,
-                    [state.config.width, state.config.height],
-                );
-                if let Err(error) =
-                    state
-                        .renderer
-                        .prepare_scene(&state.gpu, &state.gui.optics, state.config.format)
-                {
-                    self.error = Some(error.to_string());
-                    event_loop.exit();
-                    return;
-                }
-                state.applied_model = state.gui.optics.model;
-                state.gui.configuration_panel =
-                    ConfigurationPanel::new(ConfigurationLibrary::new(self.initial.clone()));
-                state.settings = self.settings.take();
-                if let Some(store) = &state.settings {
-                    state.gui.configuration_panel =
-                        ConfigurationPanel::new(store.configurations().clone());
-                    state.gui.settings_path = Some(store.path.clone());
-                    state.gui.workspace_store =
-                        Some(crate::ocean::ui::workspace::store::WorkspaceStore::open(
-                            &store.path,
-                            &mut state.gui.workspaces,
-                        ));
-                    state.gui.save_status = store.status.clone();
-                    state.gui.save_failed = store.failed;
-                    eprintln!("Local settings: {}", store.path.display());
-                    if store.failed {
-                        eprintln!("{}", store.status);
-                    }
-                }
-                self.state = Some(state);
-            }
-            Err(error) => {
-                self.error = Some(error.to_string());
-                event_loop.exit();
-            }
-        }
+impl common::app::WindowScene for State {
+    fn window(&self) -> &Window {
+        &self.window
     }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        let Some(state) = &mut self.state else {
-            return;
-        };
-        if state.window.id() != window_id {
-            return;
-        }
-        let response = state.gui.input.on_window_event(&state.window, &event);
+    fn draw(&mut self) -> Result<bool, Error> {
+        State::draw(self)
+    }
+    fn exiting(&mut self) {
+        self.persist_layout(true);
+    }
+    fn event(&mut self, event: WindowEvent) -> bool {
+        let response = self.gui.input.on_window_event(&self.window, &event);
         if response.consumed
             && matches!(
                 &event,
@@ -483,92 +390,91 @@ impl ApplicationHandler for App {
                     | WindowEvent::Ime(_)
             )
         {
-            return;
+            return false;
         }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => state.resize(size.width, size.height),
-            WindowEvent::Focused(false) => {
-                state.persist_layout(true);
-            }
+            WindowEvent::Resized(size) => self.resize(size.width, size.height),
+            WindowEvent::Focused(false) => self.persist_layout(true),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 match event.physical_key {
-                    PhysicalKey::Code(KeyCode::KeyQ) => event_loop.exit(),
+                    PhysicalKey::Code(KeyCode::KeyQ) => return true,
                     PhysicalKey::Code(KeyCode::Space) if !event.repeat => {
-                        state.paused = !state.paused
+                        self.paused = !self.paused
                     }
                     PhysicalKey::Code(KeyCode::KeyC) if !event.repeat => {
-                        state.camera.choppy = !state.camera.choppy
+                        self.camera.choppy = !self.camera.choppy
                     }
                     PhysicalKey::Code(KeyCode::KeyF) if !event.repeat => {
-                        state.camera.foam = !state.camera.foam
+                        self.camera.foam = !self.camera.foam
                     }
                     PhysicalKey::Code(KeyCode::ArrowUp) => {
-                        state.camera.gain = (state.camera.gain + 0.1).min(2.0)
+                        self.camera.gain = (self.camera.gain + 0.1).min(2.0)
                     }
                     PhysicalKey::Code(KeyCode::ArrowDown) => {
-                        state.camera.gain = (state.camera.gain - 0.1).max(0.1)
+                        self.camera.gain = (self.camera.gain - 0.1).max(0.1)
                     }
                     PhysicalKey::Code(KeyCode::KeyR) => {
-                        state.camera = if state.gui.optics.beach {
-                            Camera::beach(state.ocean.config.length)
+                        self.camera = if self.gui.optics.beach {
+                            Camera::beach(self.ocean.config.length)
                         } else {
-                            Camera::new(state.ocean.config.length)
+                            Camera::new(self.ocean.config.length)
                         };
-                        state.time = 0.0;
-                        state.gui.clear_foam = true;
+                        self.time = 0.0;
+                        self.gui.clear_foam = true;
                     }
                     _ => {}
                 }
             }
-            WindowEvent::RedrawRequested => {
-                if state.window.inner_size().width == 0 || state.window.inner_size().height == 0 {
-                    return;
-                }
-                match state.draw() {
-                    Ok(_) if self.frame_limit.is_some_and(|limit| state.frames >= limit) => {
-                        event_loop.exit()
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        self.error = Some(error.to_string());
-                        event_loop.exit();
-                    }
-                }
-            }
             _ => {}
         }
-    }
-
-    fn exiting(&mut self, _: &ActiveEventLoop) {
-        if let Some(state) = &mut self.state {
-            state.persist_layout(true);
-        }
-    }
-
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        if let Some(state) = &self.state {
-            state.window.request_redraw();
-        }
+        false
     }
 }
-
 pub fn run(
     initial: SavedSettings,
     frame_limit: Option<u32>,
     settings: Option<SettingsStore>,
 ) -> Result<(), Error> {
     initial.validate()?;
-    let mut app = App {
-        initial,
-        settings,
-        state: None,
-        error: None,
-        frame_limit,
-    };
-    EventLoop::new()?.run_app(&mut app)?;
-    if let Some(error) = app.error {
-        return Err(error.into());
-    }
-    Ok(())
+    let attributes = Window::default_attributes()
+        .with_title("Wgpu Water Simulation")
+        .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0));
+    common::app::run(attributes, frame_limit, move |window| {
+        let mut state = pollster::block_on(State::new(window, initial.ocean))?;
+        state.gui.optics = initial.optics;
+        state.gui.draft = initial.draft;
+        state.gui.foam_settings = initial.foam;
+        state.gui.speed = initial.speed;
+        state.paused = initial.paused;
+        state.camera = initial.camera;
+        state.renderer.set_shore_resolution(
+            &state.gpu,
+            &state.ocean,
+            state.gui.optics.shore.resolution,
+            state.config.format,
+            [state.config.width, state.config.height],
+        );
+        state
+            .renderer
+            .prepare_scene(&state.gpu, &state.gui.optics, state.config.format)?;
+        state.applied_model = state.gui.optics.model;
+        state.gui.configuration_panel = ConfigurationPanel::new(ConfigurationLibrary::new(initial));
+        state.settings = settings;
+        if let Some(store) = &state.settings {
+            state.gui.configuration_panel = ConfigurationPanel::new(store.configurations().clone());
+            state.gui.settings_path = Some(store.path.clone());
+            state.gui.workspace_store =
+                Some(crate::ocean::ui::workspace::store::WorkspaceStore::open(
+                    &store.path,
+                    &mut state.gui.workspaces,
+                ));
+            state.gui.save_status = store.status.clone();
+            state.gui.save_failed = store.failed;
+            eprintln!("Local settings: {}", store.path.display());
+            if store.failed {
+                eprintln!("{}", store.status);
+            }
+        }
+        Ok(state)
+    })
 }

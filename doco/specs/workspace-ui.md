@@ -2,7 +2,7 @@
 
 ## 范围与所有权
 
-交互窗口使用五分类导航和 egui_dock；不改变 FFT → SWE 耦合、物理／着色算法、参数默认值或命名配置语义。业务界面位于 `src/ocean/ui/`，布局状态与存储位于 `ui/workspace/`；通用控件、参数列表、选择列表及默认主题由 crates.io `yummy_egui` 提供，本仓库不保留组件库源码或主题配置。字体安装保留在主程序。
+交互窗口使用五分类导航和 egui_dock；不改变 FFT → SWE 耦合、物理／着色算法、参数默认值或命名配置语义。业务界面及海洋布局注册／版本迁移位于 `src/ocean/ui/`；通用布局状态与隐藏恢复在 `crates/common/src/ui/layout.rs`，通用布局存储策略在 `crates/common/src/settings/sidecar.rs`，`ui/workspace/` 保留海洋适配；通用控件、参数列表、选择列表及默认主题由 crates.io `yummy_egui` 提供，本仓库不保留组件库源码或主题配置。字体安装保留在主程序。
 
 - 顶部工具栏横跨窗口；左侧固定“场景、浅水、远海、着色、配置”五个入口，不参与停靠。导航采用 `yummy_egui::IconSegmentedControl::vertical()`，五段连续排列、仅整体上下两端圆角，无独立按钮间距或配置分隔线；每段 38×38 pt，保留 24 pt SVG 图标、中文 hover 和选中态。
 - 每个分类有独立布局；默认参数靠左、渲染视图靠右。场景／浅水／远海／着色的参数侧分上下区，配置保持单区；新版默认不覆盖已保存布局。
