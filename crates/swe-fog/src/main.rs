@@ -25,7 +25,7 @@ cargo run --release -p swe-fog -- [options]
 
 Click viewport: capture mouse | Esc: release | WASD: walk | Space: jump
 Captured mouse: orbit | Q: quit | Shift: fine number drag | Double click: type
-Numeric edits reset fog, except render smoothing/integration quality; switches do not reset.
+Numeric edits reset fog, except render smoothing; switches do not reset.
 ";
 fn next(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, Error> {
     args.next()

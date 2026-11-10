@@ -27,6 +27,7 @@ pub(crate) fn run(gpu: &Gpu) -> Result<(), Error> {
         Acceleration::PerRayBounds,
         Acceleration::CachedBounds,
         Acceleration::Hierarchy,
+        Acceleration::Raster,
     ];
     let renderers = variants
         .map(|mode| {
@@ -138,7 +139,7 @@ pub(crate) fn run(gpu: &Gpu) -> Result<(), Error> {
                     eprintln!(
                         "Fog acceleration opacity scene={scene} {mode:?} pitch={pitch:.2} {variant:?}: max_delta={max_delta}/255 changed_pixels={changed}/64000"
                     );
-                    if max_delta > 1 {
+                    if variant != Acceleration::Raster && max_delta > 1 {
                         return Err(
                             "fog acceleration changed opacity by more than one quantization step"
                                 .into(),
@@ -147,16 +148,16 @@ pub(crate) fn run(gpu: &Gpu) -> Result<(), Error> {
                 }
                 session.debug_view = 0;
                 for refresh in [true, false] {
-                    let mut samples: [Vec<[f64; 4]>; 3] = std::array::from_fn(|_| Vec::new());
+                    let mut samples: [Vec<[f64; 4]>; 4] = std::array::from_fn(|_| Vec::new());
                     for frame in 0..41 {
-                        for order in 0..3 {
-                            let index = (frame + order) % 3;
+                        for order in 0..4 {
+                            let index = (frame + order) % 4;
                             let renderer = &renderers[index];
                             let mut encoder =
                                 gpu.device.create_command_encoder(&Default::default());
                             if refresh && order == 0 {
                                 // Identical values, one shared new publication per
-                                // triplet. All variants see precisely the same field.
+                                // group. All variants see precisely the same field.
                                 sim.encode(gpu, &mut encoder, &session.fog, 0.0, false, &[])?;
                             }
                             mark(&mut encoder, 0);
@@ -209,5 +210,5 @@ pub(crate) fn run(gpu: &Gpu) -> Result<(), Error> {
             }
         }
     }
-    Ok(())
+    super::raster_benchmark::run(gpu)
 }

@@ -237,6 +237,8 @@ pub async fn run() -> Result<(), Error> {
     verify_grid_and_jump(&gpu)?;
     verify_wall(&gpu)?;
     verify_render(&gpu, &mut sim, &terrain)?;
+    crate::render::raster_verification::run(&gpu)?;
+    eprintln!("Fog legacy marching reference checks (not the interactive raster path):");
     crate::render::verification::run(&gpu)?;
     verify_sampling(&gpu)?;
     crate::render::benchmark::run(&gpu)?;
@@ -584,13 +586,10 @@ fn verify_render(gpu: &Gpu, sim: &mut Simulation, terrain: &Terrain) -> Result<(
     session.fog.height_offset = 0.0;
     session.fog.wind = [0.0; 2];
     session.fog.decay_enabled = false;
-    for (height, steps) in [(0.01, 2), (0.01, 8), (0.01, 32), (0.25, 2), (0.6, 2)] {
-        session.integration_steps = steps;
+    for height in [0.01, 0.25, 0.6] {
         for reconstruction in [
             crate::parameters::Reconstruction::Bilinear,
-            crate::parameters::Reconstruction::SmoothStep,
             crate::parameters::Reconstruction::PreSmoothed,
-            crate::parameters::Reconstruction::CubicBSpline,
         ] {
             session.reconstruction = reconstruction;
             session.fog.base_height = height;
@@ -646,12 +645,32 @@ fn verify_render(gpu: &Gpu, sim: &mut Simulation, terrain: &Terrain) -> Result<(
     let sy = (1.0 - 2.0 * 10.5 / 180.0) * tan;
     let dy = (-pitch.sin() + sy * pitch.cos()) / (1.0 + sx * sx + sy * sy).sqrt();
     let z = eye_y / 0.25;
-    let integral = 0.25 * (1.0 - z * z * (3.0 - 2.0 * z));
+    // Tetrahedral density is linear from 2m/h at the bed to zero at the top.
+    let integral = 0.25 * (1.0 - z).powi(2);
     let expected = 1.0 - (-4.0 * integral / dy).exp();
     check(
         (f64::from(inside[((10 * size[0] + 64) * 4) as usize]) / 255.0 - expected).abs() < 0.01,
         "camera inside the fog integrates the partial upward column",
     )?;
+    // The upward interval crosses the 8 m view-depth split. Low extinction
+    // must retain the far half; high extinction may reject it only after near
+    // opacity is saturated. This also exercises near-eye face fallback.
+    session.fog.base_height = 4.0;
+    session.camera = [0.0, 0.05, 5.5];
+    submit(gpu, sim, &session.fog, 0.0, true, &[])?;
+    for extinction in [0.05, 4.0] {
+        session.fog.extinction = extinction;
+        let image = renderer.read_image(gpu, &session, sim.domain, size)?;
+        let integral = 4.0 * (1.0 - 5.5 * pitch.sin() / 4.0).powi(2);
+        let expected = 1.0 - (-f64::from(extinction) * integral / dy).exp();
+        let actual = f64::from(image[((10 * size[0] + 64) * 4) as usize]) / 255.0;
+        check(
+            (actual - expected).abs() < 0.01,
+            &format!(
+                "near/far tetrahedron opacity extinction={extinction}: {actual} vs {expected}"
+            ),
+        )?;
+    }
     session.player = crate::scene::Player::default();
     session.camera = [0.0, 0.3, 5.5];
     session.debug_view = 0;
@@ -676,7 +695,7 @@ fn verify_render(gpu: &Gpu, sim: &mut Simulation, terrain: &Terrain) -> Result<(
         "orbit return leaves no history trail",
     )?;
     eprintln!(
-        "Fog render checks: PASS (1 cm analytic optical depth at 2/8/32 segments, opaque clipping, inside-layer camera, pause/orbit stability)"
+        "Fog projected tetrahedra: PASS (1 cm analytic optical depth, opaque clipping, inside-layer camera, near/far intervals at low/high extinction, pause/orbit stability)"
     );
     Ok(())
 }
@@ -707,91 +726,106 @@ fn verify_sampling(gpu: &Gpu) -> Result<(), Error> {
     submit(gpu, &mut sim, &s.fog, 0.0, true, &[])?;
     let (_, before) = sim.snapshot(gpu)?;
     let mut linear_images = Vec::new();
-    for reconstruction in [
-        crate::parameters::Reconstruction::Bilinear,
-        crate::parameters::Reconstruction::SmoothStep,
-        crate::parameters::Reconstruction::PreSmoothed,
-        crate::parameters::Reconstruction::CubicBSpline,
-    ] {
-        s.reconstruction = reconstruction;
-        for (view, pitch) in [0.05, 0.3, 0.9].into_iter().enumerate() {
-            s.camera[1] = pitch;
-            s.visible = true;
-            let low = renderer.read_image(gpu, &s, sim.domain, [320, 200])?;
-            if reconstruction == crate::parameters::Reconstruction::Bilinear {
-                linear_images.push(low.clone());
-            } else {
-                check(
-                    low.iter()
-                        .zip(&linear_images[view])
-                        .any(|(a, b)| a.abs_diff(*b) > 1),
-                    "reconstruction selection reaches the real fragment renderer",
-                )?;
+    for (quality, detail) in [false, true].into_iter().enumerate() {
+        s.reconstruction_detail = detail;
+        for reconstruction in [
+            crate::parameters::Reconstruction::Bilinear,
+            crate::parameters::Reconstruction::PreSmoothed,
+            crate::parameters::Reconstruction::CubicBSpline,
+            crate::parameters::Reconstruction::CatmullRom,
+            crate::parameters::Reconstruction::SmoothStep,
+        ] {
+            if !detail && reconstruction == crate::parameters::Reconstruction::SmoothStep {
+                continue;
             }
-            let high = renderer.read_image(gpu, &s, sim.domain, [960, 600])?;
-            if view == 1 {
-                for steps in [8, 32] {
-                    s.integration_steps = steps;
+            s.reconstruction = reconstruction;
+            for (view, pitch) in [0.05, 0.3, 0.9].into_iter().enumerate() {
+                s.camera[1] = pitch;
+                s.visible = true;
+                let low = renderer.read_image(gpu, &s, sim.domain, [320, 200])?;
+                if reconstruction == crate::parameters::Reconstruction::Bilinear {
+                    linear_images.push(low.clone());
+                } else {
                     check(
-                        renderer.read_image(gpu, &s, sim.domain, [320, 200])? != low,
-                        "integration quality changes actual opacity on the paused field",
+                        low.iter()
+                            .zip(&linear_images[quality * 3 + view])
+                            .any(|(a, b)| a.abs_diff(*b) > 1),
+                        "reconstruction selection reaches the real fragment renderer",
                     )?;
                 }
-                s.integration_steps = 2;
-                check(
-                    renderer.read_image(gpu, &s, sim.domain, [320, 200])? == low,
-                    "restoring integration quality restores the paused image",
-                )?;
-            }
-            if reconstruction == crate::parameters::Reconstruction::PreSmoothed {
-                s.reconstruction_smoothing = 0.0;
-                check(
-                    renderer.read_image(gpu, &s, sim.domain, [320, 200])? == linear_images[view],
-                    "zero prefilter strength bypasses to original bilinear",
-                )?;
-                s.reconstruction_smoothing = 1.0;
-                check(
-                    renderer.read_image(gpu, &s, sim.domain, [320, 200])? != low,
-                    "paused strength change invalidates render filter cache",
-                )?;
-                s.reconstruction_smoothing = 0.6;
-                check(
-                    renderer.read_image(gpu, &s, sim.domain, [320, 200])? == low,
-                    "restoring strength rebuilds the same paused image",
-                )?;
-            }
-            let mut error = 0.0;
-            let mut count = 0;
-            for y in 100..200 {
-                for x in 0..320 {
-                    if (110..210).contains(&x) {
-                        continue;
+                let high = renderer.read_image(gpu, &s, sim.domain, [960, 600])?;
+                if view == 1 {
+                    for steps in [8, 32] {
+                        s.integration_steps = steps;
+                        check(
+                            renderer.read_image(gpu, &s, sim.domain, [320, 200])? == low,
+                            "legacy integration setting cannot change analytic tetrahedron rendering",
+                        )?;
                     }
-                    let i = (y * 320 + x) * 4;
-                    for c in 0..3 {
-                        let mut reference = 0.0;
-                        for yy in 0..3 {
-                            for xx in 0..3 {
-                                let j = ((y * 3 + yy) * 960 + x * 3 + xx) * 4 + c;
-                                reference += f64::from(high[j]);
-                            }
+                    s.integration_steps = 2;
+                    check(
+                        renderer.read_image(gpu, &s, sim.domain, [320, 200])? == low,
+                        "restoring integration quality restores the paused image",
+                    )?;
+                }
+                if reconstruction == crate::parameters::Reconstruction::PreSmoothed {
+                    s.reconstruction_smoothing = 0.0;
+                    check(
+                        renderer.read_image(gpu, &s, sim.domain, [320, 200])?
+                            == linear_images[quality * 3 + view],
+                        "zero prefilter strength bypasses to original bilinear",
+                    )?;
+                    s.reconstruction_smoothing = 1.0;
+                    check(
+                        renderer.read_image(gpu, &s, sim.domain, [320, 200])? != low,
+                        "paused strength change invalidates render filter cache",
+                    )?;
+                    s.reconstruction_smoothing = 0.6;
+                    check(
+                        renderer.read_image(gpu, &s, sim.domain, [320, 200])? == low,
+                        "restoring strength rebuilds the same paused image",
+                    )?;
+                }
+                let mut error = 0.0;
+                let mut count = 0;
+                for y in 100..200 {
+                    for x in 0..320 {
+                        if (110..210).contains(&x) {
+                            continue;
                         }
-                        reference /= 9.0;
-                        error += (f64::from(low[i + c]) - reference).abs() / 255.0;
-                        count += 1;
+                        let i = (y * 320 + x) * 4;
+                        for c in 0..3 {
+                            let mut reference = 0.0;
+                            for yy in 0..3 {
+                                for xx in 0..3 {
+                                    let j = ((y * 3 + yy) * 960 + x * 3 + xx) * 4 + c;
+                                    reference += f64::from(high[j]);
+                                }
+                            }
+                            reference /= 9.0;
+                            error += (f64::from(low[i + c]) - reference).abs() / 255.0;
+                            count += 1;
+                        }
                     }
                 }
+                let mae = error / f64::from(count);
+                eprintln!(
+                    "Fog sampling {reconstruction:?} detail={detail} pitch={pitch:.2}: opacity MAE versus 3x supersampling={mae:.6}"
+                );
+                check(
+                    mae < 0.01,
+                    "thin fog spatial sampling agrees with supersampled reference",
+                )?;
             }
-            let mae = error / f64::from(count);
-            eprintln!(
-                "Fog sampling {reconstruction:?} pitch={pitch:.2}: opacity MAE versus 3x supersampling={mae:.6}"
-            );
-            check(
-                mae < 0.01,
-                "thin fog spatial sampling agrees with supersampled reference",
-            )?;
         }
     }
+    s.reconstruction = crate::parameters::Reconstruction::Bilinear;
+    s.reconstruction_detail = false;
+    s.camera[1] = 0.3;
+    check(
+        renderer.read_image(gpu, &s, sim.domain, [320, 200])? == linear_images[1],
+        "restoring the basic topology and kernel restores the paused image",
+    )?;
     check(
         diff(&before, &sim.snapshot(gpu)?.1) == 0.0,
         "render reconstruction switches preserve the complete simulation field",

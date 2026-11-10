@@ -71,6 +71,44 @@ fn static_bake_preserves_rectangular_coordinates_voids_thin_walls_and_source_ide
             );
         }
     }
+    let centred_wall = restored.at_resolution(&source, Some([6, 4])).unwrap();
+    for z in 1..4 {
+        assert_eq!(
+            centred_wall.pass_z[z * 6 + 1],
+            1,
+            "a thin wall through cell centres must not block tangential transport"
+        );
+    }
+    for z in 0..4 {
+        for face in [1, 2] {
+            assert_eq!(
+                centred_wall.pass_x[z * 7 + face],
+                0,
+                "normal connections to the thin wall remain blocked"
+            );
+        }
+    }
+    let cropped = restored.at_region(&source, None, 0.75).unwrap();
+    assert_eq!(cropped.metadata.domain, [-1.5, -0.75, 3.0, 1.5]);
+    assert_eq!(cropped.metadata.resolution, [8, 4]);
+    assert_eq!(cropped.spacing(), Vec2::splat(0.375));
+    assert!(
+        (cropped.height_at(Vec2::new(-1.3125, -0.5625)).unwrap() - 0.1375).abs() < 1e-6,
+        "cropping must query the original world slope, not scale or resample the old heights"
+    );
+    assert!(cropped.height_at(Vec2::new(0.5, 0.0)).is_none());
+    for z in 0..4 {
+        assert_eq!(
+            cropped.pass_x[z * 9 + 1],
+            0,
+            "rebaking the smaller domain retains the world-space thin wall"
+        );
+    }
+    assert_eq!(
+        restored.at_region(&source, None, 1.0).unwrap().heights,
+        terrain.heights
+    );
+    assert!(restored.at_region(&source, None, f32::NAN).is_err());
     let mut inconsistent = restored.clone();
     inconsistent.pass_x[6] = 1;
     assert!(
@@ -100,6 +138,7 @@ fn fog_session_roundtrip_keeps_independent_density_actions_and_legacy_defaults()
     assert_eq!(s.interaction.move_impulse_interval, 0.2);
     assert_eq!(s.interaction.movement_mode, MovementMode::Wake);
     assert_eq!(s.grid_resolution, None);
+    assert_eq!(s.domain_scale, 1.0);
     assert_eq!(s.reconstruction, Reconstruction::Bilinear);
     assert_eq!(s.reconstruction_smoothing, 0.6);
     assert_eq!(s.integration_steps, 2);
@@ -115,6 +154,7 @@ fn fog_session_roundtrip_keeps_independent_density_actions_and_legacy_defaults()
     s.camera = [0.5, 0.7, 4.0];
     s.paused = true;
     s.grid_resolution = Some([512, 256]);
+    s.domain_scale = 0.25;
     s.reconstruction = Reconstruction::PreSmoothed;
     s.reconstruction_smoothing = 0.8;
     s.integration_steps = 16;
@@ -135,6 +175,14 @@ fn fog_session_roundtrip_keeps_independent_density_actions_and_legacy_defaults()
         s.integration_steps = steps;
         s.validate().unwrap();
     }
+    for scale in [0.0, 0.0624, 1.01, f32::NAN, f32::INFINITY] {
+        s.domain_scale = scale;
+        assert!(
+            s.validate().is_err(),
+            "invalid region scale must not reach baking or GPU allocation"
+        );
+    }
+    s.domain_scale = 0.25;
     s.reconstruction_smoothing = f32::NAN;
     assert!(
         s.validate().is_err(),

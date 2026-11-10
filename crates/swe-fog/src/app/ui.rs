@@ -16,9 +16,7 @@ use common::{
 };
 use serde::{Deserialize, Serialize};
 use winit::window::Window;
-use yummy_egui::{
-    IconButton, IconSegmentedControl, SelectionList, parameter, parameter_table, segmented_control,
-};
+use yummy_egui::{IconButton, IconSegmentedControl, SelectionList, parameter, parameter_table};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Panel {
@@ -87,6 +85,7 @@ pub struct Actions {
 }
 pub struct Status {
     pub resolution: [u32; 2],
+    pub domain: [f32; 4],
     pub diagnostics: Diagnostics,
     pub fps: f32,
     pub gpu: String,
@@ -299,7 +298,7 @@ impl Interface {
                 egui_dock::DockArea::new(&mut workspace.dock).id(egui::Id::new(("fog dock",active))).style(style.clone()).show_leaf_close_all_buttons(false).show_inside(ui,&mut Tabs(|panel,ui:&mut egui::Ui|{
                     if panel==Panel::View{let size=ui.available_size().max(egui::vec2(1.0,1.0));let response=ui.add(egui::Image::new((self.viewport.id,size)).sense(egui::Sense::click()));self.size=[(size.x*ui.ctx().pixels_per_point()).round().max(1.0) as u32,(size.y*ui.ctx().pixels_per_point()).round().max(1.0) as u32];if response.clicked(){actions.capture=true;}return;}
                     ui.push_id((active,panel),|ui|{egui::ScrollArea::vertical().auto_shrink([false,false]).show(ui,|ui|match panel{
-                        Panel::Initialization=>initialization(ui,session,&mut actions),Panel::Dynamics=>dynamics(ui,session,&mut actions),Panel::Interactions=>interactions(ui,session,&mut actions),Panel::Appearance=>appearance(ui,session,&mut actions),Panel::Configuration=>self.configuration(ui,session,&mut actions),Panel::Diagnostics=>{
+                        Panel::Initialization=>{initialization(ui,session,&mut actions);ui.label(format!("实际范围 {:.2} × {:.2} m · 格距 {:.4} × {:.4} m",status.domain[2],status.domain[3],status.domain[2]/status.resolution[0] as f32,status.domain[3]/status.resolution[1] as f32));},Panel::Dynamics=>dynamics(ui,session,&mut actions),Panel::Interactions=>interactions(ui,session,&mut actions),Panel::Appearance=>appearance(ui,session,&mut actions),Panel::Configuration=>self.configuration(ui,session,&mut actions),Panel::Diagnostics=>{
                             let d=status.diagnostics;ui.label(format!("接受子步 {} · 连续重试 {}\n积压 {:.4} s · 丢弃 {:.4} s\nGPU fault {}",d.accepted,d.retries,d.remaining,d.dropped_time,d.fault));ui.label("GPU 为真实 timestamp 异步采样，仅计雾模拟；不含呈现等待。");if let Some(sidecar)=&self.sidecar && let Some(e)=&sidecar.error {ui.colored_label(egui::Color32::LIGHT_RED,e);}
                         },_=>{}
                     });});
@@ -491,6 +490,15 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
         a.reset |= before != s.grid_resolution;
         a.reset |= number(
             ui,
+            "区域范围缩放",
+            "无量纲，0.0625–1，默认 1。以原始地形中心缩小 XZ 范围，保持网格数不变；默认 64 m 范围缩至 0.25 即 16 m。实际格距按同比例减小，模型和噪波世界尺度不变。改值立即重新烘焙地形并重置雾，角色重新落到有效地面，超出区域时移回；保留暂停和相机角度／距离。更细格距可能增加 SWE 子步成本；仅手动保存写配置。",
+            &mut s.domain_scale,
+            0.0625,
+            1.0,
+            0.01,
+        );
+        a.reset |= number(
+            ui,
             "基础高度 (m)",
             RESET,
             &mut s.fog.base_height,
@@ -621,57 +629,67 @@ fn appearance(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
         parameter(
             ui,
             "重建方式",
-            "双线性使用 2×2 邻格；SmoothStep 先以 t²(3−2t) 平滑 X/Z 插值权重，再读取同样的 2×2 原始邻格，保留格点值；预平滑生成 3×3 平滑结果后用双线性采样；B 样条逐点采样 4×4 邻格，成本较高。各模式均受障碍物约束，并共用积分精度。切换实时生效、不重置，随会话手动保存；原始格点诊断不受影响。",
+            "h/m 顶点重建：双线性（2×2）、SmoothStep（2×2 平滑权重）、B 样条（4×4 平滑）、限幅 Catmull–Rom（4×4 保留峰值），或预平滑后双线性。墙两侧分离；底高始终双线性。四面体内部仍线性解析积分，并非精确积分原高阶场。实时生效、不重置 SWE。",
             |ui| {
-                let modes = [
+                let choices = [
                     (Reconstruction::Bilinear, "双线性"),
                     (Reconstruction::SmoothStep, "SmoothStep"),
-                    (Reconstruction::PreSmoothed, "预平滑"),
                     (Reconstruction::CubicBSpline, "B 样条"),
+                    (Reconstruction::CatmullRom, "Catmull–Rom（限幅）"),
+                    (Reconstruction::PreSmoothed, "预平滑＋双线性"),
                 ];
-                let segment_width = ui
-                    .painter()
-                    .layout_no_wrap(
-                        "SmoothStep".into(),
-                        egui::TextStyle::Button.resolve(ui.style()),
-                        ui.visuals().text_color(),
+                egui::ComboBox::from_id_salt("fog reconstruction")
+                    .width(ui.available_width())
+                    .selected_text(
+                        choices
+                            .iter()
+                            .find(|(mode, _)| *mode == s.reconstruction)
+                            .unwrap()
+                            .1,
                     )
-                    .size()
-                    .x
-                    + 2.0 * ui.spacing().button_padding.x;
-                if ui.available_width() >= segment_width * modes.len() as f32 {
-                    segmented_control(ui, &mut s.reconstruction, &modes)
-                } else {
-                    ui.vertical(|ui| {
-                        let first = segmented_control(ui, &mut s.reconstruction, &modes[..2]);
-                        first | segmented_control(ui, &mut s.reconstruction, &modes[2..])
+                    .show_ui(ui, |ui| {
+                        for (mode, name) in choices {
+                            ui.selectable_value(&mut s.reconstruction, mode, name);
+                        }
                     })
-                    .inner
+                    .response
+            },
+        );
+        parameter(
+            ui,
+            "增强采样",
+            "每格从 6 个增加到 12 个四面体，加入 1/4 格位置的内部样本以表达重建曲线。SmoothStep 强制开启，否则仅采角点会与双线性相同。其他模式可开关以比较相同拓扑；增加准备、投影和绘制成本。实时生效、不重置模拟。",
+            |ui| {
+                let forced = s.reconstruction == Reconstruction::SmoothStep;
+                let mut enabled = s.reconstruction_detail || forced;
+                let response = ui.add_enabled(
+                    !forced,
+                    egui::Checkbox::new(
+                        &mut enabled,
+                        if forced {
+                            "开启（SmoothStep 必需）"
+                        } else {
+                            "开启"
+                        },
+                    ),
+                );
+                if response.changed() {
+                    s.reconstruction_detail = enabled;
                 }
+                response
             },
         );
         if s.reconstruction == Reconstruction::PreSmoothed {
             number(
                 ui,
                 "平滑强度",
-                "无量纲，0–1；0 使用原始双线性，1 使用完整 3×3 平滑。只改变渲染厚度与雾量，不改变底高或模拟。实时生效、不重置；暂停时也能调节，随会话手动保存。",
+                "无量纲，0–1；0 使用原始格值，1 使用完整 3×3 平滑。只改变渲染厚度与雾量，不改变底高或模拟。实时生效、不重置；暂停时也能调节，随会话手动保存。",
                 &mut s.reconstruction_smoothing,
                 0.0,
                 1.0,
                 0.02,
             );
         }
-        parameter(
-            ui,
-            "积分精度",
-            "每个穿过的 XZ 网格内的基础积分段数，2–32 段/格，默认 2。可能穿雾的区间再自适应二分，最多 3 层；XZ 投影不超过 1/64 格时停止，均匀层和竖直视线直接积分。增加基础段数可减轻漏采与走样，但增加 GPU 耗时，B 样条成本更高；有限细分仍非严格求交。建议暂停后从 2 开始对比。实时生效、不重置模拟；随会话手动保存。",
-            |ui| {
-                ui.add(
-                    yummy_egui::ParameterSlider::new(&mut s.integration_steps, 2..=32)
-                        .suffix(" 段/格"),
-                )
-            },
-        );
         a.reset |= number(ui, "消光强度", RESET, &mut s.fog.extinction, 0.0, 40.0, 0.1);
         a.reset |= number(ui, "白雾亮度", RESET, &mut s.fog.brightness, 0.0, 4.0, 0.02);
     });

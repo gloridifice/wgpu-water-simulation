@@ -1,8 +1,12 @@
-//! Bounded adaptive ray marching with analytic leaf coverage; no temporal history or readback.
+//! Projected-tetrahedron optical depth; legacy marching remains a diagnostic reference.
 pub(crate) mod benchmark;
 mod bounds;
 mod bounds_verification;
 mod presmooth;
+mod raster;
+mod raster_benchmark;
+pub(crate) mod raster_verification;
+mod tet_reconstruction_verification;
 pub(crate) mod verification;
 use crate::{
     Error,
@@ -29,15 +33,17 @@ struct Camera {
     viewport: [f32; 4],
 }
 // Diagnostic construction modes let the benchmark compare identical physics
-// and quadrature in one process. Interactive rendering always uses Hierarchy.
+// in one process. Interactive rendering uses projected tetrahedra.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 enum Acceleration {
     PerRayBounds = 0,
     CachedBounds = 1,
     Hierarchy = 2,
+    Raster = 3,
 }
 pub struct Renderer {
+    raster: Option<raster::Raster>,
     acceleration: Acceleration,
     pipeline: wgpu::RenderPipeline,
     bind: wgpu::BindGroup,
@@ -57,7 +63,7 @@ impl Renderer {
         source: &BakeSource,
         format: wgpu::TextureFormat,
     ) -> Result<Self, Error> {
-        Self::new_with_acceleration(gpu, sim, terrain, source, format, Acceleration::Hierarchy)
+        Self::new_with_acceleration(gpu, sim, terrain, source, format, Acceleration::Raster)
     }
     fn new_with_acceleration(
         gpu: &Gpu,
@@ -313,7 +319,20 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        let raster = (acceleration == Acceleration::Raster)
+            .then(|| {
+                raster::Raster::new(
+                    gpu,
+                    sim,
+                    &smoothing.texture,
+                    &scene_buffer,
+                    ((source.floor.len() + source.obstacle.len()) * 3) as u32,
+                    format,
+                )
+            })
+            .transpose()?;
         Ok(Self {
+            raster,
             acceleration,
             pipeline,
             bind,
@@ -370,8 +389,10 @@ impl Renderer {
         session: &Session,
         reconstruction: Reconstruction,
     ) {
-        if self.acceleration != Acceleration::PerRayBounds
-            && session.visible
+        if matches!(
+            self.acceleration,
+            Acceleration::CachedBounds | Acceleration::Hierarchy
+        ) && session.visible
             && (session.debug_view == 0 || session.debug_view == 5)
         {
             self.bounds.encode(
@@ -394,6 +415,20 @@ impl Renderer {
         size: [u32; 2],
         reconstruction: Reconstruction,
     ) {
+        if let Some(raster) = &self.raster {
+            raster.encode(
+                gpu,
+                encoder,
+                target,
+                session,
+                &self.collision_source,
+                domain,
+                size,
+                reconstruction,
+                None,
+            );
+            return;
+        }
         let orbit = crate::scene::camera_collision::orbit(
             &session.player,
             session.camera,

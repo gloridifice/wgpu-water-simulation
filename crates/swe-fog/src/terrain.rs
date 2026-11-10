@@ -59,14 +59,34 @@ impl Terrain {
         source: &BakeSource,
         resolution: Option<[u32; 2]>,
     ) -> Result<Self, Error> {
+        self.at_region(source, resolution, 1.0)
+    }
+    /// Re-bake a centred subregion in world units; never scale source geometry.
+    pub fn at_region(
+        &self,
+        source: &BakeSource,
+        resolution: Option<[u32; 2]>,
+        scale: f32,
+    ) -> Result<Self, Error> {
         self.validate()?;
+        if !scale.is_finite() || !(0.0625..=1.0).contains(&scale) {
+            return Err("区域范围缩放必须为 0.0625–1 的有限数".into());
+        }
         if source.digest()? != self.metadata.source_sha256 {
-            return Err("fog terrain source mismatch; cannot change grid resolution".into());
+            return Err("fog terrain source mismatch; cannot change grid region".into());
         }
-        match resolution {
-            Some(r) if r != self.metadata.resolution => Self::bake(source, self.metadata.domain, r),
-            _ => Ok(self.clone()),
+        let resolution = resolution.unwrap_or(self.metadata.resolution);
+        if scale == 1.0 && resolution == self.metadata.resolution {
+            return Ok(self.clone());
         }
+        let [x, z, w, d] = self.metadata.domain;
+        let domain = [
+            x + w * (1.0 - scale) * 0.5,
+            z + d * (1.0 - scale) * 0.5,
+            w * scale,
+            d * scale,
+        ];
+        Self::bake(source, domain, resolution)
     }
     pub fn spacing(&self) -> Vec2 {
         Vec2::new(
@@ -194,7 +214,14 @@ impl Terrain {
             for z in low.y..=(high.y.min(nz as i32 - 1)) {
                 for x in low.x..=high.x {
                     let a = origin + Vec2::new(x as f32, z as f32) * step;
-                    if touches(a, a + Vec2::new(0.0, step.y), tri) {
+                    // Block transport between cell centres, not intersection
+                    // with the perpendicular shared face: a thin wall may lie
+                    // anywhere inside the cell after a domain/grid change.
+                    if touches(
+                        a + Vec2::new(-0.5 * step.x, 0.5 * step.y),
+                        a + step * 0.5,
+                        tri,
+                    ) {
                         t.pass_x[z as usize * (nx + 1) as usize + x as usize] = 0;
                     }
                 }
@@ -202,7 +229,11 @@ impl Terrain {
             for z in low.y..=high.y {
                 for x in low.x..=(high.x.min(nx as i32 - 1)) {
                     let a = origin + Vec2::new(x as f32, z as f32) * step;
-                    if touches(a, a + Vec2::new(step.x, 0.0), tri) {
+                    if touches(
+                        a + Vec2::new(0.5 * step.x, -0.5 * step.y),
+                        a + step * 0.5,
+                        tri,
+                    ) {
                         t.pass_z[z as usize * nx as usize + x as usize] = 0;
                     }
                     if z < nz as i32 && inside(a + step * 0.5, tri) {
@@ -321,6 +352,19 @@ fn distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     p.distance(a + t * delta)
 }
 fn touches(a: Vec2, b: Vec2, t: [Vec2; 3]) -> bool {
+    let edges = [t[1] - t[0], t[2] - t[1], t[0] - t[2]];
+    let direction = edges
+        .into_iter()
+        .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
+        .unwrap();
+    // Crossing a zero-width projected wall is forbidden, travelling along it
+    // is not. This matters when a wall lies exactly on a row of cell centres.
+    if edges[0].perp_dot(t[2] - t[0]).abs() <= 1e-12
+        && direction.length_squared() > 1e-20
+        && (b - a).perp_dot(direction).abs() <= 1e-12
+    {
+        return false;
+    }
     if inside(a, t) || inside(b, t) {
         return true;
     }

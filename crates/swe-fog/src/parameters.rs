@@ -9,6 +9,7 @@ pub enum Reconstruction {
     CubicBSpline = 1,
     PreSmoothed = 2,
     SmoothStep = 3,
+    CatmullRom = 4,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -133,11 +134,17 @@ pub struct Session {
     pub version: u32,
     /// Explicit simulation grid override; None keeps the validated terrain grid.
     pub grid_resolution: Option<[u32; 2]>,
-    /// Render-only reconstruction; switching preserves the complete simulation.
+    /// Scale native XZ bounds about their centre, without changing cell count.
+    pub domain_scale: f32,
+    /// Barrier-aware h/m reconstruction for tetrahedron vertices.
     pub reconstruction: Reconstruction,
+    /// Add an interior sample per cell (12 rather than 6 tetrahedra).
+    /// SmoothStep always enables this to sample away from kernel midpoints.
+    pub reconstruction_detail: bool,
     /// Dimensionless blend between raw h/m and a barrier-aware 3x3 render filter.
     pub reconstruction_smoothing: f32,
-    /// Render-only base segments per crossed XZ cell before adaptive refinement, 2..=32.
+    /// Legacy marching reference only (2..=32); retained for config compatibility.
+    /// Projected tetrahedron integration ignores this field.
     pub integration_steps: u32,
     pub fog: FogSettings,
     pub interaction: InteractionSettings,
@@ -154,7 +161,9 @@ impl Default for Session {
         Self {
             version: 1,
             grid_resolution: None,
+            domain_scale: 1.0,
             reconstruction: Reconstruction::default(),
+            reconstruction_detail: false,
             reconstruction_smoothing: 0.6,
             integration_steps: 2,
             fog: FogSettings::default(),
@@ -179,6 +188,7 @@ impl common::settings::Settings for Session {
         {
             return Err("网格分辨率每轴必须为 2–1024".into());
         }
+        range("区域范围缩放", self.domain_scale, 0.0625, 1.0)?;
         self.fog.validate()?;
         range("渲染平滑强度", self.reconstruction_smoothing, 0.0, 1.0)?;
         if !(2..=32).contains(&self.integration_steps) {

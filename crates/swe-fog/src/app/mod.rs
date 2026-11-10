@@ -72,7 +72,8 @@ impl State {
     ) -> Result<Self, Error> {
         session.validate()?;
         let native_terrain = terrain;
-        let terrain = native_terrain.at_resolution(&source, session.grid_resolution)?;
+        let terrain =
+            native_terrain.at_region(&source, session.grid_resolution, session.domain_scale)?;
         session.player.place(&terrain)?;
         let desktop = Desktop::new(window).await?;
         eprintln!(
@@ -137,9 +138,15 @@ impl State {
         self.emitter.clear();
     }
     fn rebuild_grid(&mut self) -> Result<(), Error> {
-        let terrain = self
-            .native_terrain
-            .at_resolution(&self.source, self.session.grid_resolution)?;
+        let terrain = self.native_terrain.at_region(
+            &self.source,
+            self.session.grid_resolution,
+            self.session.domain_scale,
+        )?;
+        let mut player = self.session.player.clone();
+        if terrain.metadata.domain != self.terrain.metadata.domain {
+            player.place(&terrain)?;
+        }
         let simulation = Simulation::new(&self.desktop.gpu, &terrain)?;
         let renderer = Renderer::new(
             &self.desktop.gpu,
@@ -148,6 +155,8 @@ impl State {
             &self.source,
             self.desktop.config.format,
         )?;
+        self.session.player = player;
+        self.physics_accumulator = 0.0;
         self.terrain = terrain;
         self.simulation = simulation;
         self.renderer = renderer;
@@ -371,6 +380,7 @@ impl WindowScene for State {
             * 2.0f32.powi(self.session.fog.noise_octaves as i32 - 1);
         let status = ui::Status {
             resolution: self.simulation.resolution,
+            domain: self.simulation.domain,
             diagnostics: self.diagnostics,
             fps: self.fps,
             gpu: gpu_status,
@@ -390,6 +400,7 @@ impl WindowScene for State {
         let movement_mode = self.session.interaction.movement_mode;
         let move_enabled = self.session.interaction.move_enabled;
         let grid_resolution = self.session.grid_resolution;
+        let domain_scale = self.session.domain_scale;
         let (output, actions) = self
             .ui
             .frame(&self.desktop.window, &mut self.session, &status);
@@ -415,10 +426,12 @@ impl WindowScene for State {
             .session
             .grid_resolution
             .unwrap_or(self.native_terrain.metadata.resolution);
-        if requested_resolution != self.simulation.resolution
+        if (requested_resolution != self.simulation.resolution
+            || domain_scale != self.session.domain_scale)
             && let Err(e) = self.rebuild_grid()
         {
             self.session.grid_resolution = grid_resolution;
+            self.session.domain_scale = domain_scale;
             self.reset = false;
             self.error = Some(format!("网格重建失败：{e}"));
         }
@@ -558,7 +571,7 @@ async fn warm_offscreen(
     time: f32,
 ) -> Result<(common::gpu::Gpu, Simulation), Error> {
     session.validate()?;
-    let terrain = terrain.at_resolution(source, session.grid_resolution)?;
+    let terrain = terrain.at_region(source, session.grid_resolution, session.domain_scale)?;
     if !time.is_finite() || !(0.0..=120.0).contains(&time) {
         return Err("offscreen time must be 0..120 s".into());
     }
@@ -589,8 +602,8 @@ pub async fn snapshot(
     time: f32,
     path: &std::path::Path,
 ) -> Result<(), Error> {
-    let terrain = terrain.at_resolution(source, session.grid_resolution)?;
-    let (gpu, sim) = warm_offscreen(session, &terrain, source, time).await?;
+    let (gpu, sim) = warm_offscreen(session, terrain, source, time).await?;
+    let terrain = terrain.at_region(source, session.grid_resolution, session.domain_scale)?;
     let (clock, _) = sim.snapshot(&gpu)?;
     if clock.fault != 0 {
         return Err("fog snapshot simulation fault".into());
