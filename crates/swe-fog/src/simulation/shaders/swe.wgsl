@@ -43,9 +43,22 @@ fn value_noise(v:vec2f)->f32{let i=vec2i(floor(v));var f=fract(v);f=f*f*(3.0-2.0
 fn fbm(world:vec2f)->f32{var v=(world+p.options.xy)*p.initial.z;var sum=0.0;var weight=0.0;var amplitude=1.0;for(var o=0;o<i32(p.noise.y);o++){sum+=value_noise(v)*amplitude;weight+=amplitude;v=v*p.noise.z+vec2f(19.17,7.13);amplitude*=p.noise.w;}return sum/max(weight,0.000001);}
 fn interaction_vector(e:GasEvent,i:i32)->vec2f{
     let c=vec2i(i%size.x,i/size.x);let world=p.domain.xy+(vec2f(c)+0.5)*spacing;let a=e.position_rotation.w;
-    let rot=mat2x2f(cos(a),-sin(a),sin(a),cos(a));let uv=transpose(rot)*(world-e.position_rotation.xz)/e.footprint.xy+0.5;
+    let rot=mat2x2f(cos(a),-sin(a),sin(a),cos(a));let local=transpose(rot)*(world-e.position_rotation.xz);let uv=local/e.footprint.xy+0.5;
     if any(uv<=vec2f(0))||any(uv>=vec2f(1)){return vec2f(0);}
+    if e.metadata.x>=2u{
+        if length(2.0*local/e.footprint.xy)>=1.0{return vec2f(0);}
+        let scale=bitcast<f32>(e.metadata.z);
+        if e.metadata.x==2u{return rot*vec2f(0,-scale);}
+        let sign=select(1.0,-1.0,e.metadata.x==4u);
+        return rot*(sign*scale*vec2f(-local.y,local.x));
+    }
     return rot*textureSampleLevel(disturbance,disturbance_sampler,uv,i32(e.metadata.x),0.0).rg*bitcast<f32>(e.metadata.z);
+}
+fn interaction_weight(e:GasEvent,i:i32,desired:vec2f)->f32{
+    if e.metadata.x<2u{return min(length(desired)/max(3.0*bitcast<f32>(e.metadata.z),EPS),1.0);}
+    let c=vec2i(i%size.x,i/size.x);let world=p.domain.xy+(vec2f(c)+0.5)*spacing;let a=e.position_rotation.w;
+    let rot=mat2x2f(cos(a),-sin(a),sin(a),cos(a));let r=2.0*(transpose(rot)*(world-e.position_rotation.xz))/e.footprint.xy;
+    let w=max(0.0,1.0-dot(r,r));return w*w;
 }
 fn overlap(e:GasEvent,q:vec4f,i:i32)->f32{
     if terrain[i].y<0.5||q.x<=EPS{return 0.0;}
@@ -60,8 +73,8 @@ fn impulse_step(input:vec4f,i:i32)->vec4f{
 fn source_step(input:vec4f,duration:f32,i:i32)->vec4f{
     var q=input;var drag=1.0/p.physics.y;var weighted=p.wind.xy*drag;
     for(var e=0u;e<events.header.x;e++){let event=events.records[e];if event.metadata.y==1u{
-        let desired=interaction_vector(event,i);let reference_speed=3.0*bitcast<f32>(event.metadata.z);
-        let weight=event.footprint.z*overlap(event,q,i)*min(length(desired)/max(reference_speed,EPS),1.0);drag+=weight;weighted+=weight*desired;
+        let desired=interaction_vector(event,i);
+        let weight=event.footprint.z*overlap(event,q,i)*interaction_weight(event,i,desired);drag+=weight;weighted+=weight*desired;
     }}
     let desired=weighted/drag;q=vec4f(q.x,q.x*(desired+(velocity(q)-desired)*exp(-duration*drag)),q.w);
     if p.display.w>0.5{q.w*=exp(-0.6931471805599453*duration/p.physics.z);}return q;

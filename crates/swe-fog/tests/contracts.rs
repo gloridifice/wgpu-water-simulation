@@ -2,8 +2,8 @@
 use common::settings::Settings;
 use glam::{Vec2, Vec3};
 use swe_fog::{
-    interactions::{Event, EventQueue, InteractionSettings, PlayerEmitter},
-    parameters::Session,
+    interactions::{Event, EventQueue, InteractionSettings, MovementMode, PlayerEmitter},
+    parameters::{Reconstruction, Session},
     scene::Player,
     terrain::{BakeSource, Terrain},
 };
@@ -50,6 +50,27 @@ fn static_bake_preserves_rectangular_coordinates_voids_thin_walls_and_source_ide
     assert_eq!(restored.valid, terrain.valid);
     assert_eq!(restored.heights, terrain.heights);
     assert_eq!(restored.pass_x, terrain.pass_x);
+    for resolution in [[16, 8], [4, 2]] {
+        let regridded = restored.at_resolution(&source, Some(resolution)).unwrap();
+        assert_eq!(regridded.metadata.domain, [-2.0, -1.0, 4.0, 2.0]);
+        assert_eq!(regridded.metadata.resolution, resolution);
+        assert_eq!(
+            regridded.metadata.source_sha256,
+            restored.metadata.source_sha256
+        );
+        assert!(
+            regridded.height_at(Vec2::new(1.0, 0.0)).is_none(),
+            "changing resolution must preserve void floor coverage"
+        );
+        let wall_face = resolution[0] as usize / 4;
+        for z in 0..resolution[1] as usize {
+            assert_eq!(
+                regridded.pass_x[z * (resolution[0] as usize + 1) + wall_face],
+                0,
+                "rebuilding must retain a zero-width wall"
+            );
+        }
+    }
     let mut inconsistent = restored.clone();
     inconsistent.pass_x[6] = 1;
     assert!(
@@ -58,6 +79,10 @@ fn static_bake_preserves_rectangular_coordinates_voids_thin_walls_and_source_ide
     );
     assert!(Terrain::decode(&bytes[..bytes.len() - 1], &source).is_err());
     source.floor[0][0][1] += 0.1;
+    assert!(
+        restored.at_resolution(&source, Some([16, 8])).is_err(),
+        "resolution changes must not conceal stale geometry"
+    );
     assert!(
         Terrain::decode(&bytes, &source).is_err(),
         "changed static geometry needs rebaking"
@@ -73,17 +98,61 @@ fn fog_session_roundtrip_keeps_independent_density_actions_and_legacy_defaults()
     s.validate().unwrap();
     assert_eq!(s.fog.base_height, 0.35);
     assert_eq!(s.interaction.move_impulse_interval, 0.2);
+    assert_eq!(s.interaction.movement_mode, MovementMode::Wake);
+    assert_eq!(s.grid_resolution, None);
+    assert_eq!(s.reconstruction, Reconstruction::Bilinear);
+    assert_eq!(s.reconstruction_smoothing, 0.6);
+    assert_eq!(s.integration_steps, 2);
     assert_eq!(s.fog.reduced_gravity, 0.02);
     assert_eq!(s.fog.half_life, 300.0);
     s.fog.extinction = 7.0;
     s.fog.brightness = 0.6;
     s.interaction.landing_radius = 2.5;
+    s.interaction.wake_radius = 3.0;
+    s.interaction.drag_response = 0.4;
+    s.interaction.movement_mode = MovementMode::Impulse;
     s.player.feet = [2.0, 0.0, -3.0];
     s.camera = [0.5, 0.7, 4.0];
     s.paused = true;
+    s.grid_resolution = Some([512, 256]);
+    s.reconstruction = Reconstruction::PreSmoothed;
+    s.reconstruction_smoothing = 0.8;
+    s.integration_steps = 16;
     s.interactions_enabled = false;
-    let restored: Session = serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
-    assert_eq!(restored, s);
+    for mode in [Reconstruction::PreSmoothed, Reconstruction::SmoothStep] {
+        s.reconstruction = mode;
+        let restored: Session = serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
+        assert_eq!(restored, s);
+    }
+    for steps in [0, 1, 33, u32::MAX] {
+        s.integration_steps = steps;
+        assert!(
+            s.validate().is_err(),
+            "integration work must remain bounded"
+        );
+    }
+    for steps in [2, 8, 32] {
+        s.integration_steps = steps;
+        s.validate().unwrap();
+    }
+    s.reconstruction_smoothing = f32::NAN;
+    assert!(
+        s.validate().is_err(),
+        "render smoothing must be finite even outside its mode"
+    );
+    s.reconstruction_smoothing = 0.8;
+    s.grid_resolution = Some([0, 256]);
+    assert!(
+        s.validate().is_err(),
+        "invalid dimensions cannot reach GPU resource creation"
+    );
+    s.grid_resolution = None;
+    s.interaction.wake_response = f32::NAN;
+    assert!(
+        s.validate().is_err(),
+        "inactive wake settings must remain finite"
+    );
+    s.interaction.wake_response = 0.3;
     s.fog.gravity_enabled = false;
     s.fog.reduced_gravity = f32::NAN;
     assert!(
@@ -156,7 +225,10 @@ fn static_camera_sphere_arm_clips_a_wall_without_moving_the_follow_target() {
 }
 #[test]
 fn action_emitter_uses_fractional_physics_cadence_and_never_banks_paused_actions() {
-    let settings = InteractionSettings::default();
+    let settings = InteractionSettings {
+        movement_mode: MovementMode::Impulse,
+        ..Default::default()
+    };
     let mut emitter = PlayerEmitter::default();
     let mut q = EventQueue::default();
     emitter.movement(
@@ -222,4 +294,111 @@ fn action_emitter_uses_fractional_physics_cadence_and_never_banks_paused_actions
     assert_eq!(q.take().len(), 1, "impulses are consumed once");
     q.clear();
     assert!(q.take().is_empty());
+}
+
+#[test]
+fn wake_sources_remain_on_the_path_expire_and_release_their_bounded_slots() {
+    let mut p = InteractionSettings::default();
+    let mut emitter = PlayerEmitter::default();
+    let mut q = EventQueue::default();
+    let velocity = Vec2::new(0.0, -3.0);
+    emitter.movement(&p, Vec3::ZERO, velocity, 3.0, 1.0 / 60.0, &mut q);
+    let first = q.take();
+    assert_eq!(
+        first.len(),
+        3,
+        "body and two vortices, without a legacy tap"
+    );
+    assert!(first.iter().all(|e| e.valid() && e.metadata[1] == 1));
+    let centres: Vec<_> = first
+        .iter()
+        .filter(|e| e.metadata[0] >= 3)
+        .map(|e| e.position_rotation)
+        .collect();
+    assert!(
+        centres.iter().all(|c| c[2] > 0.0),
+        "vortices start behind a player walking toward -Z"
+    );
+    for tick in 1..=10 {
+        emitter.movement(
+            &p,
+            Vec3::new(0.0, 0.0, -0.05 * tick as f32),
+            velocity,
+            3.0,
+            1.0 / 60.0,
+            &mut q,
+        );
+    }
+    let moved = q.take();
+    assert_eq!(
+        moved.len(),
+        3,
+        "sub-spacing motion must not emit by frame count"
+    );
+    for centre in centres {
+        assert!(
+            moved
+                .iter()
+                .any(|e| e.metadata[0] >= 3 && e.position_rotation == centre),
+            "old centres must not follow the player"
+        );
+    }
+    emitter.movement(
+        &p,
+        Vec3::new(0.0, 0.0, -0.5),
+        Vec2::ZERO,
+        3.0,
+        1.0 / 60.0,
+        &mut q,
+    );
+    let stopped = q.take();
+    assert_eq!(
+        stopped.len(),
+        2,
+        "stopping removes body drag but retains fading tail sources"
+    );
+    for _ in 0..60 {
+        emitter.movement(&p, Vec3::ZERO, Vec2::ZERO, 3.0, 1.0 / 60.0, &mut q);
+    }
+    assert!(
+        q.take().is_empty(),
+        "expired sources cannot brake existing fluid motion"
+    );
+    p.wake_lifetime = 3.0;
+    p.wake_spacing = 0.25;
+    for tick in 0..60 {
+        emitter.movement(
+            &p,
+            Vec3::new(tick as f32, 0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            10.0,
+            0.1,
+            &mut q,
+        );
+        assert!(
+            q.take().len() <= 31,
+            "fast movement is bounded by the source budget"
+        );
+    }
+    let mut external = Event::radial(Vec3::ZERO, 1.0, 2.0, &p);
+    external.metadata[1] = 1;
+    q.set_continuous(7, Some(external));
+    p.move_enabled = false;
+    emitter.movement(&p, Vec3::ZERO, velocity, 3.0, 0.1, &mut q);
+    let remaining = q.take();
+    assert_eq!(
+        remaining.len(),
+        1,
+        "disabling movement removes only player-owned sources"
+    );
+    assert_eq!(remaining[0].metadata, external.metadata);
+    q.clear();
+    emitter.clear();
+    p.move_enabled = true;
+    emitter.movement(&p, Vec3::ZERO, velocity, 3.0, 0.1, &mut q);
+    assert_eq!(
+        q.take().len(),
+        3,
+        "resume starts a fresh tail without a backlog"
+    );
 }

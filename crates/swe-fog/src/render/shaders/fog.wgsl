@@ -1,6 +1,7 @@
-// Cell-bounded ray integration with mask-aware bilinear XZ reconstruction.
+// Cell-bounded ray integration with selectable mask-aware XZ reconstruction.
 // Vertical 6s(1-s) is integrated analytically for each local segment;
-// continuously varying h,m,b are approximated by two segments per grid cell.
+// camera.eye.w (2..32) sets base segments per cell; candidate intervals get
+// at most three bisections, without changing the leaf Segment Coverage rule.
 struct Camera { inverse:mat4x4f, eye:vec4f, domain:vec4f, player:vec4f, params:vec4f, viewport:vec4f }
 @group(0) @binding(0) var<uniform> camera:Camera;
 @group(0) @binding(1) var field:texture_2d<f32>;
@@ -9,6 +10,9 @@ struct Geometry { header:vec4u, vertices:array<vec4f> }
 @group(0) @binding(3) var<storage,read> geometry:Geometry;
 @group(0) @binding(4) var<storage,read> control:array<u32>;
 @group(0) @binding(5) var<storage,read> masks:array<u32>;
+@group(0) @binding(7) var smoothed:texture_2d<f32>;
+@group(0) @binding(8) var bounds_lower:texture_2d<f32>;
+@group(0) @binding(9) var bounds_upper:texture_2d<f32>;
 struct Out { @builtin(position) position:vec4f, @location(0) uv:vec2f }
 @vertex fn vs(@builtin(vertex_index) i:u32)->Out {
     let p=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3));var o:Out;o.position=vec4f(p[i],0,1);o.uv=p[i]*0.5+0.5;return o;
@@ -31,14 +35,86 @@ fn capsule_hit(o:vec3f,d:vec3f,feet:vec3f)->f32 {
 fn triangle_hit(o:vec3f,d:vec3f,a:vec3f,b:vec3f,c:vec3f)->vec4f {
     let e1=b-a;let e2=c-a;let p=cross(d,e2);let det=dot(e1,p);if abs(det)<1e-8{return vec4f(1e20,0,1,0);}let q=o-a;let u=dot(q,p)/det;let v=dot(d,cross(q,e1))/det;let t=dot(e2,cross(q,e1))/det;if u<0||v<0||u+v>1||t<=0{return vec4f(1e20,0,1,0);}return vec4f(t,normalize(cross(e1,e2)));
 }
-fn linked(a:vec2i,b:vec2i,dims:vec2i)->bool {
-    if a.x!=b.x {let x=max(a.x,b.x);if masks[a.y*(dims.x+1)+x]==0u{return false;}}
-    if a.y!=b.y {let offset=(dims.x+1)*dims.y;let z=max(a.y,b.y);if masks[offset+z*dims.x+b.x]==0u{return false;}}return true;
+fn sample_layer_linear(pos:vec2f,anchor:vec2i,dims:vec2i)->vec3f {
+    let coordinate=(pos-camera.domain.xy)/(camera.domain.zw/vec2f(dims))-0.5;let base=vec2i(floor(coordinate));var f=fract(coordinate);var result=vec3f(0);var weights=0.0;
+    // Warp only the interpolation fraction; keep the same four raw samples.
+    if camera.player.w==3.0 {f=smoothstep(vec2f(0),vec2f(1),f);}
+    for(var z=0;z<2;z++){for(var x=0;x<2;x++){let c=clamp(base+vec2i(x,z),vec2i(0),dims-1);let index=c.y*dims.x+c.x;if bed[index].y>0.5&&linked(anchor,c,dims){let w=select(1.0-f.x,f.x,x==1)*select(1.0-f.y,f.y,z==1);var hm=vec2f(0);if camera.player.w==2.0{hm=textureLoad(smoothed,c,0).xy;}else{hm=textureLoad(field,c,0).xy;}result+=vec3f(hm,bed[index].x)*w;weights+=w;}}}
+    return result/max(weights,0.000001);
+}
+fn cubic_weights(t:f32)->vec4f {
+    let t2=t*t;let t3=t2*t;let one=1.0-t;
+    return vec4f(one*one*one,4.0-6.0*t2+3.0*t3,1.0+3.0*t+3.0*t2-3.0*t3,t3)/6.0;
+}
+fn sample_layer_cubic(pos:vec2f,anchor:vec2i,dims:vec2i)->vec3f {
+    let coordinate=(pos-camera.domain.xy)/(camera.domain.zw/vec2f(dims))-0.5;
+    let base=vec2i(floor(coordinate));let f=fract(coordinate);let wx=cubic_weights(f.x);let wz=cubic_weights(f.y);
+    var result=vec3f(0);var weights=0.0;
+    for(var z=0;z<4;z++){for(var x=0;x<4;x++){
+        let c=clamp(base+vec2i(x-1,z-1),vec2i(0),dims-1);let index=c.y*dims.x+c.x;
+        if bed[index].y>0.5&&linked_path(anchor,c,dims,true)&&linked_path(anchor,c,dims,false){
+            let w=wx[x]*wz[z];let q=textureLoad(field,c,0);result+=vec3f(q.xy,bed[index].x)*w;weights+=w;
+        }
+    }}
+    // These are smoothing coefficients, not prefiltered interpolating spline
+    // coefficients. Positive weights preserve nonnegative h/m and local bounds.
+    return result/max(weights,0.000001);
 }
 fn sample_layer(pos:vec2f,anchor:vec2i,dims:vec2i)->vec3f {
-    let coordinate=(pos-camera.domain.xy)/(camera.domain.zw/vec2f(dims))-0.5;let base=vec2i(floor(coordinate));let f=fract(coordinate);var result=vec3f(0);var weights=0.0;
-    for(var z=0;z<2;z++){for(var x=0;x<2;x++){let c=clamp(base+vec2i(x,z),vec2i(0),dims-1);let index=c.y*dims.x+c.x;if bed[index].y>0.5&&linked(anchor,c,dims){let w=select(1.0-f.x,f.x,x==1)*select(1.0-f.y,f.y,z==1);let q=textureLoad(field,c,0);result+=vec3f(q.xy,bed[index].x)*w;weights+=w;}}}
-    return result/max(weights,0.000001);
+    if camera.player.w>0.5&&camera.player.w<1.5{return sample_layer_cubic(pos,anchor,dims);}
+    return sample_layer_linear(pos,anchor,dims);
+}
+// Shared by every pixel; rebuilt once per changed field/reconstruction.
+fn cell_layer_bounds(anchor:vec2i,dims:vec2i)->LayerBounds {
+    if ACCELERATION==0u{return compute_layer_bounds(anchor,dims,camera.player.w);}
+    return LayerBounds(textureLoad(bounds_lower,anchor,0),textureLoad(bounds_upper,anchor,0));
+}
+fn segment_may_contain_fog(y0:f32,dy:f32,dist:f32,bounds:LayerBounds)->bool {
+    if bounds.upper.x<=0.0001||bounds.upper.y<=0.0{return false;}
+    let y1=y0+dy*dist;
+    // Only widen rejection bounds for f32 arithmetic; never shrink the layer.
+    let padding=0.00001*max(1.0,max(abs(bounds.lower.z),abs(bounds.upper.w)));
+    return max(y0,y1)>=bounds.lower.z-padding&&min(y0,y1)<=bounds.upper.w+padding;
+}
+fn segment_coverage(origin:vec3f,ray:vec3f,start:f32,dist:f32,cell:vec2i,dims:vec2i)->f32 {
+    let middle=origin+ray*(start+dist*0.5);
+    let layer=sample_layer(middle.xz,cell,dims);
+    if layer.x<=0.0001{return 0.0;}
+    let y0=origin.y+ray.y*start-layer.z;
+    return camera.params.x*layer.y/layer.x*layer_integral(y0,ray.y,layer.x,dist);
+}
+const MAX_SUBDIVISION_DEPTH:u32=3u;
+const MIN_PROJECTED_SEGMENT:f32=1.0/64.0;
+struct MarchSegment { start:f32, dist:f32, depth:u32 }
+fn integrate_segment(origin:vec3f,ray:vec3f,start:f32,dist:f32,cell:vec2i,dims:vec2i,bounds:LayerBounds)->f32 {
+    if dist<=0.0||!segment_may_contain_fog(origin.y+ray.y*start,ray.y,dist,bounds){return 0.0;}
+    // A constant neighbourhood or vertical ray already has an exact local
+    // primitive. Do not spend eight leaf samples on the same h/m/b.
+    if all(bounds.lower.xyz==bounds.upper.xyz)||all(ray.xz==vec2f(0)) {
+        return segment_coverage(origin,ray,start,dist,cell,dims);
+    }
+    let spacing=camera.domain.zw/vec2f(dims);
+    // Depth-first, near child first: three bisections need only four pending
+    // intervals (15 visited nodes, at most 8 leaves). WGSL has no recursion.
+    var pending:array<MarchSegment,MAX_SUBDIVISION_DEPTH+1u>;
+    pending[0]=MarchSegment(start,dist,0u);var count=1u;var optical=0.0;
+    for(var visited=0u;visited<(1u<<(MAX_SUBDIVISION_DEPTH+1u))-1u&&count>0u;visited++) {
+        count-=1u;let node=pending[count];
+        if !segment_may_contain_fog(origin.y+ray.y*node.start,ray.y,node.dist,bounds){continue;}
+        let footprint=abs(ray.xz)*node.dist/spacing;
+        let half=node.dist*0.5;let middle=node.start+half;
+        // Stop below 1/64 cell on BOTH XZ axes, or when f32 cannot bisect.
+        if node.depth<MAX_SUBDIVISION_DEPTH&&max(footprint.x,footprint.y)>MIN_PROJECTED_SEGMENT&&middle>node.start&&middle<node.start+node.dist {
+            pending[count]=MarchSegment(middle,half,node.depth+1u);
+            pending[count+1u]=MarchSegment(node.start,half,node.depth+1u);
+            count+=2u;
+        } else {
+            optical+=segment_coverage(origin,ray,node.start,node.dist,cell,dims);
+        }
+    }
+    // Bounds protect rejection, not finite leaf quadrature: an arbitrarily
+    // narrow crossing can still be missed at maximum depth.
+    return optical;
 }
 fn grid_line(pos:vec2f,period:f32,width:f32)->f32 {
     let c=pos/period;let footprint=max(fwidth(c),vec2f(0.00001));let dist=abs(fract(c-0.5)-0.5)/footprint;let line=1.0-smoothstep(width,width+1.0,min(dist.x,dist.y));return line*(1.0-smoothstep(0.15,0.5,max(footprint.x,footprint.y)));
@@ -64,27 +140,9 @@ fn shade(uv:vec2f)->vec4f {
     if player_t<floor_t {
         let hit=origin+ray*player_t;let center=camera.player.xyz+vec3f(0,clamp(hit.y-camera.player.y,0.35,1.45),0);let normal=normalize(hit-center);let light=0.36+0.64*max(dot(normal,normalize(vec3f(-0.3,0.8,0.5))),0.0);color=vec3f(1.0,0.36,0.045)*light;
     }
-    let dims=vec2i(textureDimensions(field));let upper=camera.viewport.w+bitcast<f32>(control[13]);let hit=box_hit(origin,ray,vec3f(domain.x,camera.viewport.z,domain.y),vec3f(domain.x+domain.z,upper,domain.y+domain.w));var t=max(hit.x,0.0);let end=min(min(hit.y,visible_t),64.0);var optical=0.0;
-    if camera.params.z>0.5 && end>t {
-        let spacing=domain.zw/vec2f(dims);let first=origin+ray*(t+0.000001);
-        var cell=clamp(vec2i(floor((first.xz-domain.xy)/spacing)),vec2i(0),dims-1);let step=select(vec2i(-1),vec2i(1),ray.xz>vec2f(0));
-        let boundary=domain.xy+(vec2f(cell)+select(vec2f(0),vec2f(1),ray.xz>vec2f(0)))*spacing;
-        var edge=vec2f(1e20);var delta=vec2f(1e20);
-        if abs(ray.x)>0.0000001{edge.x=(boundary.x-origin.x)/ray.x;delta.x=spacing.x/abs(ray.x);}
-        if abs(ray.z)>0.0000001{edge.y=(boundary.y-origin.z)/ray.z;delta.y=spacing.y/abs(ray.z);}
-        // Integer DDA advances each crossed face once, including corner ties.
-        // Re-flooring a floating point boundary can otherwise revisit a cell.
-        for(var iteration=0;iteration<2048&&t<end&&optical<14.0;iteration++) {
-            if any(cell<vec2i(0))||any(cell>=dims){break;}
-            let index=cell.y*dims.x+cell.x;let next=min(end,max(t,min(edge.x,edge.y)));let span=next-t;
-            if bed[index].y>0.5 {
-                for(var sub=0;sub<2;sub++){let start=t+span*f32(sub)*0.5;let middle=origin+ray*(start+span*0.25);let layer=sample_layer(middle.xz,cell,dims);if layer.x>0.0001{let y0=origin.y+ray.y*start-layer.z;optical+=camera.params.x*layer.y/layer.x*layer_integral(y0,ray.y,layer.x,span*0.5);}}
-            }
-            t=next;if t>=end{break;}
-            let cross_x=edge.x<=edge.y;let cross_z=edge.y<=edge.x;
-            if cross_x{cell.x+=step.x;edge.x+=delta.x;}
-            if cross_z{cell.y+=step.y;edge.y+=delta.y;}
-        }
+    let dims=vec2i(textureDimensions(field));let upper=camera.viewport.w+bitcast<f32>(control[13]);let hit=box_hit(origin,ray,vec3f(domain.x,camera.viewport.z,domain.y),vec3f(domain.x+domain.z,upper,domain.y+domain.w));let start=max(hit.x,0.0);let end=min(min(hit.y,visible_t),64.0);var optical=0.0;
+    if camera.params.z>0.5 && (camera.params.w==0.0||camera.params.w==5.0) && end>start {
+        optical=integrate_ray(origin,ray,start,end,dims);
     }
     let trans=exp(-min(optical,30.0));color=color*trans+vec3f(camera.params.y)*(1.0-trans);
     if camera.params.w>0.5 && floor_t>0.0 && floor_t<player_t {

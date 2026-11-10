@@ -1,5 +1,15 @@
 use crate::{interactions::InteractionSettings, scene::Player};
 use serde::{Deserialize, Serialize};
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u32)]
+pub enum Reconstruction {
+    #[default]
+    Bilinear = 0,
+    CubicBSpline = 1,
+    PreSmoothed = 2,
+    SmoothStep = 3,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FogSettings {
@@ -121,6 +131,14 @@ impl FogSettings {
 #[serde(default)]
 pub struct Session {
     pub version: u32,
+    /// Explicit simulation grid override; None keeps the validated terrain grid.
+    pub grid_resolution: Option<[u32; 2]>,
+    /// Render-only reconstruction; switching preserves the complete simulation.
+    pub reconstruction: Reconstruction,
+    /// Dimensionless blend between raw h/m and a barrier-aware 3x3 render filter.
+    pub reconstruction_smoothing: f32,
+    /// Render-only base segments per crossed XZ cell before adaptive refinement, 2..=32.
+    pub integration_steps: u32,
     pub fog: FogSettings,
     pub interaction: InteractionSettings,
     pub player: Player,
@@ -135,6 +153,10 @@ impl Default for Session {
     fn default() -> Self {
         Self {
             version: 1,
+            grid_resolution: None,
+            reconstruction: Reconstruction::default(),
+            reconstruction_smoothing: 0.6,
+            integration_steps: 2,
             fog: FogSettings::default(),
             interaction: InteractionSettings::default(),
             player: Player::default(),
@@ -151,7 +173,17 @@ impl common::settings::Settings for Session {
         if self.version != 1 {
             return Err("不支持的雾配置版本".into());
         }
+        if self
+            .grid_resolution
+            .is_some_and(|r| r.iter().any(|n| !(2..=1024).contains(n)))
+        {
+            return Err("网格分辨率每轴必须为 2–1024".into());
+        }
         self.fog.validate()?;
+        range("渲染平滑强度", self.reconstruction_smoothing, 0.0, 1.0)?;
+        if !(2..=32).contains(&self.integration_steps) {
+            return Err("积分精度必须为每格 2–32 段".into());
+        }
         self.interaction.validate()?;
         self.player.validate()?;
         range("相机 yaw", self.camera[0], -10000.0, 10000.0)?;

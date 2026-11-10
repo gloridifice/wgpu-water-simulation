@@ -1,7 +1,11 @@
 //! Fog business panels on the common egui/Dock and persistence mechanisms.
 #[cfg(test)]
 mod tests;
-use crate::{parameters::Session, simulation::Diagnostics};
+use crate::{
+    interactions::MovementMode,
+    parameters::{Reconstruction, Session},
+    simulation::Diagnostics,
+};
 use common::{
     gpu::Gpu,
     settings::{ConfigurationLibrary, SettingsStore, sidecar::Sidecar},
@@ -12,7 +16,9 @@ use common::{
 };
 use serde::{Deserialize, Serialize};
 use winit::window::Window;
-use yummy_egui::{IconButton, SelectionList, parameter, parameter_table};
+use yummy_egui::{
+    IconButton, IconSegmentedControl, SelectionList, parameter, parameter_table, segmented_control,
+};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Panel {
@@ -80,6 +86,7 @@ pub struct Actions {
     pub load: Option<(Option<usize>, Session)>,
 }
 pub struct Status {
+    pub resolution: [u32; 2],
     pub diagnostics: Diagnostics,
     pub fps: f32,
     pub gpu: String,
@@ -250,31 +257,42 @@ impl Interface {
                     if ui.add_enabled(self.writable,egui::Button::new("保存")).on_disabled_hover_text("只读配置或 --no-settings 模式不写盘").clicked(){actions.save=true;}
                     let label=if status.save_failed{ui.colored_label(egui::Color32::LIGHT_RED,&status.save)}else{ui.label(&status.save)};
                     label.on_hover_text(status.save_path.as_deref().unwrap_or("本地保存已禁用"));
-                    ui.menu_button("操作",|ui|{ui.label("单击视图捕获鼠标；Esc 释放");ui.label("WASD 移动，空格跳跃，Q 退出");ui.label("左拖数值，Shift 精调，双击输入");ui.label("数字改动重置雾，开关不重置");});ui.separator();
+                    ui.menu_button("操作",|ui|{ui.label("单击视图捕获鼠标；Esc 释放");ui.label("WASD 移动，空格跳跃，Q 退出");ui.label("左拖数值，Shift 精调，双击输入");ui.label("数字改动重置雾；平滑强度、积分精度与开关不重置");});ui.separator();
                     if let Some(e)=&status.error{ui.colored_label(egui::Color32::LIGHT_RED,"错误").on_hover_text(e);}
                     if let Some(w)=&status.warning{ui.colored_label(egui::Color32::YELLOW,"警告").on_hover_text(w);}
                     ui.label(format!("FPS {:.1}",status.fps)).on_hover_text(format!("GPU {}",status.gpu));
                     ui.menu_button("诊断",|ui|{
                         let d=status.diagnostics;
+                        ui.label(format!("模拟网格 {} × {}",status.resolution[0],status.resolution[1]));
                         ui.label(format!("GPU {}",status.gpu));
                         ui.label(format!("模拟 {:.2} s · g={:.3} m/s²",d.simulated_time,if session.fog.gravity_enabled{session.fog.reduced_gravity}else{0.0}));
                         ui.label(format!("h {:.3}–{:.3} m · 最大速度 {:.2} cm/s",d.min_height,d.max_height,d.max_speed*100.0));
                     });
                 });
             });
-            egui::Panel::left("fog navigation").exact_size(48.0).show_inside(root,|ui|{
-                for (i,name) in ["模拟","外观","配置"].into_iter().enumerate(){
+            egui::Panel::left("fog navigation").exact_size(54.0).resizable(false)
+                .frame(egui::Frame::side_top_panel(root.style()).inner_margin(8.0))
+                .show_inside(root,|ui|{
+                let segment_size = 38.0;
+                let items: [_; 3] = std::array::from_fn(|i| {
                     let color=if self.active==i{ui.visuals().selection.stroke.color}else{ui.visuals().text_color()};
-                    let response=ui.add(IconButton::new(self.icons[i].clone().tint(color)).size(32.0).icon_size(22.0).label(name));
-                    if self.active==i{ui.painter().rect_stroke(response.rect,4.0,ui.visuals().selection.stroke,egui::StrokeKind::Inside);}
-                    if response.clicked(){self.active=i;}
+                    (i, self.icons[i].clone().tint(color))
+                });
+                let response = ui.add(IconSegmentedControl::new(&mut self.active, items).vertical().size(segment_size).icon_size(24.0));
+                // Add labels over the shared response without taking over the
+                // selector's native click and keyboard handling.
+                for (i,name) in ["模拟","外观","配置"].into_iter().enumerate(){
+                    let rect = egui::Rect::from_min_size(response.rect.min + egui::vec2(0.0, i as f32 * segment_size), egui::Vec2::splat(segment_size));
+                    ui.interact(rect, ui.id().with(("fog category",i)), egui::Sense::hover())
+                        .on_hover_text(name)
+                        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, ui.is_enabled(), self.active==i, name));
                 }
                 ui.separator();
-                let add=ui.add(IconButton::new(self.icons[3].clone().tint(ui.visuals().text_color())).size(32.0).icon_size(22.0).label("添加面板"));
+                let add=ui.add(IconButton::new(self.icons[3].clone().tint(ui.visuals().text_color())).size(segment_size).icon_size(24.0).label("添加面板"));
                 egui::Popup::menu(&add).show(|ui|{
                     for p in <Panel as PanelId>::ALL.iter().copied().filter(|p|*p!=Panel::View){if ui.button(p.name()).clicked(){workspaces[self.active].add(p);ui.close();}}
                 });
-                if ui.add(IconButton::new(self.icons[4].clone().tint(ui.visuals().text_color())).size(32.0).icon_size(22.0).label("重排：重置当前布局；损坏的布局文件将允许修复。不重置模拟或相机。")).clicked(){reset_layout=true;}
+                if ui.add(IconButton::new(self.icons[4].clone().tint(ui.visuals().text_color())).size(segment_size).icon_size(24.0).label("重排：重置当前布局；损坏的布局文件将允许修复。不重置模拟或相机。")).clicked(){reset_layout=true;}
             });
             egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(root,|ui|{
                 let active=self.active;let workspace=&mut workspaces[active];workspace.prepare(|p|p!=Panel::Unknown);
@@ -446,6 +464,31 @@ const RESET: &str =
 fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
     yummy_egui::h3(ui, "初始化");
     parameter_table(ui, "fog initialization", |ui| {
+        let before = s.grid_resolution;
+        parameter(
+            ui,
+            "网格分辨率",
+            "每轴格点数；可选 64、128、256、512，默认地形为 256×256。提高分辨率可表达更细的回卷，但增加计算量。切换后从静态场景重新生成内存地形、重建 GPU 网格并重置雾；场地尺寸、玩家、相机与暂停状态保持不变。选择会随会话手动保存。",
+            |ui| {
+                let label = s
+                    .grid_resolution
+                    .map_or_else(|| "地形原始网格".into(), |r| format!("{} × {}", r[0], r[1]));
+                egui::ComboBox::from_id_salt("fog grid resolution")
+                    .selected_text(label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut s.grid_resolution, None, "地形原始网格");
+                        for n in [64, 128, 256, 512] {
+                            ui.selectable_value(
+                                &mut s.grid_resolution,
+                                Some([n, n]),
+                                format!("{n} × {n}"),
+                            );
+                        }
+                    })
+                    .response
+            },
+        );
+        a.reset |= before != s.grid_resolution;
         a.reset |= number(
             ui,
             "基础高度 (m)",
@@ -575,6 +618,60 @@ fn appearance(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
     yummy_egui::h3(ui, "白雾外观");
     ui.checkbox(&mut s.visible, "显示白雾");
     parameter_table(ui, "fog appearance", |ui| {
+        parameter(
+            ui,
+            "重建方式",
+            "双线性使用 2×2 邻格；SmoothStep 先以 t²(3−2t) 平滑 X/Z 插值权重，再读取同样的 2×2 原始邻格，保留格点值；预平滑生成 3×3 平滑结果后用双线性采样；B 样条逐点采样 4×4 邻格，成本较高。各模式均受障碍物约束，并共用积分精度。切换实时生效、不重置，随会话手动保存；原始格点诊断不受影响。",
+            |ui| {
+                let modes = [
+                    (Reconstruction::Bilinear, "双线性"),
+                    (Reconstruction::SmoothStep, "SmoothStep"),
+                    (Reconstruction::PreSmoothed, "预平滑"),
+                    (Reconstruction::CubicBSpline, "B 样条"),
+                ];
+                let segment_width = ui
+                    .painter()
+                    .layout_no_wrap(
+                        "SmoothStep".into(),
+                        egui::TextStyle::Button.resolve(ui.style()),
+                        ui.visuals().text_color(),
+                    )
+                    .size()
+                    .x
+                    + 2.0 * ui.spacing().button_padding.x;
+                if ui.available_width() >= segment_width * modes.len() as f32 {
+                    segmented_control(ui, &mut s.reconstruction, &modes)
+                } else {
+                    ui.vertical(|ui| {
+                        let first = segmented_control(ui, &mut s.reconstruction, &modes[..2]);
+                        first | segmented_control(ui, &mut s.reconstruction, &modes[2..])
+                    })
+                    .inner
+                }
+            },
+        );
+        if s.reconstruction == Reconstruction::PreSmoothed {
+            number(
+                ui,
+                "平滑强度",
+                "无量纲，0–1；0 使用原始双线性，1 使用完整 3×3 平滑。只改变渲染厚度与雾量，不改变底高或模拟。实时生效、不重置；暂停时也能调节，随会话手动保存。",
+                &mut s.reconstruction_smoothing,
+                0.0,
+                1.0,
+                0.02,
+            );
+        }
+        parameter(
+            ui,
+            "积分精度",
+            "每个穿过的 XZ 网格内的基础积分段数，2–32 段/格，默认 2。可能穿雾的区间再自适应二分，最多 3 层；XZ 投影不超过 1/64 格时停止，均匀层和竖直视线直接积分。增加基础段数可减轻漏采与走样，但增加 GPU 耗时，B 样条成本更高；有限细分仍非严格求交。建议暂停后从 2 开始对比。实时生效、不重置模拟；随会话手动保存。",
+            |ui| {
+                ui.add(
+                    yummy_egui::ParameterSlider::new(&mut s.integration_steps, 2..=32)
+                        .suffix(" 段/格"),
+                )
+            },
+        );
         a.reset |= number(ui, "消光强度", RESET, &mut s.fog.extinction, 0.0, 40.0, 0.1);
         a.reset |= number(ui, "白雾亮度", RESET, &mut s.fog.brightness, 0.0, 4.0, 0.02);
     });
@@ -599,52 +696,160 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
     ui.checkbox(&mut p.jump_enabled, "起跳冲击");
     ui.checkbox(&mut p.landing_enabled, "落地冲击");
     parameter_table(ui, "fog player interactions", |ui| {
-        a.reset |= number(
+        parameter(
             ui,
-            "移动纹理速度 (m/s)",
-            RESET,
-            &mut p.move_impulse_speed,
-            0.0,
-            6.0,
-            0.05,
+            "移动模式",
+            "持续拖带在角色周围带动雾，并沿路径留下反向尾涡；原有脉冲用于对照。切换立即生效并清理旧来源，不重置雾场。",
+            |ui| {
+                egui::ComboBox::from_id_salt("movement mode")
+                    .selected_text(match p.movement_mode {
+                        MovementMode::Wake => "拖带与回旋",
+                        MovementMode::Impulse => "原有脉冲",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut p.movement_mode, MovementMode::Wake, "拖带与回旋");
+                        ui.selectable_value(
+                            &mut p.movement_mode,
+                            MovementMode::Impulse,
+                            "原有脉冲",
+                        );
+                    })
+                    .response
+            },
         );
-        a.reset |= number(
-            ui,
-            "移动冲量强度",
-            RESET,
-            &mut p.move_impulse_strength,
-            0.0,
-            1.0,
-            0.01,
-        );
-        a.reset |= number(
-            ui,
-            "冲量间隔 (s)",
-            RESET,
-            &mut p.move_impulse_interval,
-            0.02,
-            2.0,
-            0.01,
-        );
-        a.reset |= number(
-            ui,
-            "扇形宽度 (m)",
-            RESET,
-            &mut p.move_width,
-            0.25,
-            8.0,
-            0.05,
-        );
-        a.reset |= number(ui, "前伸距离 (m)", RESET, &mut p.move_reach, 0.1, 6.0, 0.05);
-        a.reset |= number(
-            ui,
-            "中心前移 (m)",
-            RESET,
-            &mut p.move_forward_offset,
-            0.0,
-            2.0,
-            0.05,
-        );
+        if p.movement_mode == MovementMode::Wake {
+            for (name, help, value, lo, hi, step) in [
+                (
+                    "拖带半径 (m)",
+                    "角色周围的作用半径，0.5–4 米；边缘平滑减弱。改值立即重置雾。",
+                    &mut p.drag_radius,
+                    0.5,
+                    4.0,
+                    0.05,
+                ),
+                (
+                    "拖带响应时间 (s)",
+                    "雾趋近角色目标速度的响应时间，0.05–3 模拟秒；越小跟随越快。改值立即重置雾。",
+                    &mut p.drag_response,
+                    0.05,
+                    3.0,
+                    0.02,
+                ),
+                (
+                    "拖带速度比例",
+                    "目标速度与实际角色速度的比例，无量纲，0–1。改值立即重置雾。",
+                    &mut p.drag_velocity_ratio,
+                    0.0,
+                    1.0,
+                    0.02,
+                ),
+                (
+                    "尾涡半径 (m)",
+                    "每个尾涡的作用半径，0.5–4 米；默认网格建议从 2 米左右开始。改值立即重置雾。",
+                    &mut p.wake_radius,
+                    0.5,
+                    4.0,
+                    0.05,
+                ),
+                (
+                    "尾涡角速度 (rad/s)",
+                    "正常步速下的旋转目标角速度，0–3 弧度/模拟秒；低速移动按比例减弱，零值关闭尾涡旋转。改值立即重置雾。",
+                    &mut p.wake_angular_speed,
+                    0.0,
+                    3.0,
+                    0.05,
+                ),
+                (
+                    "尾涡响应时间 (s)",
+                    "雾趋近尾涡目标速度的响应时间，0.05–3 模拟秒；越小施力越强。改值立即重置雾。",
+                    &mut p.wake_response,
+                    0.05,
+                    3.0,
+                    0.02,
+                ),
+                (
+                    "尾涡后移 (m)",
+                    "尾涡出生中心位于角色移动方向后方的距离，0–4 米。出生后固定在路径上。改值立即重置雾。",
+                    &mut p.wake_offset,
+                    0.0,
+                    4.0,
+                    0.05,
+                ),
+                (
+                    "尾涡左右间距 (m)",
+                    "一对反向尾涡两个中心之间的完整距离，0.5–6 米。改值立即重置雾。",
+                    &mut p.wake_separation,
+                    0.5,
+                    6.0,
+                    0.05,
+                ),
+                (
+                    "尾涡发射间距 (m)",
+                    "沿实际移动路径每隔 0.25–4 米生成一对尾涡，起步立即生成；越小来源越密。改值立即重置雾。",
+                    &mut p.wake_spacing,
+                    0.25,
+                    4.0,
+                    0.05,
+                ),
+                (
+                    "尾涡施力时间 (s)",
+                    "每对来源保留 0.05–3 个启用交互时的物理秒，响应逐渐减弱。到期只撤除外力，保留雾中惯性。暂停会清理来源。改值立即重置雾。",
+                    &mut p.wake_lifetime,
+                    0.05,
+                    3.0,
+                    0.02,
+                ),
+            ] {
+                a.reset |= number(ui, name, help, value, lo, hi, step);
+            }
+        } else {
+            a.reset |= number(
+                ui,
+                "移动纹理速度 (m/s)",
+                RESET,
+                &mut p.move_impulse_speed,
+                0.0,
+                6.0,
+                0.05,
+            );
+            a.reset |= number(
+                ui,
+                "移动冲量强度",
+                RESET,
+                &mut p.move_impulse_strength,
+                0.0,
+                1.0,
+                0.01,
+            );
+            a.reset |= number(
+                ui,
+                "冲量间隔 (s)",
+                RESET,
+                &mut p.move_impulse_interval,
+                0.02,
+                2.0,
+                0.01,
+            );
+            a.reset |= number(
+                ui,
+                "扇形宽度 (m)",
+                RESET,
+                &mut p.move_width,
+                0.25,
+                8.0,
+                0.05,
+            );
+            a.reset |= number(ui, "前伸距离 (m)", RESET, &mut p.move_reach, 0.1, 6.0, 0.05);
+            a.reset |= number(
+                ui,
+                "中心前移 (m)",
+                RESET,
+                &mut p.move_forward_offset,
+                0.0,
+                2.0,
+                0.05,
+            );
+        }
         a.reset |= number(
             ui,
             "起跳冲击强度",

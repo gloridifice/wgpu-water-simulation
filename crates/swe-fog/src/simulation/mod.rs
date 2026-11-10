@@ -6,7 +6,14 @@ use crate::{
     terrain::Terrain,
 };
 use common::gpu::{Gpu, buffer};
-use std::{num::NonZeroU64, sync::mpsc};
+use std::{
+    num::NonZeroU64,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
+};
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Diagnostics {
     pub remaining: f32,
@@ -46,6 +53,8 @@ pub struct Simulation {
     pub resolution: [u32; 2],
     pub domain: [f32; 4],
     pub published: wgpu::Texture,
+    /// CPU publication generation, shared with render caches; never a GPU readback.
+    pub(crate) published_revision: Arc<AtomicU64>,
     pub bed: wgpu::Buffer,
     pub masks: wgpu::Buffer,
     pub control: wgpu::Buffer,
@@ -330,6 +339,7 @@ impl Simulation {
             resolution: [nx, nz],
             domain: terrain.metadata.domain,
             published,
+            published_revision: Arc::new(AtomicU64::new(0)),
             bed,
             masks,
             control,
@@ -429,6 +439,7 @@ impl Simulation {
         }
         self.dispatch(encoder, 15, 0, 0, true);
         self.dispatch(encoder, 13, 0, 0, false);
+        self.published_revision.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
     pub fn request_diagnostics(&mut self, encoder: &mut wgpu::CommandEncoder) {

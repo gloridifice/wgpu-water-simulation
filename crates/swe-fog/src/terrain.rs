@@ -52,6 +52,22 @@ pub struct Terrain {
     pub pass_z: Vec<u8>,
 }
 impl Terrain {
+    /// Explicit grid selection rebuilds from the validated static triangles in
+    /// memory. It never interpolates away thin walls or rewrites baked assets.
+    pub fn at_resolution(
+        &self,
+        source: &BakeSource,
+        resolution: Option<[u32; 2]>,
+    ) -> Result<Self, Error> {
+        self.validate()?;
+        if source.digest()? != self.metadata.source_sha256 {
+            return Err("fog terrain source mismatch; cannot change grid resolution".into());
+        }
+        match resolution {
+            Some(r) if r != self.metadata.resolution => Self::bake(source, self.metadata.domain, r),
+            _ => Ok(self.clone()),
+        }
+    }
     pub fn spacing(&self) -> Vec2 {
         Vec2::new(
             self.metadata.domain[2] / self.metadata.resolution[0] as f32,

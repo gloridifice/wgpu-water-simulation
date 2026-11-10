@@ -13,7 +13,7 @@ cargo run --release -p swe-fog -- [options]
   --scene PATH           World-space static triangle JSON (floor/obstacle)
   --terrain PATH         Baked fog terrain; default is embedded playground asset
   --domain X,Z,W,D       Bake bounds in metres (default -32,-32,64,64)
-  --resolution N or NxM  Bake resolution, each 2..1024 (default 128)
+  --resolution N or NxM  Grid resolution, each 2..1024 (bake default 256)
   --config PATH          Strict read-only session; never saves parameters/layout
   --settings PATH        Writable session; only explicit Save / Ctrl+S writes
   --no-settings          Do not load or save personal session/layout
@@ -25,7 +25,7 @@ cargo run --release -p swe-fog -- [options]
 
 Click viewport: capture mouse | Esc: release | WASD: walk | Space: jump
 Captured mouse: orbit | Q: quit | Shift: fine number drag | Double click: type
-All numeric edits immediately reset fog only; switches do not reset.
+Numeric edits reset fog, except render smoothing/integration quality; switches do not reset.
 ";
 fn next(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, Error> {
     args.next()
@@ -45,7 +45,7 @@ fn run() -> Result<(), Error> {
     let mut dump = None;
     let mut time = 3.0f32;
     let mut domain = [-32.0, -32.0, 64.0, 64.0];
-    let mut resolution = [128, 128];
+    let mut resolution = None;
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--help" | "-h" => {
@@ -76,11 +76,11 @@ fn run() -> Result<(), Error> {
                     .split('x')
                     .map(str::parse::<u32>)
                     .collect::<Result<Vec<_>, _>>()?;
-                resolution = match values.as_slice() {
+                resolution = Some(match values.as_slice() {
                     [n] => [*n, *n],
                     [x, z] => [*x, *z],
                     _ => return Err("resolution must be N or NxM".into()),
-                };
+                });
             }
             _ => return Err(format!("unknown option {flag}; see --help").into()),
         }
@@ -106,12 +106,12 @@ fn run() -> Result<(), Error> {
         {
             std::fs::create_dir_all(parent)?;
         }
-        let t = Terrain::bake(&source, domain, resolution)?;
+        let t = Terrain::bake(&source, domain, resolution.unwrap_or([256, 256]))?;
         t.save(&path)?;
         eprintln!(
             "Baked {} ({:?}, {} overlaps, SHA256 {})",
             path.display(),
-            resolution,
+            t.metadata.resolution,
             t.metadata.overlaps,
             t.metadata.source_sha256
         );
@@ -128,7 +128,7 @@ fn run() -> Result<(), Error> {
             "--settings is for writable windows; use --config for read-only exports".into(),
         );
     }
-    let (session, store) = if let Some(path) = config {
+    let (mut session, store) = if let Some(path) = config {
         (common::settings::load_config::<Session>(&path)?, None)
     } else if offscreen || no_settings {
         (Session::default(), None)
@@ -138,6 +138,9 @@ fn run() -> Result<(), Error> {
         }));
         (session, Some(store))
     };
+    if let Some(resolution) = resolution {
+        session.grid_resolution = Some(resolution);
+    }
     session.validate()?;
     if let Some(path) = snapshot {
         pollster::block_on(swe_fog::app::snapshot(
@@ -145,7 +148,7 @@ fn run() -> Result<(), Error> {
         ))?;
     }
     if let Some(path) = dump {
-        pollster::block_on(swe_fog::app::dump(&session, &terrain, time, &path))?;
+        pollster::block_on(swe_fog::app::dump(&session, &terrain, &source, time, &path))?;
     }
     if offscreen {
         return Ok(());
