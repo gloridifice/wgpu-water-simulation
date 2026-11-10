@@ -25,10 +25,13 @@ pub(crate) fn run(gpu: &Gpu) -> Result<(), Error> {
         let source = BakeSource {
             floor: floor.clone(),
             obstacle: if opaque { wall.clone() } else { vec![] },
+            colors: vec![],
+            collision: vec![],
         };
         let terrain = Terrain::bake(&source, [-8.0, -6.0, 16.0, 12.0], [13, 7])?;
         let mut sim = Simulation::new(gpu, &terrain)?;
         let mut s = Session {
+            render_mode: crate::parameters::RenderMode::Tetrahedra,
             debug_view: 5,
             ..Default::default()
         };

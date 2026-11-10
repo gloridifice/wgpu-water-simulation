@@ -1,17 +1,16 @@
 use common::settings::{Settings, SettingsStore};
 use std::{path::PathBuf, process::ExitCode};
-use swe_fog::{
-    Error,
-    parameters::Session,
-    terrain::{BakeSource, Terrain},
-};
+use swe_fog::{Error, parameters::Session, terrain::Terrain};
 const HELP: &str = "SWE Fog — independent Rust / wgpu playground
 
 cargo run --release -p swe-fog -- [options]
   --verify               Run real GPU solver and thin-layer rendering checks
   --bake PATH            Explicit offline bake; output must not exist
-  --scene PATH           World-space static triangle JSON (floor/obstacle)
-  --terrain PATH         Baked fog terrain; default is embedded playground asset
+  --scene NAME|PATH      datun (default), grandma, playground, or JSON/.fogscene
+  --terrain PATH         Baked fog terrain; default is the selected bundled asset
+  --import-glb PATH      Offline model conversion (opaque primitives only)
+  --bake-scene PATH      Packed visual mesh + simplified collider; must not exist
+  --model-span M         Normalize longest XZ extent to M metres (default 64)
   --domain X,Z,W,D       Bake bounds in metres (default -32,-32,64,64)
   --resolution N or NxM  Grid resolution, each 2..1024 (bake default 256)
   --config PATH          Strict read-only session; never saves parameters/layout
@@ -25,7 +24,7 @@ cargo run --release -p swe-fog -- [options]
 
 Click viewport: capture mouse | Esc: release | WASD: walk | Space: jump
 Captured mouse: orbit | Q: quit | Shift: fine number drag | Double click: type
-Numeric edits reset fog, except render smoothing; switches do not reset.
+Numeric edits reset fog, except render smoothing/noise. Scene changes reset fog/player.
 ";
 fn next(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, Error> {
     args.next()
@@ -35,6 +34,9 @@ fn run() -> Result<(), Error> {
     let mut args = std::env::args().skip(1);
     let mut verify = false;
     let mut bake = None;
+    let mut import_glb = None;
+    let mut bake_scene = None;
+    let mut model_span = 64.0;
     let mut scene = None;
     let mut terrain_path = None;
     let mut config = None;
@@ -54,6 +56,9 @@ fn run() -> Result<(), Error> {
             }
             "--verify" => verify = true,
             "--bake" => bake = Some(PathBuf::from(next(&mut args, &flag)?)),
+            "--import-glb" => import_glb = Some(PathBuf::from(next(&mut args, &flag)?)),
+            "--bake-scene" => bake_scene = Some(PathBuf::from(next(&mut args, &flag)?)),
+            "--model-span" => model_span = next(&mut args, &flag)?.parse::<f32>()?,
             "--scene" => scene = Some(PathBuf::from(next(&mut args, &flag)?)),
             "--terrain" => terrain_path = Some(PathBuf::from(next(&mut args, &flag)?)),
             "--config" => config = Some(PathBuf::from(next(&mut args, &flag)?)),
@@ -94,10 +99,66 @@ fn run() -> Result<(), Error> {
     if config.is_some() && settings.is_some() {
         return Err("--config and --settings are mutually exclusive".into());
     }
-    let source: BakeSource = if let Some(path) = scene {
-        serde_json::from_slice(&std::fs::read(path)?)?
+    if bake.as_ref().is_some_and(|path| path.exists()) {
+        return Err("bake output must not exist".into());
+    }
+    if let Some(input) = import_glb {
+        if scene.is_some() {
+            return Err("--import-glb and --scene are mutually exclusive".into());
+        }
+        let output = bake_scene.ok_or("--import-glb requires --bake-scene PATH")?;
+        if output.exists() || bake.as_ref().is_some_and(|p| p.exists()) {
+            return Err("bake outputs must not exist".into());
+        }
+        let source = swe_fog::model::import_glb(&input, model_span)?;
+        swe_fog::model::save(&source, &output)?;
+        if let Some(path) = bake {
+            let terrain = Terrain::bake(&source, domain, resolution.unwrap_or([256, 256]))?;
+            terrain.save(&path)?;
+            eprintln!(
+                "Heightfield: {} / {} valid cells, {} overlaps; {:?}",
+                terrain.valid.iter().filter(|v| **v == 1).count(),
+                terrain.valid.len(),
+                terrain.metadata.overlaps,
+                terrain.metadata.domain
+            );
+        }
+        return Ok(());
+    }
+    if bake_scene.is_some() {
+        return Err("--bake-scene requires --import-glb".into());
+    }
+    let offscreen = snapshot.is_some() || dump.is_some();
+    if settings.is_some() && (offscreen || no_settings || bake.is_some()) {
+        return Err(
+            "--settings is for writable windows; use --config for read-only exports".into(),
+        );
+    }
+    let (mut session, store) = if let Some(path) = config {
+        (common::settings::load_config::<Session>(&path)?, None)
+    } else if offscreen || no_settings || bake.is_some() {
+        (Session::default(), None)
     } else {
-        BakeSource::playground()
+        let (session, store) = SettingsStore::<Session>::open(settings.unwrap_or_else(|| {
+            common::settings::default_path("water-simulation", "fog-settings.json")
+        }));
+        (session, Some(store))
+    };
+    use swe_fog::scenes::ScenePreset;
+    let mut external = None;
+    if let Some(path) = scene {
+        if let Some(preset) = path.to_str().and_then(ScenePreset::parse_name) {
+            session.scene = preset;
+        } else {
+            session.scene = ScenePreset::Custom;
+            external = Some(swe_fog::model::load(&path)?);
+        }
+    }
+    let (source, bundled_terrain) = if let Some(source) = external {
+        (source, None)
+    } else {
+        let (source, terrain) = session.scene.load()?;
+        (source, Some(terrain))
     };
     source.validate()?;
     if let Some(path) = bake {
@@ -120,23 +181,7 @@ fn run() -> Result<(), Error> {
     let terrain = if let Some(path) = terrain_path {
         Terrain::load(&path, &source)?
     } else {
-        Terrain::decode(include_bytes!("../assets/playground.fogterrain"), &source)?
-    };
-    let offscreen = snapshot.is_some() || dump.is_some();
-    if settings.is_some() && (offscreen || no_settings) {
-        return Err(
-            "--settings is for writable windows; use --config for read-only exports".into(),
-        );
-    }
-    let (mut session, store) = if let Some(path) = config {
-        (common::settings::load_config::<Session>(&path)?, None)
-    } else if offscreen || no_settings {
-        (Session::default(), None)
-    } else {
-        let (session, store) = SettingsStore::<Session>::open(settings.unwrap_or_else(|| {
-            common::settings::default_path("water-simulation", "fog-settings.json")
-        }));
-        (session, Some(store))
+        bundled_terrain.ok_or("external scenes require --terrain PATH (bake explicitly first)")?
     };
     if let Some(resolution) = resolution {
         session.grid_resolution = Some(resolution);

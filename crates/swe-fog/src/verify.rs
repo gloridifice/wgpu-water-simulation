@@ -330,6 +330,8 @@ fn verify_wake(gpu: &Gpu) -> Result<(), Error> {
             [[-6.0, 0.0, -6.0], [6.0, 0.0, 6.0], [6.0, 0.0, -6.0]],
         ],
         obstacle: vec![],
+        colors: vec![],
+        collision: vec![],
     };
     let terrain = Terrain::bake(&source, [-6.0, -6.0, 12.0, 12.0], [48, 48])?;
     let mut sim = Simulation::new(gpu, &terrain)?;
@@ -581,16 +583,30 @@ fn verify_render(gpu: &Gpu, sim: &mut Simulation, terrain: &Terrain) -> Result<(
         wgpu::TextureFormat::Rgba8Unorm,
     )?;
     let size = [320u32, 180u32];
-    let mut session = Session::default();
+    let mut session = Session {
+        height_fog_noise: 0.0,
+        ..Default::default()
+    };
     session.fog.noise_amplitude = 0.0;
     session.fog.height_offset = 0.0;
     session.fog.wind = [0.0; 2];
     session.fog.decay_enabled = false;
     for height in [0.01, 0.25, 0.6] {
-        for reconstruction in [
-            crate::parameters::Reconstruction::Bilinear,
-            crate::parameters::Reconstruction::PreSmoothed,
+        for (mode, reconstruction) in [
+            (
+                crate::parameters::RenderMode::HeightFog,
+                crate::parameters::Reconstruction::Bilinear,
+            ),
+            (
+                crate::parameters::RenderMode::Tetrahedra,
+                crate::parameters::Reconstruction::Bilinear,
+            ),
+            (
+                crate::parameters::RenderMode::Tetrahedra,
+                crate::parameters::Reconstruction::PreSmoothed,
+            ),
         ] {
+            session.render_mode = mode;
             session.reconstruction = reconstruction;
             session.fog.base_height = height;
             submit(gpu, sim, &session.fog, 0.0, true, &[])?;
@@ -695,7 +711,7 @@ fn verify_render(gpu: &Gpu, sim: &mut Simulation, terrain: &Terrain) -> Result<(
         "orbit return leaves no history trail",
     )?;
     eprintln!(
-        "Fog projected tetrahedra: PASS (1 cm analytic optical depth, opaque clipping, inside-layer camera, near/far intervals at low/high extinction, pause/orbit stability)"
+        "Fog height fog + projected tetrahedra: PASS (1 cm analytic optical depth and opaque clipping in both modes; tetrahedra: opaque clipping, inside-layer camera, near/far intervals at low/high extinction, pause/orbit stability)"
     );
     Ok(())
 }
@@ -711,7 +727,10 @@ fn verify_sampling(gpu: &Gpu) -> Result<(), Error> {
         &source,
         wgpu::TextureFormat::Rgba8Unorm,
     )?;
-    let mut s = Session::default();
+    let mut s = Session {
+        render_mode: crate::parameters::RenderMode::Tetrahedra,
+        ..Default::default()
+    };
     s.fog.noise_amplitude = 0.64;
     s.fog.noise_frequency = 1.05;
     s.fog.noise_octaves = 2;

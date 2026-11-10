@@ -166,6 +166,43 @@ impl State {
         self.reset = true;
         Ok(())
     }
+    fn switch_scene(&mut self) -> Result<(), Error> {
+        let (source, native_terrain) = self.session.scene.load()?;
+        let terrain = native_terrain.at_region(
+            &source,
+            self.session.grid_resolution,
+            self.session.domain_scale,
+        )?;
+        let mut player = self.session.player.clone();
+        player.feet = [0.0; 3];
+        player.place(&terrain)?;
+        let simulation = Simulation::new(&self.desktop.gpu, &terrain)?;
+        let renderer = Renderer::new(
+            &self.desktop.gpu,
+            &simulation,
+            &terrain,
+            &source,
+            self.desktop.config.format,
+        )?;
+        // Commit only after every resource is ready; failed switches retain the old scene.
+        self.source = source;
+        self.native_terrain = native_terrain;
+        self.terrain = terrain;
+        self.simulation = simulation;
+        self.renderer = renderer;
+        self.session.player = player;
+        self.previous_feet = self.session.player.feet;
+        self.physics_accumulator = 0.0;
+        self.fog_accumulator = 0.0;
+        self.diagnostics = Diagnostics::default();
+        self.diagnostic_clock = 0.5;
+        self.gpu_ms = None;
+        self.render_gpu_ms = None;
+        self.clear_events();
+        self.capture(false);
+        self.reset = true;
+        Ok(())
+    }
     fn capture(&mut self, value: bool) {
         self.captured = value && self.focused;
         if self.captured {
@@ -395,6 +432,7 @@ impl WindowScene for State {
             warning: (nominal * spacing > 0.5)
                 .then(|| "初始化噪波的细层超出网格可分辨尺度；可降低频率或层数。".into()),
         };
+        let previous_session = self.session.clone();
         let was_paused = self.session.paused;
         let interactions_enabled = self.session.interactions_enabled;
         let movement_mode = self.session.interaction.movement_mode;
@@ -405,10 +443,13 @@ impl WindowScene for State {
             .ui
             .frame(&self.desktop.window, &mut self.session, &status);
         if let Some((index, mut session)) = actions.load {
-            match session
-                .validate()
-                .and_then(|_| session.player.place(&self.terrain))
-            {
+            match session.validate().and_then(|_| {
+                if session.scene == previous_session.scene {
+                    session.player.place(&self.terrain)
+                } else {
+                    Ok(())
+                }
+            }) {
                 Ok(()) => {
                     self.session = session;
                     self.previous_feet = self.session.player.feet;
@@ -422,6 +463,14 @@ impl WindowScene for State {
             }
         }
         self.reset |= actions.reset;
+        if self.session.scene != previous_session.scene {
+            if let Err(e) = self.switch_scene() {
+                self.session = previous_session;
+                self.error = Some(format!("场景切换失败：{e}"));
+            } else {
+                self.error = None;
+            }
+        }
         let requested_resolution = self
             .session
             .grid_resolution
@@ -616,7 +665,9 @@ pub async fn snapshot(
         wgpu::TextureFormat::Rgba8UnormSrgb,
     )?;
     let size = [1280, 800];
-    let pixels = renderer.read_image(&gpu, session, sim.domain, size)?;
+    let mut placed = session.clone();
+    placed.player.place(&terrain)?;
+    let pixels = renderer.read_image(&gpu, &placed, sim.domain, size)?;
     crate::render::save_png(path, &pixels, size)?;
     eprintln!(
         "Fog snapshot {} at actual {:.3} simulated seconds",

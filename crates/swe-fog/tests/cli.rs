@@ -27,6 +27,8 @@ fn command_line_bakes_requested_bounds_and_never_overwrites_an_existing_asset() 
     let exe = env!("CARGO_BIN_EXE_swe-fog");
     let output = Command::new(exe)
         .args([
+            "--scene",
+            "playground",
             "--bake",
             path.to_str().unwrap(),
             "--resolution",

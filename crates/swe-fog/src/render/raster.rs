@@ -1,8 +1,8 @@
-//! Projected tetrahedra: continuous vertex density, analytic intervals, 4x MSAA.
+//! Shared 4x MSAA scene with height-fog composition or projected-tetrahedron intervals.
 use crate::{
-    parameters::{Reconstruction, Session},
+    parameters::{Reconstruction, RenderMode, Session},
+    scene::camera_collision::Collider,
     simulation::Simulation,
-    terrain::BakeSource,
 };
 use common::gpu::{Gpu, buffer};
 use std::{
@@ -55,6 +55,7 @@ pub(super) struct Raster {
     capsule: wgpu::RenderPipeline,
     volume: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
+    height_fog: wgpu::RenderPipeline,
     distance_layout: wgpu::BindGroupLayout,
     composite_layout: wgpu::BindGroupLayout,
     targets: RefCell<Option<Targets>>,
@@ -67,6 +68,7 @@ impl Raster {
         sim: &Simulation,
         smoothed: &wgpu::Texture,
         geometry: &wgpu::Buffer,
+        colors: &[[f32; 3]],
         vertex_count: u32,
         format: wgpu::TextureFormat,
     ) -> Result<Self, crate::Error> {
@@ -237,12 +239,29 @@ impl Raster {
                 texture_entry(4),
                 storage_entry(5),
                 storage_entry(6),
+                storage_entry(7),
+                storage_entry(8),
             ],
         });
+        let colors: Vec<_> = if colors.is_empty() {
+            vec![[0.0; 4]]
+        } else {
+            colors.iter().map(|c| [c[0], c[1], c[2], 1.0]).collect()
+        };
+        let color_buffer = buffer(
+            device,
+            "baked model corner colors",
+            &colors,
+            wgpu::BufferUsages::STORAGE,
+        );
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("raster fog resources"),
             layout: &layout,
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: color_buffer.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: uniform.as_entire_binding(),
@@ -254,6 +273,10 @@ impl Raster {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: proxies.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: sim.masks.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -315,9 +338,11 @@ impl Raster {
             label: Some("projected tetrahedron fog"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}",
+                    "{}\n{}\n{}\n{}",
                     include_str!("shaders/raster_types.wgsl"),
-                    include_str!("shaders/raster.wgsl")
+                    include_str!("shaders/raster.wgsl"),
+                    include_str!("shaders/connectivity.wgsl"),
+                    include_str!("shaders/height_fog.wgsl")
                 )
                 .into(),
             ),
@@ -378,7 +403,11 @@ impl Raster {
                 },
                 depth_stencil,
                 multisample: wgpu::MultisampleState {
-                    count: if fragment == "composite" { 1 } else { 4 },
+                    count: if matches!(fragment, "composite" | "height_composite") {
+                        1
+                    } else {
+                        4
+                    },
                     ..Default::default()
                 },
                 multiview_mask: None,
@@ -492,6 +521,15 @@ impl Raster {
             None,
             None,
         );
+        let height_fog = pipeline(
+            "screen-space height fog",
+            "fullscreen",
+            "height_composite",
+            &resolve_layout,
+            &[color(format, None)],
+            None,
+            None,
+        );
         let indices = buffer(
             device,
             "projected tetrahedron fan",
@@ -519,6 +557,7 @@ impl Raster {
             capsule,
             volume,
             composite,
+            height_fog,
             distance_layout,
             composite_layout,
             targets: RefCell::new(None),
@@ -586,13 +625,13 @@ impl Raster {
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         session: &Session,
-        source: &BakeSource,
+        source: &Collider,
         domain: [f32; 4],
         size: [u32; 2],
         reconstruction: Reconstruction,
         queries: Option<&wgpu::QuerySet>,
     ) {
-        let orbit = crate::scene::camera_collision::orbit(&session.player, session.camera, source);
+        let orbit = source.orbit(&session.player, session.camera);
         let (view_projection, inverse) = orbit.matrices(
             55.0f32.to_radians(),
             size[0].max(1) as f32 / size[1].max(1) as f32,
@@ -604,7 +643,7 @@ impl Raster {
         let data = Camera {
             view_projection: view_projection.to_cols_array_2d(),
             inverse: inverse.to_cols_array_2d(),
-            eye: orbit.eye().extend(0.0).to_array(),
+            eye: orbit.eye().extend(session.height_fog_noise).to_array(),
             domain,
             player: glam::Vec3::from_array(session.player.feet)
                 .extend(reconstruction as u32 as f32)
@@ -635,7 +674,9 @@ impl Raster {
             },
             detail,
         );
-        let rebuild = self.cached.get() != Some(key)
+        let height_mode = session.render_mode == RenderMode::HeightFog;
+        let rebuild = !height_mode
+            && self.cached.get() != Some(key)
             && session.visible
             && (session.debug_view == 0 || session.debug_view == 5);
         if rebuild || queries.is_some() {
@@ -658,7 +699,7 @@ impl Raster {
                 self.cached.set(Some(key));
             }
         }
-        if session.visible && (session.debug_view == 0 || session.debug_view == 5) {
+        if !height_mode && session.visible && (session.debug_view == 0 || session.debug_view == 5) {
             for i in 0..4 {
                 encoder.clear_buffer(&self.draws, i * 20 + 4, Some(4));
             }
@@ -719,6 +760,18 @@ impl Raster {
             pass.draw(0..self.vertex_count, 0..1);
             pass.set_pipeline(&self.capsule);
             pass.draw(0..3, 0..1);
+        }
+        if height_mode {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("screen-space height fog composition"),
+                color_attachments: &[attachment(target)],
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.height_fog);
+            pass.set_bind_group(0, &self.bind, &[]);
+            pass.set_bind_group(1, &t.composite_bind, &[]);
+            pass.draw(0..3, 0..1);
+            return;
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

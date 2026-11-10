@@ -42,7 +42,10 @@ pub(crate) fn run(gpu: &Gpu) -> Result<(), Error> {
         })
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
-    let mut session = Session::default();
+    let mut session = Session {
+        render_mode: crate::parameters::RenderMode::Tetrahedra,
+        ..Default::default()
+    };
     session.fog.wind = [0.0; 2];
     session.fog.decay_enabled = false;
     session.camera[0] = 0.45;

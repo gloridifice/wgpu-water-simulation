@@ -3,7 +3,7 @@
 mod tests;
 use crate::{
     interactions::MovementMode,
-    parameters::{Reconstruction, Session},
+    parameters::{Reconstruction, RenderMode, Session},
     simulation::Diagnostics,
 };
 use common::{
@@ -16,7 +16,9 @@ use common::{
 };
 use serde::{Deserialize, Serialize};
 use winit::window::Window;
-use yummy_egui::{IconButton, IconSegmentedControl, SelectionList, parameter, parameter_table};
+use yummy_egui::{
+    IconButton, IconSegmentedControl, ParameterSlider, SelectionList, parameter, parameter_table,
+};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Panel {
@@ -256,7 +258,7 @@ impl Interface {
                     if ui.add_enabled(self.writable,egui::Button::new("保存")).on_disabled_hover_text("只读配置或 --no-settings 模式不写盘").clicked(){actions.save=true;}
                     let label=if status.save_failed{ui.colored_label(egui::Color32::LIGHT_RED,&status.save)}else{ui.label(&status.save)};
                     label.on_hover_text(status.save_path.as_deref().unwrap_or("本地保存已禁用"));
-                    ui.menu_button("操作",|ui|{ui.label("单击视图捕获鼠标；Esc 释放");ui.label("WASD 移动，空格跳跃，Q 退出");ui.label("左拖数值，Shift 精调，双击输入");ui.label("数字改动重置雾；平滑强度、积分精度与开关不重置");});ui.separator();
+                    ui.menu_button("操作",|ui|{ui.label("单击视图捕获鼠标；Esc 释放");ui.label("WASD 移动，空格跳跃，Q 退出");ui.label("滑块调节；右侧数值可横拖、Shift 精调、双击输入");ui.label("数字改动重置雾；平滑强度、积分精度与开关不重置");});ui.separator();
                     if let Some(e)=&status.error{ui.colored_label(egui::Color32::LIGHT_RED,"错误").on_hover_text(e);}
                     if let Some(w)=&status.warning{ui.colored_label(egui::Color32::YELLOW,"警告").on_hover_text(w);}
                     ui.label(format!("FPS {:.1}",status.fps)).on_hover_text(format!("GPU {}",status.gpu));
@@ -429,14 +431,15 @@ fn number(
     value: &mut f32,
     lo: f32,
     hi: f32,
-    step: f64,
+    logarithmic: bool,
 ) -> bool {
     let mut changed = false;
     parameter(ui, name, help, |ui| {
         let r = ui.add(
-            egui::DragValue::new(value)
-                .range(lo..=hi)
-                .speed(step)
+            ParameterSlider::new(value, lo..=hi)
+                .logarithmic(logarithmic)
+                .smallest_positive(0.0001)
+                .clamping(egui::SliderClamping::Edits)
                 .max_decimals(4),
         );
         changed = r.changed();
@@ -458,10 +461,32 @@ fn integer(ui: &mut egui::Ui, name: &str, value: &mut u32, lo: u32, hi: u32) -> 
     );
     changed
 }
-const RESET: &str =
-    "左拖调节，Shift 精调，双击输入；数值变化立即重置雾场，暂停状态与玩家位置保持不变。";
+const RESET: &str = "拖动滑块调节，右侧数值可横拖、Shift 精调、双击输入；数值变化立即重置雾场，暂停状态与玩家位置保持不变。";
 fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
     yummy_egui::h3(ui, "初始化");
+    parameter_table(ui, "fog scene selection", |ui| {
+        parameter(
+            ui,
+            "场景",
+            "选择内置烘焙场景。切换重建 GPU 场景与雾、重新安置角色，保留雾参数、相机轨道和暂停状态。随会话手动保存。",
+            |ui| {
+                use crate::scenes::ScenePreset;
+                egui::ComboBox::from_id_salt("fog scene")
+                    .width(ui.available_width())
+                    .selected_text(s.scene.label())
+                    .show_ui(ui, |ui| {
+                        for scene in [
+                            ScenePreset::Datun,
+                            ScenePreset::Grandma,
+                            ScenePreset::Playground,
+                        ] {
+                            ui.selectable_value(&mut s.scene, scene, scene.label());
+                        }
+                    })
+                    .response
+            },
+        );
+    });
     parameter_table(ui, "fog initialization", |ui| {
         let before = s.grid_resolution;
         parameter(
@@ -495,7 +520,7 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.domain_scale,
             0.0625,
             1.0,
-            0.01,
+            false,
         );
         a.reset |= number(
             ui,
@@ -504,7 +529,7 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.base_height,
             0.0,
             4.0,
-            0.01,
+            false,
         );
         a.reset |= number(
             ui,
@@ -513,7 +538,7 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.noise_amplitude,
             0.0,
             2.0,
-            0.01,
+            false,
         );
         a.reset |= number(
             ui,
@@ -522,7 +547,7 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.noise_frequency,
             0.001,
             4.0,
-            0.001,
+            true,
         );
         a.reset |= integer(ui, "噪波层数", &mut s.fog.noise_octaves, 1, 6);
         a.reset |= integer(ui, "噪波种子", &mut s.fog.noise_seed, 0, 65535);
@@ -533,7 +558,7 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.height_offset,
             -2.0,
             2.0,
-            0.01,
+            false,
         );
         a.reset |= number(
             ui,
@@ -542,7 +567,7 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.noise_offset[0],
             -1000.0,
             1000.0,
-            0.5,
+            false,
         );
         a.reset |= number(
             ui,
@@ -551,7 +576,7 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.noise_offset[1],
             -1000.0,
             1000.0,
-            0.5,
+            false,
         );
     });
     ui.checkbox(&mut s.fog.uniform_top, "水平雾顶初态（下次重置）");
@@ -572,7 +597,7 @@ fn dynamics(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.reduced_gravity,
             0.0,
             1.0,
-            0.005,
+            true,
         );
         a.reset |= number(
             ui,
@@ -581,7 +606,7 @@ fn dynamics(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.wind[0],
             -0.5,
             0.5,
-            0.01,
+            false,
         );
         a.reset |= number(
             ui,
@@ -590,7 +615,7 @@ fn dynamics(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.wind[1],
             -0.5,
             0.5,
-            0.01,
+            false,
         );
         a.reset |= number(
             ui,
@@ -599,7 +624,7 @@ fn dynamics(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.wind_response,
             0.1,
             600.0,
-            0.5,
+            true,
         );
         a.reset |= number(
             ui,
@@ -608,7 +633,7 @@ fn dynamics(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.half_life,
             1.0,
             3600.0,
-            1.0,
+            true,
         );
         a.reset |= number(
             ui,
@@ -617,7 +642,7 @@ fn dynamics(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.fog.diffusion,
             0.0,
             1.0,
-            0.001,
+            true,
         );
         a.reset |= integer(ui, "空间阶数", &mut s.fog.spatial_order, 1, 2);
     });
@@ -628,70 +653,125 @@ fn appearance(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
     parameter_table(ui, "fog appearance", |ui| {
         parameter(
             ui,
-            "重建方式",
-            "h/m 顶点重建：双线性（2×2）、SmoothStep（2×2 平滑权重）、B 样条（4×4 平滑）、限幅 Catmull–Rom（4×4 保留峰值），或预平滑后双线性。墙两侧分离；底高始终双线性。四面体内部仍线性解析积分，并非精确积分原高阶场。实时生效、不重置 SWE。",
+            "渲染方案",
+            "实时切换、不重置 SWE。高度雾使用场景深度和连续 B 样条，适合俯视中远景；近平视、侧面轮廓与遮挡为近似，可切回四面体。随会话手动保存。",
             |ui| {
-                let choices = [
-                    (Reconstruction::Bilinear, "双线性"),
-                    (Reconstruction::SmoothStep, "SmoothStep"),
-                    (Reconstruction::CubicBSpline, "B 样条"),
-                    (Reconstruction::CatmullRom, "Catmull–Rom（限幅）"),
-                    (Reconstruction::PreSmoothed, "预平滑＋双线性"),
-                ];
-                egui::ComboBox::from_id_salt("fog reconstruction")
+                egui::ComboBox::from_id_salt("fog render mode")
                     .width(ui.available_width())
-                    .selected_text(
-                        choices
-                            .iter()
-                            .find(|(mode, _)| *mode == s.reconstruction)
-                            .unwrap()
-                            .1,
-                    )
+                    .selected_text(match s.render_mode {
+                        RenderMode::HeightFog => "屏幕空间高度雾",
+                        RenderMode::Tetrahedra => "投影四面体",
+                    })
                     .show_ui(ui, |ui| {
-                        for (mode, name) in choices {
-                            ui.selectable_value(&mut s.reconstruction, mode, name);
-                        }
+                        ui.selectable_value(
+                            &mut s.render_mode,
+                            RenderMode::HeightFog,
+                            "屏幕空间高度雾",
+                        );
+                        ui.selectable_value(
+                            &mut s.render_mode,
+                            RenderMode::Tetrahedra,
+                            "投影四面体",
+                        );
                     })
                     .response
             },
         );
-        parameter(
-            ui,
-            "增强采样",
-            "每格从 6 个增加到 12 个四面体，加入 1/4 格位置的内部样本以表达重建曲线。SmoothStep 强制开启，否则仅采角点会与双线性相同。其他模式可开关以比较相同拓扑；增加准备、投影和绘制成本。实时生效、不重置模拟。",
-            |ui| {
-                let forced = s.reconstruction == Reconstruction::SmoothStep;
-                let mut enabled = s.reconstruction_detail || forced;
-                let response = ui.add_enabled(
-                    !forced,
-                    egui::Checkbox::new(
-                        &mut enabled,
-                        if forced {
-                            "开启（SmoothStep 必需）"
-                        } else {
-                            "开启"
-                        },
-                    ),
-                );
-                if response.changed() {
-                    s.reconstruction_detail = enabled;
-                }
-                response
-            },
-        );
-        if s.reconstruction == Reconstruction::PreSmoothed {
+        if s.render_mode == RenderMode::HeightFog {
             number(
                 ui,
-                "平滑强度",
-                "无量纲，0–1；0 使用原始格值，1 使用完整 3×3 平滑。只改变渲染厚度与雾量，不改变底高或模拟。实时生效、不重置；暂停时也能调节，随会话手动保存。",
-                &mut s.reconstruction_smoothing,
+                "浓淡噪声",
+                "无量纲 0–1，默认 0.2；静态世界空间低频噪声，约 4 m 尺度。只调制视觉密度，不改变模拟；实时生效、不重置。",
+                &mut s.height_fog_noise,
                 0.0,
                 1.0,
-                0.02,
+                false,
             );
         }
-        a.reset |= number(ui, "消光强度", RESET, &mut s.fog.extinction, 0.0, 40.0, 0.1);
-        a.reset |= number(ui, "白雾亮度", RESET, &mut s.fog.brightness, 0.0, 4.0, 0.02);
+        if s.render_mode == RenderMode::Tetrahedra {
+            parameter(
+                ui,
+                "重建方式",
+                "h/m 顶点重建：双线性（2×2）、SmoothStep（2×2 平滑权重）、B 样条（4×4 平滑）、限幅 Catmull–Rom（4×4 保留峰值），或预平滑后双线性。墙两侧分离；底高始终双线性。四面体内部仍线性解析积分，并非精确积分原高阶场。实时生效、不重置 SWE。",
+                |ui| {
+                    let choices = [
+                        (Reconstruction::Bilinear, "双线性"),
+                        (Reconstruction::SmoothStep, "SmoothStep"),
+                        (Reconstruction::CubicBSpline, "B 样条"),
+                        (Reconstruction::CatmullRom, "Catmull–Rom（限幅）"),
+                        (Reconstruction::PreSmoothed, "预平滑＋双线性"),
+                    ];
+                    egui::ComboBox::from_id_salt("fog reconstruction")
+                        .width(ui.available_width())
+                        .selected_text(
+                            choices
+                                .iter()
+                                .find(|(mode, _)| *mode == s.reconstruction)
+                                .unwrap()
+                                .1,
+                        )
+                        .show_ui(ui, |ui| {
+                            for (mode, name) in choices {
+                                ui.selectable_value(&mut s.reconstruction, mode, name);
+                            }
+                        })
+                        .response
+                },
+            );
+            parameter(
+                ui,
+                "增强采样",
+                "每格从 6 个增加到 12 个四面体，加入 1/4 格位置的内部样本以表达重建曲线。SmoothStep 强制开启，否则仅采角点会与双线性相同。其他模式可开关以比较相同拓扑；增加准备、投影和绘制成本。实时生效、不重置模拟。",
+                |ui| {
+                    let forced = s.reconstruction == Reconstruction::SmoothStep;
+                    let mut enabled = s.reconstruction_detail || forced;
+                    let response = ui.add_enabled(
+                        !forced,
+                        egui::Checkbox::new(
+                            &mut enabled,
+                            if forced {
+                                "开启（SmoothStep 必需）"
+                            } else {
+                                "开启"
+                            },
+                        ),
+                    );
+                    if response.changed() {
+                        s.reconstruction_detail = enabled;
+                    }
+                    response
+                },
+            );
+            if s.reconstruction == Reconstruction::PreSmoothed {
+                number(
+                    ui,
+                    "平滑强度",
+                    "无量纲，0–1；0 使用原始格值，1 使用完整 3×3 平滑。只改变渲染厚度与雾量，不改变底高或模拟。实时生效、不重置；暂停时也能调节，随会话手动保存。",
+                    &mut s.reconstruction_smoothing,
+                    0.0,
+                    1.0,
+                    false,
+                );
+            }
+        }
+        a.reset |= number(
+            ui,
+            "消光强度",
+            RESET,
+            &mut s.fog.extinction,
+            0.0,
+            40.0,
+            false,
+        );
+        a.reset |= number(
+            ui,
+            "白雾亮度",
+            RESET,
+            &mut s.fog.brightness,
+            0.0,
+            4.0,
+            false,
+        );
     });
     egui::ComboBox::from_label("诊断视图")
         .selected_text(
@@ -736,14 +816,14 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             },
         );
         if p.movement_mode == MovementMode::Wake {
-            for (name, help, value, lo, hi, step) in [
+            for (name, help, value, lo, hi, logarithmic) in [
                 (
                     "拖带半径 (m)",
                     "角色周围的作用半径，0.5–4 米；边缘平滑减弱。改值立即重置雾。",
                     &mut p.drag_radius,
                     0.5,
                     4.0,
-                    0.05,
+                    false,
                 ),
                 (
                     "拖带响应时间 (s)",
@@ -751,7 +831,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     &mut p.drag_response,
                     0.05,
                     3.0,
-                    0.02,
+                    true,
                 ),
                 (
                     "拖带速度比例",
@@ -759,7 +839,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     &mut p.drag_velocity_ratio,
                     0.0,
                     1.0,
-                    0.02,
+                    false,
                 ),
                 (
                     "尾涡半径 (m)",
@@ -767,7 +847,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     &mut p.wake_radius,
                     0.5,
                     4.0,
-                    0.05,
+                    false,
                 ),
                 (
                     "尾涡角速度 (rad/s)",
@@ -775,7 +855,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     &mut p.wake_angular_speed,
                     0.0,
                     3.0,
-                    0.05,
+                    false,
                 ),
                 (
                     "尾涡响应时间 (s)",
@@ -783,7 +863,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     &mut p.wake_response,
                     0.05,
                     3.0,
-                    0.02,
+                    true,
                 ),
                 (
                     "尾涡后移 (m)",
@@ -791,7 +871,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     &mut p.wake_offset,
                     0.0,
                     4.0,
-                    0.05,
+                    false,
                 ),
                 (
                     "尾涡左右间距 (m)",
@@ -799,7 +879,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     &mut p.wake_separation,
                     0.5,
                     6.0,
-                    0.05,
+                    false,
                 ),
                 (
                     "尾涡发射间距 (m)",
@@ -807,7 +887,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     &mut p.wake_spacing,
                     0.25,
                     4.0,
-                    0.05,
+                    false,
                 ),
                 (
                     "尾涡施力时间 (s)",
@@ -815,10 +895,10 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     &mut p.wake_lifetime,
                     0.05,
                     3.0,
-                    0.02,
+                    true,
                 ),
             ] {
-                a.reset |= number(ui, name, help, value, lo, hi, step);
+                a.reset |= number(ui, name, help, value, lo, hi, logarithmic);
             }
         } else {
             a.reset |= number(
@@ -828,7 +908,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                 &mut p.move_impulse_speed,
                 0.0,
                 6.0,
-                0.05,
+                false,
             );
             a.reset |= number(
                 ui,
@@ -837,7 +917,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                 &mut p.move_impulse_strength,
                 0.0,
                 1.0,
-                0.01,
+                false,
             );
             a.reset |= number(
                 ui,
@@ -846,7 +926,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                 &mut p.move_impulse_interval,
                 0.02,
                 2.0,
-                0.01,
+                true,
             );
             a.reset |= number(
                 ui,
@@ -855,9 +935,17 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                 &mut p.move_width,
                 0.25,
                 8.0,
-                0.05,
+                false,
             );
-            a.reset |= number(ui, "前伸距离 (m)", RESET, &mut p.move_reach, 0.1, 6.0, 0.05);
+            a.reset |= number(
+                ui,
+                "前伸距离 (m)",
+                RESET,
+                &mut p.move_reach,
+                0.1,
+                6.0,
+                false,
+            );
             a.reset |= number(
                 ui,
                 "中心前移 (m)",
@@ -865,7 +953,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                 &mut p.move_forward_offset,
                 0.0,
                 2.0,
-                0.05,
+                false,
             );
         }
         a.reset |= number(
@@ -875,7 +963,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut p.jump_strength,
             0.0,
             3.0,
-            0.05,
+            false,
         );
         a.reset |= number(
             ui,
@@ -884,7 +972,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut p.jump_radius,
             0.25,
             6.0,
-            0.05,
+            false,
         );
         a.reset |= number(
             ui,
@@ -893,7 +981,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut p.landing_strength,
             0.0,
             4.0,
-            0.05,
+            false,
         );
         a.reset |= number(
             ui,
@@ -902,7 +990,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut p.landing_radius,
             0.25,
             6.0,
-            0.05,
+            false,
         );
         a.reset |= number(
             ui,
@@ -911,7 +999,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut p.center_height,
             -2.0,
             2.0,
-            0.01,
+            false,
         );
         a.reset |= number(
             ui,
@@ -920,7 +1008,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut p.vertical_extent,
             0.05,
             4.0,
-            0.05,
+            false,
         );
         a.reset |= number(
             ui,
@@ -929,7 +1017,7 @@ fn interactions(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
             &mut s.player.jump_speed,
             1.0,
             10.0,
-            0.1,
+            false,
         );
     });
 }

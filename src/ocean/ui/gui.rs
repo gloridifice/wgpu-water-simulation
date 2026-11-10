@@ -212,11 +212,12 @@ impl Gui {
                                 if ui.button(if *paused { "继续" } else { "暂停" }).clicked() {
                                     *paused = !*paused;
                                 }
-                                ui.add(
-                                    egui::DragValue::new(&mut self.speed)
-                                        .range(0.0..=3.0)
-                                        .speed(0.01)
-                                        .prefix("倍率 "),
+                                ui.label("倍率");
+                                ui.add_sized(
+                                    egui::vec2(140.0, ui.spacing().interact_size.y),
+                                    ParameterSlider::new(&mut self.speed, 0.0..=3.0)
+                                        .clamping(egui::SliderClamping::Edits)
+                                        .max_decimals(2),
                                 )
                                 .on_hover_text("模拟时间倍率，0～3，实时生效；0 停止演化。");
                                 ui.menu_button("时间 / 相机", |ui| {

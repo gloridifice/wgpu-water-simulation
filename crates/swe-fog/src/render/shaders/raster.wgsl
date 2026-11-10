@@ -9,6 +9,7 @@ struct Geometry { header:vec4u, vertices:array<vec4f> }
 @group(0) @binding(4) var smoothed:texture_2d<f32>;
 @group(0) @binding(5) var<storage,read> tets:array<TetData>;
 @group(0) @binding(6) var<storage,read> projected:array<ProjectedTet>;
+@group(0) @binding(8) var<storage,read> model_colors:array<vec4f>;
 @group(1) @binding(0) var scene_distance:texture_multisampled_2d<f32>;
 @group(1) @binding(1) var scene_color:texture_multisampled_2d<f32>;
 @group(1) @binding(2) var optical_depth:texture_multisampled_2d<f32>;
@@ -27,12 +28,13 @@ struct SceneResult { @location(0) color:vec4f, @location(1) distance:f32 }
     let ray=view_ray(in.pixel);
     return SceneResult(vec4f(mix(vec3f(0.48,0.68,0.78),vec3f(0.19,0.32,0.49),clamp(ray.y*2.0+0.1,0.0,1.0)),1),200.0);
 }
-struct Surface { @builtin(position) position:vec4f, @location(0) @interpolate(perspective,sample) world:vec3f, @location(1) @interpolate(flat) normal:vec3f, @location(2) @interpolate(flat) kind:f32 }
+struct Surface { @builtin(position) position:vec4f, @location(0) @interpolate(perspective,sample) world:vec3f, @location(1) @interpolate(flat) normal:vec3f, @location(2) @interpolate(flat) kind:f32, @location(3) tint:vec3f }
 @vertex fn scene_vertex(@builtin(vertex_index) i:u32)->Surface {
     let base=(i/3u)*3u;
     let a=geometry.vertices[base];let b=geometry.vertices[base+1u];let c=geometry.vertices[base+2u];
     let world=geometry.vertices[i].xyz;
-    return Surface(camera.view_projection*vec4f(world,1),world,normalize(cross(b.xyz-a.xyz,c.xyz-a.xyz)),a.w);
+    var tint=vec3f(-1);if geometry.header.y!=0u{tint=model_colors[i].rgb;}
+    return Surface(camera.view_projection*vec4f(world,1),world,normalize(cross(b.xyz-a.xyz,c.xyz-a.xyz)),a.w,tint);
 }
 fn grid_line(pos:vec2f,period:f32,width:f32)->f32 {
     let c=pos/period;let footprint=max(fwidth(c),vec2f(0.00001));let dist=abs(fract(c-0.5)-0.5)/footprint;let line=1.0-smoothstep(width,width+1.0,min(dist.x,dist.y));return line*(1.0-smoothstep(0.15,0.5,max(footprint.x,footprint.y)));
@@ -47,6 +49,7 @@ fn grid_line(pos:vec2f,period:f32,width:f32)->f32 {
     color=mix(color,vec3f(0.26,0.43,0.12),1.0-smoothstep(1.0,2.0,axis_distance.x));
     color*=1.0-0.26*(1.0-smoothstep(0.15,0.8,length((p.xz-camera.player.xz)-vec2f(0.35,0.55))));
     if in.kind>0.5{color=vec3f(0.24,0.27,0.22)*(0.35+0.65*abs(dot(in.normal,normalize(vec3f(-0.3,0.8,0.5)))));}
+    if in.tint.x>=0.0 { color=in.tint*(0.65+0.35*abs(dot(in.normal,normalize(vec3f(-0.3,0.8,0.5))))); }
     if camera.params.w>0.5&&camera.params.w<4.5 {
         let dims=vec2i(textureDimensions(field));let cell=vec2i(floor((p.xz-camera.domain.xy)/camera.domain.zw*vec2f(dims)));
         if all(cell>=vec2i(0))&&all(cell<dims){let q=textureLoad(field,cell,0);var value=q.x;

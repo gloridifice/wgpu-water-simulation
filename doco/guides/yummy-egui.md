@@ -30,6 +30,8 @@ let dock_style = theme.dock_style().clone();
 
 业务面板直接调用 `yummy_egui::ParameterSlider`、`ParameterList`、`SelectionList`、`PanelButton`、`group`、`parameter`、`choices` 和 h1／h2／h3。逻辑参数组共用两列网格，保留 42%／58% 列宽和名称 hover 提示；选择列表只返回交互响应，业务状态仍由调用方提交。
 
+Ocean 和 Fog 的浮点参数统一使用 `ParameterSlider`，沿用现有合法范围并保留右侧精确输入；跨度大的非负参数可使用对数刻度，有符号坐标和角度使用线性刻度。新替换的输入仅在编辑时约束范围，不因显示改写已载入值，也不改变默认值、显式应用、重置或手动保存语义。Ocean 顶部时间倍率滑块限制宽度，避免占满工具栏。
+
 Ocean 左侧导航使用 `IconSegmentedControl::vertical()`，五个 SVG 图标组成连续分段栏；工作区选择仍由宿主保存，分段中文 hover 由宿主补充，不改变模拟或 Dock 布局语义。
 
 库 API 与主题实现见 [docs.rs](https://docs.rs/yummy_egui) 和[上游仓库](https://github.com/gloridifice/yummy-egui)，不在本项目维护第二份接口手册。

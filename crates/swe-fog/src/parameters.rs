@@ -128,10 +128,21 @@ impl FogSettings {
         ]
     }
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderMode {
+    #[default]
+    HeightFog,
+    Tetrahedra,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Session {
     pub version: u32,
+    pub scene: crate::scenes::ScenePreset,
+    pub render_mode: RenderMode,
+    /// Static world-space visual density modulation, dimensionless 0..1.
+    pub height_fog_noise: f32,
     /// Explicit simulation grid override; None keeps the validated terrain grid.
     pub grid_resolution: Option<[u32; 2]>,
     /// Scale native XZ bounds about their centre, without changing cell count.
@@ -160,6 +171,9 @@ impl Default for Session {
     fn default() -> Self {
         Self {
             version: 1,
+            scene: crate::scenes::ScenePreset::default(),
+            render_mode: RenderMode::default(),
+            height_fog_noise: 0.2,
             grid_resolution: None,
             domain_scale: 1.0,
             reconstruction: Reconstruction::default(),
@@ -190,6 +204,7 @@ impl common::settings::Settings for Session {
         }
         range("区域范围缩放", self.domain_scale, 0.0625, 1.0)?;
         self.fog.validate()?;
+        range("高度雾浓淡噪声", self.height_fog_noise, 0.0, 1.0)?;
         range("渲染平滑强度", self.reconstruction_smoothing, 0.0, 1.0)?;
         if !(2..=32).contains(&self.integration_steps) {
             return Err("积分精度必须为每格 2–32 段".into());

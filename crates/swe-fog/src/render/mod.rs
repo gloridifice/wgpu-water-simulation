@@ -1,4 +1,4 @@
-//! Projected-tetrahedron optical depth; legacy marching remains a diagnostic reference.
+//! Screen-space height fog with switchable projected tetrahedra and diagnostic marching.
 pub(crate) mod benchmark;
 mod bounds;
 mod bounds_verification;
@@ -10,7 +10,7 @@ mod tet_reconstruction_verification;
 pub(crate) mod verification;
 use crate::{
     Error,
-    parameters::{Reconstruction, Session},
+    parameters::{Reconstruction, RenderMode, Session},
     simulation::Simulation,
     terrain::{BakeSource, Terrain},
 };
@@ -33,7 +33,7 @@ struct Camera {
     viewport: [f32; 4],
 }
 // Diagnostic construction modes let the benchmark compare identical physics
-// in one process. Interactive rendering uses projected tetrahedra.
+// in one process. Interactive rendering uses the switchable raster renderer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 enum Acceleration {
@@ -50,7 +50,7 @@ pub struct Renderer {
     uniform: wgpu::Buffer,
     bed_bounds: [f32; 2],
     format: wgpu::TextureFormat,
-    collision_source: BakeSource,
+    collision_source: crate::scene::camera_collision::Collider,
     smoothing: presmooth::PreSmooth,
     bounds: bounds::LayerHierarchy,
     published_revision: Arc<AtomicU64>,
@@ -74,12 +74,13 @@ impl Renderer {
         acceleration: Acceleration,
     ) -> Result<Self, Error> {
         source.validate()?;
-        if source.floor.len() + source.obstacle.len() > 4096 {
+        if acceleration != Acceleration::Raster && source.floor.len() + source.obstacle.len() > 4096
+        {
             return Err("fog playground renderer supports at most 4096 static triangles".into());
         }
         let mut geometry = vec![[
             f32::from_bits((source.floor.len() + source.obstacle.len()) as u32),
-            0.0,
+            f32::from_bits(u32::from(!source.colors.is_empty())),
             0.0,
             0.0,
         ]];
@@ -326,6 +327,7 @@ impl Renderer {
                     sim,
                     &smoothing.texture,
                     &scene_buffer,
+                    &source.colors,
                     ((source.floor.len() + source.obstacle.len()) * 3) as u32,
                     format,
                 )
@@ -339,7 +341,7 @@ impl Renderer {
             uniform,
             bed_bounds,
             format,
-            collision_source: source.clone(),
+            collision_source: crate::scene::camera_collision::Collider::new(source),
             smoothing,
             bounds,
             published_revision: sim.published_revision.clone(),
@@ -364,7 +366,9 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         session: &Session,
     ) -> Reconstruction {
-        let pre_smoothed = session.reconstruction == Reconstruction::PreSmoothed
+        let pre_smoothed = (self.acceleration != Acceleration::Raster
+            || session.render_mode == RenderMode::Tetrahedra)
+            && session.reconstruction == Reconstruction::PreSmoothed
             && session.reconstruction_smoothing > 0.0
             && session.visible
             && (session.debug_view == 0 || session.debug_view == 5);
@@ -429,11 +433,7 @@ impl Renderer {
             );
             return;
         }
-        let orbit = crate::scene::camera_collision::orbit(
-            &session.player,
-            session.camera,
-            &self.collision_source,
-        );
+        let orbit = self.collision_source.orbit(&session.player, session.camera);
         let (_, inverse) = orbit.matrices(
             55.0f32.to_radians(),
             size[0].max(1) as f32 / size[1].max(1) as f32,

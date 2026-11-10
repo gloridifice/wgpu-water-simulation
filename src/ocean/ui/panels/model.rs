@@ -2,7 +2,7 @@
 use crate::ocean::camera::Camera;
 use crate::ocean::parameters::model::ModelConfig;
 use crate::ocean::parameters::optics::OpticsConfig;
-use yummy_egui::{PanelButton, action_row, parameter, parameter_table};
+use yummy_egui::{PanelButton, ParameterSlider, action_row, parameter, parameter_table};
 #[derive(Default)]
 pub struct ModelPanel {
     draft: ModelConfig,
@@ -64,9 +64,9 @@ impl ModelPanel {
                         "模型平移，-2000～2000 米。Y 与海平面使用同一高程基准；应用后重采样床面并重置近岸历史。",
                         |ui| {
                             ui.add(
-                                egui::DragValue::new(&mut self.draft.position[a])
-                                    .range(-2000.0..=2000.0)
-                                    .speed(0.1),
+                                ParameterSlider::new(&mut self.draft.position[a], -2000.0..=2000.0)
+                                    .clamping(egui::SliderClamping::Edits)
+                                    .max_decimals(3),
                             )
                         },
                     );
@@ -77,9 +77,10 @@ impl ModelPanel {
                     "米／模型单位，0.01～100；扫描比例未经实测校准。应用后重采样，不重新烘焙原资产。",
                     |ui| {
                         ui.add(
-                            egui::DragValue::new(&mut self.draft.scale)
-                                .range(0.01..=100.0)
-                                .speed(0.01),
+                            ParameterSlider::new(&mut self.draft.scale, 0.01..=100.0)
+                                .logarithmic(true)
+                                .clamping(egui::SliderClamping::Edits)
+                                .max_decimals(3),
                         )
                     },
                 );
@@ -89,9 +90,9 @@ impl ModelPanel {
                     "绕竖直轴旋转，-180～180 度。应用后重采样并重置；俯仰／翻滚需要重新烘焙，不在此提供。",
                     |ui| {
                         ui.add(
-                            egui::DragValue::new(&mut self.draft.yaw_deg)
-                                .range(-180.0..=180.0)
-                                .speed(0.5),
+                            ParameterSlider::new(&mut self.draft.yaw_deg, -180.0..=180.0)
+                                .clamping(egui::SliderClamping::Edits)
+                                .max_decimals(2),
                         )
                     },
                 );
@@ -101,9 +102,9 @@ impl ModelPanel {
                     "-2000～2000 米。渲染和求解以此水位为 Y=0；提高此值相当于涨潮，应用后重置，不是动态潮汐输入。",
                     |ui| {
                         ui.add(
-                            egui::DragValue::new(&mut self.draft.sea_level)
-                                .range(-2000.0..=2000.0)
-                                .speed(0.05),
+                            ParameterSlider::new(&mut self.draft.sea_level, -2000.0..=2000.0)
+                                .clamping(egui::SliderClamping::Edits)
+                                .max_decimals(3),
                         )
                     },
                 );
@@ -120,9 +121,9 @@ impl ModelPanel {
                         "-2000～2000 米。XZ 决定计算域，应用后重建；Y 仅显示和范围检查，不移动水面、不裁切地形。",
                         |ui| {
                             ui.add(
-                                egui::DragValue::new(&mut self.draft.center[a])
-                                    .range(-2000.0..=2000.0)
-                                    .speed(0.5),
+                                ParameterSlider::new(&mut self.draft.center[a], -2000.0..=2000.0)
+                                    .clamping(egui::SliderClamping::Edits)
+                                    .max_decimals(3),
                             )
                         },
                     );
@@ -137,9 +138,10 @@ impl ModelPanel {
                         "4～2048 米。XZ 决定计算域，Y 仅可视化，顶部不是封闭顶盖。应用后 XZ 修改会清空近岸历史；Y 修改不会。",
                         |ui| {
                             ui.add(
-                                egui::DragValue::new(&mut self.draft.size[a])
-                                    .range(4.0..=2048.0)
-                                    .speed(0.5),
+                                ParameterSlider::new(&mut self.draft.size[a], 4.0..=2048.0)
+                                    .logarithmic(true)
+                                    .clamping(egui::SliderClamping::Edits)
+                                    .max_decimals(3),
                             )
                         },
                     );
@@ -191,9 +193,10 @@ impl ModelPanel {
                     "0.5～512 米，必须小于 X/Z 最小尺寸的一半。需要根据实际波长检查反射；应用后重置。",
                     |ui| {
                         ui.add(
-                            egui::DragValue::new(&mut self.draft.sponge_width)
-                                .range(0.5..=512.0)
-                                .speed(0.5),
+                            ParameterSlider::new(&mut self.draft.sponge_width, 0.5..=512.0)
+                                .logarithmic(true)
+                                .clamping(egui::SliderClamping::Edits)
+                                .max_decimals(3),
                         )
                     },
                 );
@@ -203,9 +206,10 @@ impl ModelPanel {
                     "0.5～256 米。扫描边缘在此距离内平滑过渡到场景与地形面板的海底深度；属于人为补充地形，不是实测海底。应用后重建并重置。应留在计算域和松弛带以内。",
                     |ui| {
                         ui.add(
-                            egui::DragValue::new(&mut self.draft.extension_width)
-                                .range(0.5..=256.0)
-                                .speed(0.5),
+                            ParameterSlider::new(&mut self.draft.extension_width, 0.5..=256.0)
+                                .logarithmic(true)
+                                .clamping(egui::SliderClamping::Edits)
+                                .max_decimals(3),
                         )
                     },
                 );

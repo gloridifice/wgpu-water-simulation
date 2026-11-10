@@ -1,5 +1,18 @@
 # 第三方模型版权与授权声明
 
+## SWE 雾实验场模型
+
+以下信息来自原始 GLB 的 `asset.extras`。原始 GLB 保持不变，版权归原作者／权利人；烘焙资源沿用对应素材许可，不适用项目代码许可，也不代表原作者认可本项目。
+
+| 模型 | 作者与来源 | 许可 | 文件 |
+| --- | --- | --- | --- |
+| Taiwan Yangmingshan - Datun Nature Park | [LightStory.tw](https://sketchfab.com/lightstory.tw)，[原作品](https://sketchfab.com/3d-models/taiwan-yangmingshan-datun-nature-park-9df4753dcf3b431891b76d268135fde2) | [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)，[完整条款](https://creativecommons.org/licenses/by-nc/4.0/legalcode)；**仅限非商业用途** | `taiwan_yangmingshan_-_datun_nature_park.glb`；`crates/swe-fog/assets/datun.fogscene`、`datun.fogterrain` |
+| DAE Diorama - Grandma's House | [Yarina Usenko / Crimoonza](https://sketchfab.com/Crimoonza)，[原作品](https://sketchfab.com/3d-models/dae-diorama-grandmas-house-fe347d42b3374511ab169c0c0f9f4ed9) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)，[完整条款](https://creativecommons.org/licenses/by/4.0/legalcode) | `dae_diorama_-_grandmas_house.glb`；`crates/swe-fog/assets/grandma.fogscene`、`grandma.fogterrain` |
+
+派生处理：应用节点层级变换、最长水平边归一化为 64 米、XZ 居中及最低 Y 平移到零；仅导入不透明三角形，将基色贴图烘焙成线性 RGB 顶点颜色；静态碰撞独立焊接并简化，另烘焙单层最高表面高度场及阻挡面。透明／裁剪材质、完整 PBR、真实测绘尺度和多层室内空间不在此转换范围。详见 [烘焙记录](../../crates/swe-fog/assets/SCENES.md)。
+
+再分发上述原件或派生资源时，保留作者、来源、许可和修改说明。尤其不得将大屯自然公园素材及派生文件作为可自由商用资源发布。素材按许可以现状提供，不作保证。
+
 ## Challaborough Pillbox
 
 本项目包含 artfletch 创作的 **Challaborough Pillbox** 摄影测量模型。原模型、其中的网格及贴图的著作权由原作者或相应权利人保留；将素材收录于本项目不表示本项目取得这些素材的著作权。

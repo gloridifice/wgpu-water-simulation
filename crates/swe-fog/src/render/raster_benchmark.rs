@@ -62,7 +62,10 @@ pub(super) fn run(gpu: &Gpu) -> Result<(), Error> {
         "Fog raster phases: 1280x800, 256x256, seed=7, time=0, 20 warmups + 41 samples; GPU ms; full refresh including filter, opaque scene, optical depth and composite; no SWE/UI/present"
     );
     for scene in ["default", "sparse", "dense", "rough_dense"] {
-        let mut session = Session::default();
+        let mut session = Session {
+            render_mode: crate::parameters::RenderMode::Tetrahedra,
+            ..Default::default()
+        };
         session.camera[0] = 0.45;
         session.fog.wind = [0.0; 2];
         session.fog.decay_enabled = false;
@@ -111,7 +114,7 @@ pub(super) fn run(gpu: &Gpu) -> Result<(), Error> {
                         &mut encoder,
                         &view,
                         &session,
-                        &source,
+                        &renderer.collision_source,
                         sim.domain,
                         size,
                         actual,

@@ -104,17 +104,17 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
                     choices(ui, &mut c.shape, &[(Shape::Cylinder, "圆柱"), (Shape::Box, "长方体")]);
                 });
                 for (axis, label) in [(0, "位置 X（米）"), (1, "位置 Z（米）")] {
-                    parameter(ui, label, "世界坐标，范围 ±1000 米。X 增大朝向外海，Z 沿岸；即时生效，手动保存，不重置 SWE。整个形状须在有效范围内。", |ui| ui.add(egui::DragValue::new(&mut c.position[axis]).speed(0.1).range(-1000.0..=1000.0)));
+                    parameter(ui, label, "世界坐标，范围 ±1000 米。X 增大朝向外海，Z 沿岸；即时生效，手动保存，不重置 SWE。整个形状须在有效范围内。", |ui| ui.add(ParameterSlider::new(&mut c.position[axis], -1000.0..=1000.0).clamping(egui::SliderClamping::Edits).max_decimals(3)));
                 }
                 if c.shape == Shape::Cylinder {
-                    parameter(ui, "半径（米）", "范围 0.25～30 米；即时生效，手动保存，不重置 SWE。小于网格间距的形状可能无法分辨。", |ui| ui.add(egui::DragValue::new(&mut c.radius).speed(0.1).range(0.25..=30.0)));
+                    parameter(ui, "半径（米）", "范围 0.25～30 米；即时生效，手动保存，不重置 SWE。小于网格间距的形状可能无法分辨。", |ui| ui.add(ParameterSlider::new(&mut c.radius, 0.25..=30.0).logarithmic(true).clamping(egui::SliderClamping::Edits).max_decimals(3)));
                 } else {
                     for (axis, label) in [(0, "宽度（米）"), (1, "长度（米）")] {
-                        parameter(ui, label, "完整尺寸，范围 0.5～60 米；即时生效，手动保存，不重置 SWE。", |ui| ui.add(egui::DragValue::new(&mut c.size[axis]).speed(0.1).range(0.5..=60.0)));
+                        parameter(ui, label, "完整尺寸，范围 0.5～60 米；即时生效，手动保存，不重置 SWE。", |ui| ui.add(ParameterSlider::new(&mut c.size[axis], 0.5..=60.0).logarithmic(true).clamping(egui::SliderClamping::Edits).max_decimals(3)));
                     }
                     parameter(ui, "旋转（度）", "绕竖直轴旋转，范围 ±180 度；即时生效，手动保存，不重置 SWE。", |ui| ui.add(ParameterSlider::new(&mut c.angle, -180.0..=180.0)));
                 }
-                parameter(ui, "高度（米）", "范围 0.1～30 米，从中心处原海底向上量到水平顶面。水面超过顶面可以漫过；即时生效，手动保存，不重置 SWE。", |ui| ui.add(egui::DragValue::new(&mut c.height).speed(0.1).range(0.1..=30.0)));
+                parameter(ui, "高度（米）", "范围 0.1～30 米，从中心处原海底向上量到水平顶面。水面超过顶面可以漫过；即时生效，手动保存，不重置 SWE。", |ui| ui.add(ParameterSlider::new(&mut c.height, 0.1..=30.0).logarithmic(true).clamping(egui::SliderClamping::Edits).max_decimals(3)));
                 parameter(ui, "顶面海拔（米）", "中心海底高度加碰撞体高度，相对海平面。模型场景使用重采样床面，不使用沙坡公式。", |ui| ui.label(if model.enabled {"烘焙床面 + 高度".to_string()} else {format!("{:.2}", -optics.beach_slope * (c.position[0] - optics.shore_x) + c.height)}));
                 parameter(ui, "模拟状态", "超出有效区域的碰撞体保留配置，但暂不显示、不参与碰撞。FFT 远海没有碰撞反馈。", |ui| {
                     let extent=c.extent();

@@ -10,6 +10,12 @@ pub struct BakeSource {
     pub floor: Vec<Triangle>,
     #[serde(default)]
     pub obstacle: Vec<Triangle>,
+    /// Optional linear RGB per corner, in floor-then-obstacle triangle order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub colors: Vec<[f32; 3]>,
+    /// Simplified static collider; empty for small hand-authored scenes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collision: Vec<Triangle>,
 }
 impl BakeSource {
     pub fn playground() -> Self {
@@ -22,11 +28,22 @@ impl BakeSource {
                 .floor
                 .iter()
                 .chain(&self.obstacle)
+                .chain(&self.collision)
                 .flatten()
                 .flatten()
                 .any(|v| !v.is_finite())
         {
             return Err("bake requires finite static floor triangles".into());
+        }
+        if !self.colors.is_empty()
+            && (self.colors.len() != (self.floor.len() + self.obstacle.len()) * 3
+                || self
+                    .colors
+                    .iter()
+                    .flatten()
+                    .any(|c| !c.is_finite() || !(0.0..=1.0).contains(c)))
+        {
+            return Err("invalid baked scene corner colors".into());
         }
         Ok(())
     }
@@ -238,6 +255,65 @@ impl Terrain {
                     }
                     if z < nz as i32 && inside(a + step * 0.5, tri) {
                         t.valid[z as usize * nx as usize + x as usize] = 0;
+                    }
+                }
+            }
+        }
+        // Imported scenes use the simplified static collider for vertical barriers.
+        // Do not project roofs/branches into infinite walls: require overlap with
+        // the local floor-to-head interval. The height itself still uses original geometry.
+        for triangle in &source.collision {
+            let p = triangle.map(Vec3::from_array);
+            let normal = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or_zero();
+            let y_min = p.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
+            let y_max = p.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max);
+            if normal.y.abs() > 0.5 || y_max - y_min < 0.2 {
+                continue;
+            }
+            let tri = p.map(|p| Vec2::new(p.x, p.z));
+            let low = ((tri[0].min(tri[1]).min(tri[2]) - origin) / step)
+                .floor()
+                .as_ivec2()
+                .max(glam::IVec2::ZERO);
+            let high = ((tri[0].max(tri[1]).max(tri[2]) - origin) / step)
+                .ceil()
+                .as_ivec2()
+                .min(glam::IVec2::new(nx as i32, nz as i32));
+            let overlaps = |a: usize, b: usize| {
+                t.valid[a] == 1
+                    && t.valid[b] == 1
+                    && y_min < t.heights[a].max(t.heights[b]) + 1.8
+                    && y_max > t.heights[a].min(t.heights[b]) + 0.1
+            };
+            for z in low.y..=high.y.min(nz as i32 - 1) {
+                for x in low.x.max(1)..=high.x.min(nx as i32 - 1) {
+                    let center =
+                        origin + (Vec2::new(x as f32, z as f32) + Vec2::new(0.0, 0.5)) * step;
+                    let i = z as usize * nx as usize + x as usize;
+                    if overlaps(i - 1, i)
+                        && touches(
+                            center - Vec2::new(step.x * 0.5, 0.0),
+                            center + Vec2::new(step.x * 0.5, 0.0),
+                            tri,
+                        )
+                    {
+                        t.pass_x[z as usize * (nx + 1) as usize + x as usize] = 0;
+                    }
+                }
+            }
+            for z in low.y.max(1)..=high.y.min(nz as i32 - 1) {
+                for x in low.x..=high.x.min(nx as i32 - 1) {
+                    let center =
+                        origin + (Vec2::new(x as f32, z as f32) + Vec2::new(0.5, 0.0)) * step;
+                    let i = z as usize * nx as usize + x as usize;
+                    if overlaps(i - nx as usize, i)
+                        && touches(
+                            center - Vec2::new(0.0, step.y * 0.5),
+                            center + Vec2::new(0.0, step.y * 0.5),
+                            tri,
+                        )
+                    {
+                        t.pass_z[z as usize * nx as usize + x as usize] = 0;
                     }
                 }
             }

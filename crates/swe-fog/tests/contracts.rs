@@ -3,7 +3,7 @@ use common::settings::Settings;
 use glam::{Vec2, Vec3};
 use swe_fog::{
     interactions::{Event, EventQueue, InteractionSettings, MovementMode, PlayerEmitter},
-    parameters::{Reconstruction, Session},
+    parameters::{Reconstruction, RenderMode, Session},
     scene::Player,
     terrain::{BakeSource, Terrain},
 };
@@ -15,6 +15,8 @@ fn static_bake_preserves_rectangular_coordinates_voids_thin_walls_and_source_ide
             [[-2.0, 0.0, -1.0], [0.0, 0.4, 1.0], [0.0, 0.4, -1.0]],
         ],
         obstacle: vec![[[-1.0, 0.0, -1.0], [-1.0, 2.0, -1.0], [-1.0, 2.0, 1.0]]],
+        colors: vec![],
+        collision: vec![],
     };
     let terrain = Terrain::bake(&source, [-2.0, -1.0, 4.0, 2.0], [8, 4]).unwrap();
     assert_eq!(terrain.spacing(), Vec2::splat(0.5));
@@ -139,6 +141,9 @@ fn fog_session_roundtrip_keeps_independent_density_actions_and_legacy_defaults()
     assert_eq!(s.interaction.movement_mode, MovementMode::Wake);
     assert_eq!(s.grid_resolution, None);
     assert_eq!(s.domain_scale, 1.0);
+    assert_eq!(s.scene, swe_fog::scenes::ScenePreset::Datun);
+    assert_eq!(s.render_mode, RenderMode::HeightFog);
+    assert_eq!(s.height_fog_noise, 0.2);
     assert_eq!(s.reconstruction, Reconstruction::Bilinear);
     assert_eq!(s.reconstruction_smoothing, 0.6);
     assert_eq!(s.integration_steps, 2);
@@ -158,6 +163,9 @@ fn fog_session_roundtrip_keeps_independent_density_actions_and_legacy_defaults()
     s.reconstruction = Reconstruction::PreSmoothed;
     s.reconstruction_smoothing = 0.8;
     s.integration_steps = 16;
+    s.scene = swe_fog::scenes::ScenePreset::Grandma;
+    s.render_mode = RenderMode::Tetrahedra;
+    s.height_fog_noise = 0.7;
     s.interactions_enabled = false;
     for mode in [Reconstruction::PreSmoothed, Reconstruction::SmoothStep] {
         s.reconstruction = mode;
@@ -183,6 +191,14 @@ fn fog_session_roundtrip_keeps_independent_density_actions_and_legacy_defaults()
         );
     }
     s.domain_scale = 0.25;
+    for noise in [-0.01, 1.01, f32::NAN, f32::INFINITY] {
+        s.height_fog_noise = noise;
+        assert!(
+            s.validate().is_err(),
+            "visual noise must remain finite and bounded even in tetrahedron mode"
+        );
+    }
+    s.height_fog_noise = 0.7;
     s.reconstruction_smoothing = f32::NAN;
     assert!(
         s.validate().is_err(),

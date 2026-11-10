@@ -1,5 +1,5 @@
 //! A native egui linear-RGB picker plus an independent radiometric strength.
-use yummy_egui::{parameter, parameter_table};
+use yummy_egui::{ParameterSlider, parameter, parameter_table};
 #[derive(Clone, Debug)]
 pub struct CoefficientEditor {
     last_rgb: [f32; 3],
@@ -49,12 +49,13 @@ impl CoefficientEditor {
                 changed |= parameter(
                     ui,
                     "强度",
-                    "独立调整系数大小，支持高动态范围数值。",
+                    "独立调整系数大小，范围 0～10，使用对数滑块；右侧可精确输入，实时生效，不重置模拟。",
                     |ui| {
                         ui.add(
-                            egui::DragValue::new(&mut self.strength)
-                                .range(0.0..=10.0)
-                                .speed(self.zero_strength * 0.02)
+                            ParameterSlider::new(&mut self.strength, 0.0..=10.0)
+                                .logarithmic(true)
+                                .smallest_positive(0.000001)
+                                .clamping(egui::SliderClamping::Edits)
                                 .max_decimals(6),
                         )
                     },
@@ -68,11 +69,12 @@ impl CoefficientEditor {
             ui.collapsing("RGB 精确值", |ui| {
                 parameter_table(ui, "RGB table", |ui| {
                     for (channel, name) in ["R", "G", "B"].into_iter().enumerate() {
-                        parameter(ui, name, "线性 RGB 系数的精确值。", |ui| {
+                        parameter(ui, name, "线性 RGB 系数，范围 0～10；对数滑块保留右侧精确输入，实时生效，不重置模拟。", |ui| {
                             ui.add(
-                                egui::DragValue::new(&mut rgb[channel])
-                                    .range(0.0..=10.0)
-                                    .speed(self.zero_strength * 0.02)
+                                ParameterSlider::new(&mut rgb[channel], 0.0..=10.0)
+                                    .logarithmic(true)
+                                    .smallest_positive(0.0000001)
+                                    .clamping(egui::SliderClamping::Edits)
                                     .max_decimals(7),
                             );
                         });

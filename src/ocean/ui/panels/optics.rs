@@ -4,7 +4,7 @@ use crate::ocean::parameters::optics::VIEW_NAMES;
 use crate::ocean::render::skylight::incident_reference;
 use crate::ocean::ui::gui::Gui;
 use crate::ocean::ui::help::help;
-use yummy_egui::{PanelButton, choices, group, parameter, parameter_table};
+use yummy_egui::{PanelButton, ParameterSlider, choices, group, parameter, parameter_table};
 
 impl Gui {
     pub(in crate::ocean::ui) fn optics_panel(&mut self, ui: &mut egui::Ui) {
@@ -55,9 +55,9 @@ impl Gui {
                         "天空颜色的线性 RGB 分量，0～1，实时生效。",
                         |ui| {
                             ui.add(
-                                egui::DragValue::new(&mut self.optics.sky.color[c])
-                                    .range(0.0..=1.0)
-                                    .speed(0.001),
+                                ParameterSlider::new(&mut self.optics.sky.color[c], 0.0..=1.0)
+                                    .clamping(egui::SliderClamping::Edits)
+                                    .max_decimals(4),
                             )
                         },
                     );
@@ -68,9 +68,9 @@ impl Gui {
                             "散射反照率，0～1，实时生效。",
                             |ui| {
                                 ui.add(
-                                    egui::DragValue::new(&mut self.optics.sky.albedo[c])
-                                        .range(0.0..=1.0)
-                                        .speed(0.001),
+                                    ParameterSlider::new(&mut self.optics.sky.albedo[c], 0.0..=1.0)
+                                        .clamping(egui::SliderClamping::Edits)
+                                        .max_decimals(4),
                                 )
                             },
                         );
