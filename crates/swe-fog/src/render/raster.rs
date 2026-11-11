@@ -63,9 +63,11 @@ pub(super) struct Raster {
     cell_count: u32,
 }
 impl Raster {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         gpu: &Gpu,
         sim: &Simulation,
+        terrain: &super::terrain_filter::RenderTerrain,
         smoothed: &wgpu::Texture,
         geometry: &wgpu::Buffer,
         colors: &[[f32; 3]],
@@ -131,7 +133,7 @@ impl Raster {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: sim.bed.as_entire_binding(),
+                    resource: terrain.bed.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
@@ -145,7 +147,7 @@ impl Raster {
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: sim.masks.as_entire_binding(),
+                    resource: terrain.masks.as_entire_binding(),
                 },
             ],
         });
@@ -276,7 +278,7 @@ impl Raster {
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: sim.masks.as_entire_binding(),
+                    resource: terrain.masks.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -290,7 +292,7 @@ impl Raster {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: sim.bed.as_entire_binding(),
+                    resource: terrain.bed.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,

@@ -57,7 +57,11 @@ fn grid_line(pos:vec2f,period:f32,width:f32)->f32 {
             color=vec3f(clamp(value,0.0,1.0));
         }
     }
-    return SceneResult(vec4f(color,1),length(p-camera.eye.xyz));
+    // RGB is opaque color; alpha is a binary height-fog receiver mask, not
+    // material transparency. Classify before RGBA16F storage so half-float
+    // quantization cannot shift the 45-degree cutoff.
+    let fog_receiver=select(0.0,1.0,in.normal.y*in.normal.y>=dot(in.normal.xz,in.normal.xz));
+    return SceneResult(vec4f(color,fog_receiver),length(p-camera.eye.xyz));
 }
 fn sphere_hit(o:vec3f,d:vec3f,c:vec3f,r:f32)->f32 {let q=o-c;let b=dot(q,d);let h=b*b-dot(q,q)+r*r;if h<0{return 1e20;}let t=-b-sqrt(h);if t>0{return t;}return 1e20;}
 fn capsule_hit(o:vec3f,d:vec3f,feet:vec3f)->f32 {

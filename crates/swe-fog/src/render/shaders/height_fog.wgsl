@@ -49,10 +49,16 @@ fn height_optical(ray:vec3f,distance:f32)->f32 {
     let offsets=array<vec2f,4>(vec2f(0.375,0.125),vec2f(0.875,0.375),vec2f(0.125,0.625),vec2f(0.625,0.875));
     for(var sample=0;sample<4;sample++){
         let ray=view_ray(vec2f(pixel)+offsets[sample]);
-        let optical=height_optical(ray,textureLoad(scene_distance,pixel,sample).x);
+        let background=textureLoad(scene_color,pixel,sample);
+        var optical=0.0;
+        // Same 45-degree limit as render/terrain_filter.rs. A visible wall is
+        // not a horizontal fog receiver even if its XZ maps to a flat floor cell.
+        if background.a>0.5 {
+            optical=height_optical(ray,textureLoad(scene_distance,pixel,sample).x);
+        }
         let trans=exp(-min(optical,30.0));
         if camera.params.w==5.0{color+=vec3f(1.0-trans);}
-        else{color+=textureLoad(scene_color,pixel,sample).rgb*trans+vec3f(camera.params.y)*(1.0-trans);}
+        else{color+=background.rgb*trans+vec3f(camera.params.y)*(1.0-trans);}
     }
     return vec4f(color*0.25,1);
 }

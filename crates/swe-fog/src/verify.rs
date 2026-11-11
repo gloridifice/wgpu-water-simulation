@@ -50,6 +50,7 @@ fn sum(a: &[[f32; 4]], axis: usize) -> f64 {
 pub async fn run() -> Result<(), Error> {
     let gpu = Gpu::new(&wgpu::Instance::default(), None).await?;
     eprintln!("Fog GPU verification: {}", gpu.name);
+    crate::render::surface_verification::run(&gpu)?;
     let terrain = Terrain::bake(
         &BakeSource::playground(),
         [-8.0, -6.0, 16.0, 12.0],

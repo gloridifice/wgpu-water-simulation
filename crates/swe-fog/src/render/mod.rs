@@ -6,6 +6,8 @@ mod presmooth;
 mod raster;
 mod raster_benchmark;
 pub(crate) mod raster_verification;
+pub(crate) mod surface_verification;
+mod terrain_filter;
 mod tet_reconstruction_verification;
 pub(crate) mod verification;
 use crate::{
@@ -109,14 +111,20 @@ impl Renderer {
             heights.iter().copied().fold(f32::NEG_INFINITY, f32::max),
         ];
         let device = &gpu.device;
-        let smoothing =
-            presmooth::PreSmooth::new(gpu, &sim.published, &sim.bed, &sim.masks, sim.resolution);
+        let render_terrain = terrain_filter::RenderTerrain::new(gpu, terrain);
+        let smoothing = presmooth::PreSmooth::new(
+            gpu,
+            &sim.published,
+            &render_terrain.bed,
+            &render_terrain.masks,
+            sim.resolution,
+        );
         let bounds = bounds::LayerHierarchy::new(
             gpu,
             &sim.published,
             &smoothing.texture,
-            &sim.bed,
-            &sim.masks,
+            &render_terrain.bed,
+            &render_terrain.masks,
             sim.resolution,
             acceleration == Acceleration::Hierarchy,
         );
@@ -246,7 +254,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: sim.bed.as_entire_binding(),
+                    resource: render_terrain.bed.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -258,7 +266,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: sim.masks.as_entire_binding(),
+                    resource: render_terrain.masks.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
@@ -325,6 +333,7 @@ impl Renderer {
                 raster::Raster::new(
                     gpu,
                     sim,
+                    &render_terrain,
                     &smoothing.texture,
                     &scene_buffer,
                     &source.colors,
