@@ -9,13 +9,64 @@ fn bundled_scene_has_explicit_support_matching_heightfield_and_reduced_collider(
         "roof/prop exclusion must survive packed asset delivery"
     );
     assert!(!source.collision.is_empty());
-    // Tighter error and locked open borders take priority over the old 50% target.
+    // Small-feature coverage takes priority over the previous 25% reduction.
     assert!(
-        source.collision.len() * 4 < source.floor.len() * 3,
-        "retain at least 25% triangle reduction with the tighter collision contract"
+        source.collision.len() * 100 < source.floor.len() * 85,
+        "retain at least 15% triangle reduction without losing thin physical features"
     );
     assert_eq!(terrain.metadata.resolution, [256, 256]);
     assert!(terrain.valid.iter().filter(|v| **v == 1).count() > 26_000);
+    // Measured visible surface landmarks in normalized world metres. These
+    // protect the actual delivered asset, not a second copy of its bake rules.
+    for (name, xz, height) in [
+        ("stone staircase", [18.125, -23.625], 25.37864),
+        ("upper stone tread", [14.125, -24.625], 29.44157),
+        ("gazebo floor (not roof)", [9.125, 6.125], 15.9315),
+        ("bridge deck (not railing)", [5.375, 23.125], 33.52908),
+    ] {
+        let actual = terrain.height_at(glam::Vec2::from_array(xz));
+        assert!(
+            actual.is_some_and(|h| (h - height).abs() < 0.03),
+            "{name}: {actual:?}, expected {height} m"
+        );
+    }
+    for tip in [
+        [-23.14349, 60.41555, -24.31067],
+        [-22.65673, 51.02592, -20.54791],
+    ] {
+        let p = glam::Vec3::from_array(tip);
+        let nearest = source
+            .collision
+            .iter()
+            .map(|tri| {
+                let [a, b, c] = tri.map(glam::Vec3::from_array);
+                let n = (b - a).cross(c - a).normalize_or_zero();
+                let projected = p - n * (p - a).dot(n);
+                let inside = [(a, b), (b, c), (c, a)]
+                    .into_iter()
+                    .all(|(a, b)| (b - a).cross(projected - a).dot(n) >= -1e-8);
+                if inside && n.length_squared() > 0.5 {
+                    (p - a).dot(n).abs()
+                } else {
+                    [(a, b), (b, c), (c, a)]
+                        .into_iter()
+                        .map(|(a, b)| {
+                            let e = b - a;
+                            p.distance(
+                                a + e
+                                    * ((p - a).dot(e) / e.length_squared().max(1e-20))
+                                        .clamp(0.0, 1.0),
+                            )
+                        })
+                        .fold(f32::INFINITY, f32::min)
+                }
+            })
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            nearest < 0.03,
+            "thin branch coverage at {tip:?} lost by {nearest} m"
+        );
+    }
     let mut player = swe_fog::scene::Player::default();
     player.place(&terrain).unwrap();
     let p = glam::Vec2::new(player.feet[0], player.feet[2]);
@@ -80,11 +131,13 @@ fn explicit_ground_survives_packing_without_baking_an_overhead_roof_into_the_flo
     );
     let mut profile = model::BakeProfile {
         source_sha256: format!("{:x}", Sha256::digest(&bytes)),
-        support_meshes: vec!["ground".into()],
+        support_meshes: vec!["ground".into(), "roof".into()],
+        support_height_ranges: [("roof".into(), [0.0, 8.0])].into(),
         collision_exclude_meshes: vec![],
         minimum_support_up: 0.5,
         collision_error_m: 0.025,
         lock_collision_borders: true,
+        lock_collision_extrema: true,
     };
     let source = model::import_glb_with_profile(&glb, 16.0, Some(&profile)).unwrap();
     assert_eq!(
@@ -118,6 +171,7 @@ fn explicit_ground_survives_packing_without_baking_an_overhead_roof_into_the_flo
     let legacy = model::decode(&legacy).unwrap();
     assert!(legacy.support.is_empty());
     assert_eq!(legacy.floor, source.floor);
+    profile.support_height_ranges.clear();
     profile.support_meshes = vec!["missing-ground".into()];
     assert!(
         model::import_glb_with_profile(&glb, 16.0, Some(&profile)).is_err(),

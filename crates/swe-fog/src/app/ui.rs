@@ -176,7 +176,9 @@ impl Interface {
         backend.context.set_fonts(fonts);
         let viewport = Viewport::new(&mut backend, gpu, format);
         let mut workspaces: Vec<_> = (0..3).map(|i| Workspace::new(layout(i))).collect();
-        let mut active = 0;
+        // Explicit inspection configs open their controls unless a saved layout overrides it.
+        let mut active =
+            usize::from(session.inspection.view != crate::parameters::GeometryView::Off);
         let mut sidecar = store.map(|s| Sidecar::<LayoutDocument>::new(&s.path));
         if let Some(s) = &mut sidecar {
             match s.read_json().and_then(|v| {
@@ -580,6 +582,83 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
         a.reset = true;
     }
 }
+fn geometry_inspection(ui: &mut egui::Ui, s: &mut Session) {
+    use crate::parameters::GeometryView;
+    yummy_egui::h3(ui, "几何验收");
+    parameter_table(ui, "geometry inspection", |ui| {
+        parameter(
+            ui,
+            "对照显示",
+            "青色为实际简化碰撞，橙色为原始求解高度格（不是渲染过滤后的场），红边为实际阻挡面，紫色为原始承载三角形。检查模式暂不绘制雾或角色，不改模拟；使用独立相机，不受碰撞裁切。实时生效、仅手动保存。",
+            |ui| {
+                egui::ComboBox::from_id_salt("geometry view")
+                    .width(ui.available_width())
+                    .selected_text(
+                        GeometryView::CHOICES
+                            .iter()
+                            .find(|(v, _)| *v == s.inspection.view)
+                            .unwrap()
+                            .1,
+                    )
+                    .show_ui(ui, |ui| {
+                        for (view, name) in GeometryView::CHOICES {
+                            ui.selectable_value(&mut s.inspection.view, view, name);
+                        }
+                    })
+                    .response
+            },
+        );
+        if s.inspection.view != GeometryView::Off {
+            parameter(
+                ui,
+                "穿透叠加",
+                "开启后可看到被实际模型遮挡的网格；重叠颜色不代表真实高度误差。关闭时按深度遮挡。只影响检查显示。",
+                |ui| ui.checkbox(&mut s.inspection.xray, "开启"),
+            );
+            for (i, name) in ["目标 X (m)", "目标 Y (m)", "目标 Z (m)"]
+                .into_iter()
+                .enumerate()
+            {
+                number(
+                    ui,
+                    name,
+                    "检查相机观察中心，世界米制坐标 −1000–1000；实时生效，不移动角色、不重置模拟。",
+                    &mut s.inspection.target[i],
+                    -1000.0,
+                    1000.0,
+                    false,
+                );
+            }
+            number(
+                ui,
+                "方位 (rad)",
+                "检查相机水平角，弧度；实时生效。捕获鼠标后也可拖动环绕。",
+                &mut s.inspection.orbit[0],
+                -6.3,
+                6.3,
+                false,
+            );
+            number(
+                ui,
+                "俯角 (rad)",
+                "检查相机俯角，弧度 −1.5–1.56；实时生效，允许查看桥面底部。",
+                &mut s.inspection.orbit[1],
+                -1.5,
+                1.56,
+                false,
+            );
+            number(
+                ui,
+                "观察距离 (m)",
+                "检查相机距离 0.5–300 米，不受场景碰撞裁切；实时生效、不重置模拟。",
+                &mut s.inspection.orbit[2],
+                0.5,
+                300.0,
+                true,
+            );
+        }
+    });
+}
 fn dynamics(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
     yummy_egui::h3(ui, "动力");
     ui.checkbox(&mut s.fog.gravity_enabled, "启用约化重力");
@@ -644,6 +723,7 @@ fn dynamics(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
     });
 }
 fn appearance(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
+    geometry_inspection(ui, s);
     yummy_egui::h3(ui, "白雾外观");
     ui.checkbox(&mut s.visible, "显示白雾");
     parameter_table(ui, "fog appearance", |ui| {

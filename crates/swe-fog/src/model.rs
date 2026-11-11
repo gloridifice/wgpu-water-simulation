@@ -119,10 +119,18 @@ pub fn save(source: &BakeSource, path: &Path) -> Result<(), Error> {
 pub struct BakeProfile {
     pub source_sha256: String,
     pub support_meshes: Vec<String>,
+    /// Optional per-mesh vertical band in normalized world metres. Every corner
+    /// must be in-band: do not clip rail/roof triangles into invented surfaces.
+    #[serde(default)]
+    pub support_height_ranges: std::collections::BTreeMap<String, [f32; 2]>,
     pub collision_exclude_meshes: Vec<String>,
     pub minimum_support_up: f32,
     pub collision_error_m: f32,
     pub lock_collision_borders: bool,
+    /// Lock component extrema and restore small pieces whose sampled coverage
+    /// exceeds the budget (QEM alone can erase long thin branches).
+    #[serde(default)]
+    pub lock_collision_extrema: bool,
 }
 
 /// Normalize the longest horizontal extent to `span` metres, centre XZ, put min Y at zero.
@@ -153,6 +161,15 @@ pub fn import_glb_with_profile(
         )?;
         if profile.support_meshes.is_empty() {
             return Err("bake profile requires explicit support meshes".into());
+        }
+        for (name, [low, high]) in &profile.support_height_ranges {
+            if !profile.support_meshes.contains(name)
+                || !low.is_finite()
+                || !high.is_finite()
+                || low > high
+            {
+                return Err(format!("invalid support height band for {name}").into());
+            }
         }
         for name in profile
             .support_meshes
@@ -195,13 +212,19 @@ pub fn import_glb_with_profile(
         .default_scene()
         .or_else(|| gltf.scenes().next())
         .ok_or("GLB has no scene")?;
+    let mut supports = Vec::new();
     for node in scene.nodes() {
-        visit(node, Mat4::IDENTITY, blob, &images, &mut source, profile)?;
+        visit(
+            node,
+            Mat4::IDENTITY,
+            blob,
+            &images,
+            &mut source,
+            profile,
+            &mut supports,
+        )?;
     }
     source.validate()?;
-    if profile.is_some() && source.support.is_empty() {
-        return Err("bake profile selected no upward support triangles".into());
-    }
     if profile.is_some() && source.collision.is_empty() {
         return Err("bake profile excluded every collision triangle".into());
     }
@@ -221,13 +244,17 @@ pub fn import_glb_with_profile(
     for p in source.floor.iter_mut().flatten() {
         *p = ((Vec3::from_array(*p) - center) * scale).to_array();
     }
-    for p in source
-        .collision
-        .iter_mut()
-        .chain(&mut source.support)
-        .flatten()
-    {
+    for p in source.collision.iter_mut().flatten() {
         *p = ((Vec3::from_array(*p) - center) * scale).to_array();
+    }
+    for (triangle, band) in supports {
+        let triangle = triangle.map(|p| ((Vec3::from_array(p) - center) * scale).to_array());
+        if band.is_none_or(|[lo, hi]| triangle.iter().all(|p| (lo..=hi).contains(&p[1]))) {
+            source.support.push(triangle);
+        }
+    }
+    if profile.is_some() && source.support.is_empty() {
+        return Err("bake profile selected no upward support triangles in its height bands".into());
     }
     simplify_collision(&mut source, profile)?;
     eprintln!(
@@ -243,6 +270,7 @@ pub fn import_glb_with_profile(
     Ok(source)
 }
 
+type SupportCandidate = (crate::terrain::Triangle, Option<[f32; 2]>);
 fn visit(
     node: gltf::Node<'_>,
     parent: Mat4,
@@ -250,6 +278,7 @@ fn visit(
     images: &[image::RgbImage],
     source: &mut BakeSource,
     profile: Option<&BakeProfile>,
+    supports: &mut Vec<SupportCandidate>,
 ) -> Result<(), Error> {
     let transform = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
     if let Some(mesh) = node.mesh() {
@@ -329,7 +358,11 @@ fn visit(
                     let [a, b, c] = world.map(Vec3::from_array);
                     let up = (b - a).cross(c - a).normalize_or_zero().y;
                     if up >= profile.unwrap().minimum_support_up {
-                        source.support.push(world);
+                        let band = mesh
+                            .name()
+                            .and_then(|name| profile.unwrap().support_height_ranges.get(name))
+                            .copied();
+                        supports.push((world, band));
                     }
                 }
                 source.colors.extend(colors);
@@ -337,7 +370,7 @@ fn visit(
         }
     }
     for child in node.children() {
-        visit(child, transform, blob, images, source, profile)?;
+        visit(child, transform, blob, images, source, profile, supports)?;
     }
     Ok(())
 }
@@ -363,14 +396,32 @@ fn simplify_collision(source: &mut BakeSource, profile: Option<&BakeProfile>) ->
     if profile.is_some_and(|p| p.lock_collision_borders) {
         options |= meshopt::SimplifyOptions::LockBorder;
     }
-    let reduced = meshopt::simplify(
+    let preserve = profile.is_some_and(|p| p.lock_collision_extrema);
+    let (locks, components) = if preserve {
+        component_extrema(&vertices, &indices)
+    } else {
+        (vec![false; vertices.len()], Vec::new())
+    };
+    let mut reduced = meshopt::simplify_with_locks(
         &indices,
         &adapter,
+        &locks,
         (8_000 * 3).min(indices.len()),
         budget,
         options,
         Some(&mut error),
     );
+    if preserve {
+        restore_small_features(
+            &vertices,
+            &indices,
+            &mut reduced,
+            &components,
+            &locks,
+            budget,
+            options,
+        );
+    }
     source.collision = reduced
         .as_chunks::<3>()
         .0
@@ -390,6 +441,159 @@ fn simplify_collision(source: &mut BakeSource, profile: Option<&BakeProfile>) ->
     Ok(())
 }
 
+/// Lock each component's span, not all its detail. Slender closed branches
+/// otherwise shrink along their axis because QEM measures width, not coverage.
+fn component_extrema(vertices: &[[f32; 3]], indices: &[u32]) -> (Vec<bool>, Vec<usize>) {
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let mut parent: Vec<_> = (0..vertices.len()).collect();
+    for tri in indices.as_chunks::<3>().0 {
+        let a = root(&mut parent, tri[0] as usize);
+        for i in &tri[1..] {
+            let b = root(&mut parent, *i as usize);
+            parent[b] = a;
+        }
+    }
+    let components: Vec<_> = (0..vertices.len()).map(|i| root(&mut parent, i)).collect();
+    let mut extrema = std::collections::HashMap::<usize, [usize; 6]>::new();
+    for (i, p) in vertices.iter().enumerate() {
+        let e = extrema.entry(components[i]).or_insert([i; 6]);
+        for axis in 0..3 {
+            if p[axis] < vertices[e[axis * 2]][axis] {
+                e[axis * 2] = i;
+            }
+            if p[axis] > vertices[e[axis * 2 + 1]][axis] {
+                e[axis * 2 + 1] = i;
+            }
+        }
+    }
+    let mut locks = vec![false; vertices.len()];
+    for e in extrema.values() {
+        for i in e {
+            locks[*i] = true;
+        }
+    }
+    (locks, components)
+}
+
+/// QEM is not a coverage bound. Validate the original vertices of small welded
+/// pieces (twigs, trim, small props), and retain a piece if simplification loses
+/// it. Cost is bounded to <=128 vertices per piece; large terrain stays reduced.
+fn restore_small_features(
+    vertices: &[[f32; 3]],
+    original: &[u32],
+    reduced: &mut Vec<u32>,
+    components: &[usize],
+    locks: &[bool],
+    budget: f32,
+    options: meshopt::SimplifyOptions,
+) {
+    struct Piece {
+        vertices: Vec<usize>,
+        original: Vec<u32>,
+        reduced: Vec<u32>,
+    }
+    let mut pieces = std::collections::BTreeMap::<usize, Piece>::new();
+    for (i, &component) in components.iter().enumerate() {
+        pieces
+            .entry(component)
+            .or_insert_with(|| Piece {
+                vertices: Vec::new(),
+                original: Vec::new(),
+                reduced: Vec::new(),
+            })
+            .vertices
+            .push(i);
+    }
+    for tri in original.as_chunks::<3>().0 {
+        pieces
+            .get_mut(&components[tri[0] as usize])
+            .unwrap()
+            .original
+            .extend(tri);
+    }
+    for tri in reduced.as_chunks::<3>().0 {
+        pieces
+            .get_mut(&components[tri[0] as usize])
+            .unwrap()
+            .reduced
+            .extend(tri);
+    }
+    let adapter = meshopt::VertexDataAdapter::new(bytemuck::cast_slice(vertices), 12, 0)
+        .expect("validated positions");
+    let mut replacements = std::collections::BTreeMap::new();
+    let mut retained = 0;
+    for (&id, piece) in &pieces {
+        if piece.vertices.len() > 128 {
+            continue;
+        }
+        let covered = |candidate: &[u32]| {
+            piece.vertices.iter().all(|&i| {
+                let p = Vec3::from_array(vertices[i]);
+                candidate.as_chunks::<3>().0.iter().any(|tri| {
+                    let [a, b, c] = tri.map(|i| Vec3::from_array(vertices[i as usize]));
+                    point_triangle_distance(p, a, b, c) <= budget + 0.00002
+                })
+            })
+        };
+        if covered(&piece.reduced) {
+            continue;
+        }
+        let mut replacement = piece.original.clone();
+        for factor in [0.25, 0.0625] {
+            let candidate = meshopt::simplify_with_locks(
+                &piece.original,
+                &adapter,
+                locks,
+                0,
+                budget * factor,
+                options | meshopt::SimplifyOptions::Sparse,
+                None,
+            );
+            if covered(&candidate) {
+                replacement = candidate;
+                break;
+            }
+        }
+        retained += usize::from(replacement.len() == piece.original.len());
+        replacements.insert(id, replacement);
+    }
+    reduced.retain(|i| !replacements.contains_key(&components[*i as usize]));
+    for replacement in replacements.values() {
+        reduced.extend(replacement);
+    }
+    eprintln!(
+        "Collision coverage: refined {} small pieces, {retained} retained at original detail",
+        replacements.len()
+    );
+}
+fn point_triangle_distance(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
+    let ab = b - a;
+    let ac = c - a;
+    let q = p - a;
+    let n = ab.cross(ac);
+    let den = n.length_squared();
+    if den > 1e-20 {
+        let u = q.cross(ac).dot(n) / den;
+        let v = ab.cross(q).dot(n) / den;
+        if u >= 0.0 && v >= 0.0 && u + v <= 1.0 {
+            return q.dot(n).abs() / den.sqrt();
+        }
+    }
+    [(a, b), (b, c), (c, a)]
+        .into_iter()
+        .map(|(a, b)| {
+            let e = b - a;
+            let t = ((p - a).dot(e) / e.length_squared().max(1e-20)).clamp(0.0, 1.0);
+            p.distance(a + e * t)
+        })
+        .fold(f32::INFINITY, f32::min)
+}
 fn sample(image: &image::RgbImage, uv: Vec2, sampler: gltf::texture::Sampler<'_>) -> Vec3 {
     let p = uv * Vec2::new(image.width() as f32, image.height() as f32) - Vec2::splat(0.5);
     let base = p.floor().as_ivec2();

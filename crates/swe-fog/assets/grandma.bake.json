@@ -11,10 +11,18 @@
     "SM_ground_plane_M_trim_yellow_brown_grass_0",
     "SM_bridge_M_bridge_0",
     "SM_house_M_rock_steps_0",
-    "SM_stone_props_M_rock_steps_0"
+    "SM_stone_props_M_rock_steps_0",
+    "SM_rocks_M_rock_0",
+    "SM_rocks_M_rock_moss_0",
+    "SM_gazebo.003_M_gazebo_0"
   ],
+  "support_height_ranges": {
+    "SM_bridge_M_bridge_0": [33.50, 33.55],
+    "SM_gazebo.003_M_gazebo_0": [15.2, 16.1]
+  },
   "collision_exclude_meshes": ["SM_ground_plane_M_outside_diorama_0"],
   "minimum_support_up": 0.5,
   "collision_error_m": 0.025,
-  "lock_collision_borders": true
+  "lock_collision_borders": true,
+  "lock_collision_extrema": true
 }

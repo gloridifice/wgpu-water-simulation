@@ -2,6 +2,7 @@
 pub(crate) mod benchmark;
 mod bounds;
 mod bounds_verification;
+mod geometry;
 mod presmooth;
 mod raster;
 mod raster_benchmark;
@@ -45,6 +46,7 @@ enum Acceleration {
     Raster = 3,
 }
 pub struct Renderer {
+    inspection: geometry::Inspector,
     raster: Option<raster::Raster>,
     acceleration: Acceleration,
     pipeline: wgpu::RenderPipeline,
@@ -343,6 +345,7 @@ impl Renderer {
             })
             .transpose()?;
         Ok(Self {
+            inspection: geometry::Inspector::new(source, terrain, format),
             raster,
             acceleration,
             pipeline,
@@ -365,6 +368,11 @@ impl Renderer {
         domain: [f32; 4],
         size: [u32; 2],
     ) {
+        if session.inspection.view != crate::parameters::GeometryView::Off {
+            self.inspection
+                .encode(gpu, encoder, target, &session.inspection, size);
+            return;
+        }
         let reconstruction = self.prepare_field(gpu, encoder, session);
         self.prepare_bounds(gpu, encoder, session, reconstruction);
         self.draw(gpu, encoder, target, session, domain, size, reconstruction);

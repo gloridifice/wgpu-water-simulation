@@ -299,10 +299,17 @@ impl WindowScene for State {
             && self.focused
             && let DeviceEvent::MouseMotion { delta } = event
         {
-            self.session.camera[0] =
-                (self.session.camera[0] - delta.0 as f32 * 0.004).rem_euclid(std::f32::consts::TAU);
-            self.session.camera[1] =
-                (self.session.camera[1] + delta.1 as f32 * 0.004).clamp(0.05, 1.35);
+            let inspecting = self.session.inspection.view != crate::parameters::GeometryView::Off;
+            let camera = if inspecting {
+                &mut self.session.inspection.orbit
+            } else {
+                &mut self.session.camera
+            };
+            camera[0] = (camera[0] - delta.0 as f32 * 0.004).rem_euclid(std::f32::consts::TAU);
+            camera[1] = (camera[1] + delta.1 as f32 * 0.004).clamp(
+                if inspecting { -1.5 } else { 0.05 },
+                if inspecting { 1.56 } else { 1.35 },
+            );
         }
     }
     fn event(&mut self, event: WindowEvent) -> bool {

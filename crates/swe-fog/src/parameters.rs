@@ -135,12 +135,56 @@ pub enum RenderMode {
     HeightFog,
     Tetrahedra,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryView {
+    #[default]
+    Off,
+    Mesh,
+    CollisionOverlay,
+    Collision,
+    HeightfieldOverlay,
+    Heightfield,
+    SupportOverlay,
+}
+impl GeometryView {
+    pub const CHOICES: [(Self, &'static str); 7] = [
+        (Self::Off, "关闭"),
+        (Self::Mesh, "实际模型"),
+        (Self::CollisionOverlay, "碰撞叠加 · 青色"),
+        (Self::Collision, "仅碰撞网格"),
+        (Self::HeightfieldOverlay, "高度格叠加 · 橙色"),
+        (Self::Heightfield, "仅高度格／红色阻挡面"),
+        (Self::SupportOverlay, "承载原面叠加 · 紫色"),
+    ];
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Inspection {
+    pub view: GeometryView,
+    pub xray: bool,
+    /// Independent inspection target in world metres; never changes the player.
+    pub target: [f32; 3],
+    /// yaw, downward pitch (radians), distance (metres); bypasses camera collision.
+    pub orbit: [f32; 3],
+}
+impl Default for Inspection {
+    fn default() -> Self {
+        Self {
+            view: GeometryView::Off,
+            xray: false,
+            target: [0.0, 25.0, 0.0],
+            orbit: [0.6, 0.65, 100.0],
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Session {
     pub version: u32,
     pub scene: crate::scenes::ScenePreset,
     pub render_mode: RenderMode,
+    pub inspection: Inspection,
     /// Static world-space visual density modulation, dimensionless 0..1.
     pub height_fog_noise: f32,
     /// Explicit simulation grid override; None keeps the validated terrain grid.
@@ -173,6 +217,7 @@ impl Default for Session {
             version: 1,
             scene: crate::scenes::ScenePreset::default(),
             render_mode: RenderMode::default(),
+            inspection: Inspection::default(),
             height_fog_noise: 0.2,
             grid_resolution: None,
             domain_scale: 1.0,
@@ -203,6 +248,12 @@ impl common::settings::Settings for Session {
             return Err("网格分辨率每轴必须为 2–1024".into());
         }
         range("区域范围缩放", self.domain_scale, 0.0625, 1.0)?;
+        for value in self.inspection.target {
+            range("检查目标 (m)", value, -1000.0, 1000.0)?;
+        }
+        range("检查相机 yaw", self.inspection.orbit[0], -10000.0, 10000.0)?;
+        range("检查相机 pitch", self.inspection.orbit[1], -1.5, 1.56)?;
+        range("检查相机距离 (m)", self.inspection.orbit[2], 0.5, 300.0)?;
         self.fog.validate()?;
         range("高度雾浓淡噪声", self.height_fog_noise, 0.0, 1.0)?;
         range("渲染平滑强度", self.reconstruction_smoothing, 0.0, 1.0)?;
