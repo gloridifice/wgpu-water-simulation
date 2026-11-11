@@ -114,7 +114,7 @@ mod tests {
         let session = dir.join("personal.json");
         fs::write(&session, b"untouched simulation and profiles").unwrap();
         let mut workspaces = Workspaces {
-            active: WorkspaceId::Shallow,
+            active: WorkspaceId::AnimatedSdf,
             ..Default::default()
         };
         use crate::ocean::ui::workspace::Panel;
@@ -125,11 +125,16 @@ mod tests {
         let mut restored = Workspaces::default();
         let read = WorkspaceStore::open(&session, &mut restored);
         assert!(read.error.is_none());
-        assert_eq!(restored.active, WorkspaceId::Shallow);
+        assert_eq!(restored.active, WorkspaceId::AnimatedSdf);
         assert!(restored.current().contains(Panel::Performance));
         assert_eq!(Document::capture(&restored), Document::capture(&workspaces));
         let mut legacy = serde_json::to_value(Document::capture(&restored)).unwrap();
         legacy["version"] = serde_json::json!(1);
+        legacy["active"] = serde_json::json!("shallow");
+        legacy["workspaces"]
+            .as_object_mut()
+            .unwrap()
+            .remove("animated_sdf");
         let shading = super::super::default_layout(WorkspaceId::Shading)
             .filtered(&|p| !matches!(p, Panel::Caustics | Panel::Refraction))
             .unwrap();
@@ -138,6 +143,10 @@ mod tests {
         let mut upgraded = Workspaces::default();
         let mut upgraded_store = WorkspaceStore::open(&session, &mut upgraded);
         assert!(!upgraded_store.blocked);
+        assert_eq!(upgraded.active, WorkspaceId::Shallow);
+        let animated = &upgraded.items[WorkspaceId::AnimatedSdf.index()];
+        assert!(animated.contains(Panel::AnimatedSdf) && animated.contains(Panel::View));
+        assert!(!animated.contains(Panel::Performance));
         let ws = &mut upgraded.items[WorkspaceId::Shading.index()];
         assert!(ws.contains(Panel::Caustics) && ws.contains(Panel::Refraction));
         assert_eq!(

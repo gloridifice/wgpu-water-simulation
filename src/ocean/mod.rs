@@ -21,7 +21,7 @@ pub mod skylight {
     pub use super::ui::panels::optics::depth_graph;
 }
 pub use scene::{collider, model, terrain};
-pub use simulation::{nearshore as shore, offshore::foam, offshore::spectrum, spray};
+pub use simulation::{nearshore as shore, offshore::foam, spectral::spectrum, spray};
 
 pub mod viewer {
     pub use super::{app::snapshot::snapshot, app::viewer::run, camera::Camera};

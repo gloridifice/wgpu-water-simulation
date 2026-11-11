@@ -6,7 +6,7 @@ use crate::ocean::camera::CameraUniform;
 use crate::ocean::gpu::context::Gpu;
 use crate::ocean::parameters::ocean::OceanConfig;
 use crate::ocean::parameters::optics::OpticsConfig;
-use crate::ocean::simulation::offshore::Ocean;
+use crate::ocean::simulation::spectral::FftWaves as Ocean;
 use wgpu::util::DeviceExt;
 
 pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
@@ -27,12 +27,14 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             label: Some("foam vertex lift probe"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                     include_str!("../../../render/shaders/optics.wgsl"),
                     include_str!("../../../render/shaders/sky.wgsl"),
                     include_str!("../../../render/shaders/skylight.wgsl"),
                     concat!(
                         include_str!("../../../render/shaders/scene_types.wgsl"),
+                        "\n",
+                        include_str!("../../spectral/shaders/sample.wgsl"),
                         "\n",
                         include_str!("../../../render/shaders/surface.wgsl"),
                         "\n",
@@ -44,10 +46,15 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                         "\n",
                         include_str!("../../../render/shaders/fast_refraction.wgsl"),
                         "\n",
-                        include_str!("../../../render/shaders/render.wgsl")
+                        include_str!("../../../render/shaders/render.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/lake_sample.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/lake_water.wgsl")
                     ),
                     include_str!("../shaders/shore.wgsl"),
                     include_str!("../shaders/shore_read.wgsl"),
+                    crate::ocean::render::water::SHADER,
                     r#"
 @group(0) @binding(12) var<storage, read_write> result: array<vec4<f32>>;
 @compute @workgroup_size(1) fn height_probe() {

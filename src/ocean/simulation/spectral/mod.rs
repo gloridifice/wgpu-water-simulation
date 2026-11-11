@@ -1,5 +1,24 @@
-//! GPU spectral evolution and inverse FFT.
-use super::spectrum::initial_spectrum;
+//! Shared spectral waves: ocean and bounded procedural water use the same GPU fields.
+pub mod spectrum;
+use spectrum::initial_spectrum;
+
+/// Optional filtering for the matched height/momentum inlet channels only.
+/// The displayed height and displacement channels are never filtered.
+#[derive(Clone, Copy)]
+pub struct InputFilter {
+    pub cutoff: f32,
+    pub transition: f32,
+    pub enabled: bool,
+}
+impl Default for InputFilter {
+    fn default() -> Self {
+        Self {
+            cutoff: 12.0,
+            transition: 12.0,
+            enabled: true,
+        }
+    }
+}
 use crate::ocean::{
     Error,
     gpu::context::{Gpu, buffer},
@@ -26,7 +45,8 @@ fn bind(
     })
 }
 
-pub struct Ocean {
+#[derive(Clone)]
+pub struct FftWaves {
     pub config: OceanConfig,
     pub height_bound: f32,
     pub fields: wgpu::Buffer,
@@ -37,7 +57,7 @@ pub struct Ocean {
     stages: Vec<wgpu::BindGroup>,
 }
 
-impl Ocean {
+impl FftWaves {
     pub fn new(gpu: &Gpu, config: OceanConfig) -> Result<Self, Error> {
         config.validate()?;
         Self::from_spectrum(gpu, config, initial_spectrum(config))
@@ -138,12 +158,7 @@ impl Ocean {
     }
 
     pub fn encode(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, time: f32) {
-        self.encode_filtered(
-            gpu,
-            encoder,
-            time,
-            &crate::ocean::parameters::shore::ShoreConfig::default(),
-        );
+        self.encode_filtered(gpu, encoder, time, InputFilter::default());
     }
 
     /// Filter only the three SWE input channels; far-ocean rendering is unchanged.
@@ -152,15 +167,16 @@ impl Ocean {
         gpu: &Gpu,
         encoder: &mut wgpu::CommandEncoder,
         time: f32,
-        shore: &crate::ocean::parameters::shore::ShoreConfig,
+        filter: impl Into<InputFilter>,
     ) {
+        let filter = filter.into();
         let params = [
             self.config.resolution,
             time.to_bits(),
             self.config.length.to_bits(),
-            shore.filter_cutoff.to_bits(),
-            shore.filter_transition.to_bits(),
-            f32::from(shore.filter_enabled).to_bits(),
+            filter.cutoff.to_bits(),
+            filter.transition.to_bits(),
+            f32::from(filter.enabled).to_bits(),
             0,
             0,
         ];

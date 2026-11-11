@@ -53,6 +53,14 @@ impl Camera {
         }
     }
 
+    pub fn lake(radius: f32) -> Self {
+        let mut camera = Self::new(radius * 3.0);
+        camera.distance = radius * 2.5;
+        camera.pitch = 0.85;
+        camera.target = [0.0, 0.0];
+        camera
+    }
+
     pub fn model(length: f32) -> Self {
         Self {
             yaw: 0.65,

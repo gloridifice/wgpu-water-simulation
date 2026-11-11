@@ -5,9 +5,9 @@ use water_simulation::ocean::{
     gpu::context::Gpu,
     render::{RenderTiming, Renderer},
     settings::load_config,
-    simulation::offshore::{
-        Ocean,
-        foam::{Foam, FoamStep},
+    simulation::{
+        offshore::foam::{Foam, FoamStep},
+        spectral::FftWaves as Ocean,
     },
 };
 

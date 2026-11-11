@@ -75,7 +75,10 @@ fn trace_screen(origin:vec3<f32>, ray:vec3<f32>, maximum:f32, above_water:bool) 
                     return ScreenHit(world,distance,cell,true);
                 }
                 let grid=(opaque.xz/camera.ocean.y+vec2(0.5))*camera.ocean.x;
-                if opaque.y>surface(grid,vec2(0.0)).y {
+                var wave_height=0.0;
+                if lake.options.x>0.5 { wave_height=lake_sample(lake_field,opaque.xz).x; }
+                else { wave_height=surface(grid,vec2(0.0)).y; }
+                if opaque.y>wave_height {
                     return ScreenHit(world,distance,cell,true);
                 }
             }

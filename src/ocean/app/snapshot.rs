@@ -4,9 +4,9 @@ use crate::ocean::{
     gpu::context::Gpu,
     render::Renderer,
     settings::SavedSettings,
-    simulation::offshore::{
-        Ocean,
-        foam::{Foam, FoamStep},
+    simulation::{
+        offshore::foam::{Foam, FoamStep},
+        spectral::FftWaves as Ocean,
     },
 };
 
@@ -65,7 +65,11 @@ pub async fn snapshot(
     if emission_window.is_some() && !optics.swe_enabled() {
         return Err("--foam-emission-window requires an active SWE scene".into());
     }
-    let duration = time.min(if optics.swe_enabled() { 60.0 } else { 8.0 });
+    let duration = if optics.lake.enabled {
+        0.0
+    } else {
+        time.min(if optics.swe_enabled() { 60.0 } else { 8.0 })
+    };
     let steps = (duration * 60.0).ceil() as u32;
     if steps > 0 {
         let dt = duration / steps as f32;
@@ -102,26 +106,36 @@ pub async fn snapshot(
         }
     }
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    ocean.encode_filtered(&gpu, &mut encoder, time, &optics.shore);
-    renderer
-        .shore
-        .encode(&gpu, &mut encoder, &optics, time, false, camera.ocean[3]);
-    renderer.encode_spray(&gpu, &mut encoder);
-    if let Some(error) = &renderer.shore.spray_error {
-        return Err(error.clone().into());
+    if optics.lake.enabled {
+        renderer.encode_lake(
+            &gpu,
+            &mut encoder,
+            f64::from(time),
+            optics.lake,
+            Default::default(),
+        );
+    } else {
+        ocean.encode_filtered(&gpu, &mut encoder, time, &optics.shore);
+        renderer
+            .shore
+            .encode(&gpu, &mut encoder, &optics, time, false, camera.ocean[3]);
+        renderer.encode_spray(&gpu, &mut encoder);
+        if let Some(error) = &renderer.shore.spray_error {
+            return Err(error.clone().into());
+        }
+        foam_field.encode(
+            &gpu,
+            &mut encoder,
+            FoamStep::new(
+                config.resolution,
+                config.length,
+                camera.ocean[2] * camera.ocean[3],
+                0.0,
+                initial.foam,
+                false,
+            ),
+        );
     }
-    foam_field.encode(
-        &gpu,
-        &mut encoder,
-        FoamStep::new(
-            config.resolution,
-            config.length,
-            camera.ocean[2] * camera.ocean[3],
-            0.0,
-            initial.foam,
-            false,
-        ),
-    );
     renderer.encode(
         &gpu,
         &mut encoder,
@@ -145,23 +159,31 @@ pub async fn snapshot(
         },
     );
     gpu.queue.submit([encoder.finish()]);
-    let foam_bytes = gpu.read_buffer(&foam_field.field, foam_field.field.size())?;
-    let diagnostics: Vec<[f32; 2]> = foam_bytes
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|b| bytemuck::pod_read_unaligned(b))
-        .collect();
-    let min_j = diagnostics
-        .iter()
-        .map(|v| v[1])
-        .fold(f32::INFINITY, f32::min);
-    let max_f = diagnostics.iter().map(|v| v[0]).fold(0.0_f32, f32::max);
-    let covered = diagnostics.iter().filter(|v| v[0] > 0.02).count();
-    eprintln!(
-        "Foam: J min={min_j:.3}, F max={max_f:.3}, coverage F>0.02={:.1}%",
-        100.0 * covered as f32 / diagnostics.len() as f32
-    );
+    if optics.lake.enabled {
+        let (waves, dropped, rocks) = renderer.lake_status();
+        eprintln!(
+            "Lake {:?}: {waves} active waves, {dropped} dropped, {rocks} rocks",
+            optics.lake.mode
+        );
+    } else {
+        let foam_bytes = gpu.read_buffer(&foam_field.field, foam_field.field.size())?;
+        let diagnostics: Vec<[f32; 2]> = foam_bytes
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|b| bytemuck::pod_read_unaligned(b))
+            .collect();
+        let min_j = diagnostics
+            .iter()
+            .map(|v| v[1])
+            .fold(f32::INFINITY, f32::min);
+        let max_f = diagnostics.iter().map(|v| v[0]).fold(0.0_f32, f32::max);
+        let covered = diagnostics.iter().filter(|v| v[0] > 0.02).count();
+        eprintln!(
+            "Foam: J min={min_j:.3}, F max={max_f:.3}, coverage F>0.02={:.1}%",
+            100.0 * covered as f32 / diagnostics.len() as f32
+        );
+    }
     let mapped = gpu.map_buffer(&staging)?;
     if optics.swe_enabled() {
         let bytes = gpu.read_buffer(

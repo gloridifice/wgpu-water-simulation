@@ -72,9 +72,14 @@ impl SavedSettings {
     /// Explicit CLI values override persisted values; all other settings survive.
     pub fn apply_cli(&mut self, ocean: OceanConfig, optics: OpticsConfig, flags: &[String]) {
         let old_length = self.ocean.length;
-        if flags.iter().any(|f| f == "--beach" || f == "--model") {
+        if flags
+            .iter()
+            .any(|f| f == "--beach" || f == "--model" || f == "--lake")
+        {
             self.optics = optics;
-            self.camera = if optics.model.enabled {
+            self.camera = if optics.lake.enabled {
+                Camera::lake(optics.lake.terrain.radius)
+            } else if optics.model.enabled {
                 Camera::model(old_length)
             } else {
                 Camera::beach(old_length)
@@ -114,6 +119,7 @@ impl SavedSettings {
                     self.ocean.seed = ocean.seed;
                     self.draft.seed = ocean.seed;
                 }
+                "--lake-mode" => self.optics.lake.mode = optics.lake.mode,
                 "--model-position" => self.optics.model.position = optics.model.position,
                 "--model-scale" => self.optics.model.scale = optics.model.scale,
                 "--model-yaw" => self.optics.model.yaw_deg = optics.model.yaw_deg,

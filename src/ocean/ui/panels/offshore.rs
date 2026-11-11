@@ -64,11 +64,13 @@ impl Gui {
                         }
                     });
             });
-            parameter(ui, "远海网格密度", help("远海网格密度"), |ui| {
-                ui.add(ParameterSlider::new(
-                    &mut self.draft.mesh_resolution,
-                    8..=512,
-                ))
+            ui.add_enabled_ui(!self.optics.lake.enabled, |ui| {
+                parameter(ui, "远海网格密度", help("远海网格密度"), |ui| {
+                    ui.add(ParameterSlider::new(
+                        &mut self.draft.mesh_resolution,
+                        8..=512,
+                    ))
+                });
             });
         });
         let mut apply = None;
@@ -101,6 +103,22 @@ impl Gui {
         });
         if let Some(e) = &self.error {
             ui.colored_label(egui::Color32::LIGHT_RED, e);
+        }
+        if self.optics.lake.enabled {
+            group(ui, "湖泊 FFT 波形", |ui| {
+                parameter(
+                    ui,
+                    "FFT 叠加强度",
+                    "共享波谱高度的无量纲倍率 0～1；0 关闭，实时生效、不重置。湖泊不使用水平挤浪和远海网格；波谱更改应用后重建并重新计时。",
+                    |ui| {
+                        ui.add(ParameterSlider::new(
+                            &mut self.optics.lake.fft_strength,
+                            0.0..=1.0,
+                        ))
+                    },
+                );
+            });
+            return apply;
         }
         group(ui, "波形", |ui| {
             let mut triangular = current.triangular_mesh;

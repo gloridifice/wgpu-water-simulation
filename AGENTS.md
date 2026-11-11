@@ -21,11 +21,12 @@
 | `src/ocean/app/`、`camera.rs` | 海洋帧调度、快照、业务输入及兼容相机配置／GPU 布局 |
 | `src/ocean/gpu/` | common 设备兼容入口与海洋计时元数据适配 |
 | `src/ocean/parameters/` | 参数定义、默认值与校验，不依赖窗口或 GPU 资源 |
-| `src/ocean/simulation/offshore/` | 波谱、GPU FFT、远海泡沫及所属着色器 |
+| `src/ocean/simulation/spectral/` | 海洋与程序水共用的波谱、GPU FFT、周期采样及所属着色器 |
+| `src/ocean/simulation/offshore/` | 远海泡沫、海洋耦合验证及旧 FFT 路径兼容导出 |
 | `src/ocean/simulation/nearshore/` | SWE、FFT 输入、近岸泡沫、状态读取及验证 |
 | `src/ocean/simulation/spray/` | 近岸浪花源、粒子及所属着色器 |
 | `src/ocean/scene/` | 模型几何、地形高度场与碰撞体 |
-| `src/ocean/render/` | 水面、海底、模型、天空光学、纹理及所属着色器 |
+| `src/ocean/render/` | 水面、海底、模型、天空光学、纹理及所属着色器；`water/` 为海洋与程序水共用的光学合成 |
 | `src/ocean/ui/` | Dock、业务面板、颜色编辑、应用字体与布局保存 |
 | crates.io `yummy_egui` | 通用 egui 控件、参数／选择列表与默认主题；本仓库不保留库源码或主题配置 |
 | `src/ocean/settings/`、`ui/panels/configuration.rs` | 会话、命名配置库、原子保存及配置管理界面 |
@@ -84,7 +85,7 @@ target\release\ocean.exe --beach --no-settings --frames 600
 
 ## 参数面板约定
 
-- 使用 egui_dock；左侧固定“场景、浅水、远海、着色、配置”五分类导航，各分类有独立 Dock 布局。默认参数靠左、渲染视图靠右；顶部工具栏常驻。切换只改 UI，不重置模拟、草稿或相机。
+- 使用 egui_dock；左侧固定“场景、浅水、远海、动画 SDF 波纹、着色、配置”六分类导航，各分类有独立 Dock 布局。默认参数靠左、渲染视图靠右；顶部工具栏常驻。切换只改 UI，不重置模拟、草稿或相机。
 - 各布局保留一个不可关闭的渲染视图；参数面板可关闭、跨分类添加。布局 sidecar 独立于模拟会话与命名配置，遵守只读／无保存模式；界面合约见 `doco/specs/workspace-ui.md`。
 - 通用组件与主题使用 crates.io 的 `yummy_egui` 0.1 系列（最低 0.1.2），搭配 egui 0.34、egui_dock 0.19 与 wgpu 29；海洋业务面板直接依赖该库，不复制控件实现。本仓库不存储、加载或保存主题配置，使用库的 `Theme::default()`，Dock 使用其 `dock_style()`；MiSans 由主程序安装，主题应用不得覆盖字体。
 - 每个逻辑参数组使用一个共享的两列网格，让同组多行实际对齐；不要每行创建独立网格。

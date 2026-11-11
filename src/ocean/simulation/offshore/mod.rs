@@ -1,5 +1,4 @@
-mod fft;
 pub mod foam;
-pub mod spectrum;
 pub(in crate::ocean) mod verification;
-pub use fft::Ocean;
+// Compatibility only; internal wave consumers use simulation::spectral.
+pub use super::spectral::{FftWaves as Ocean, spectrum};

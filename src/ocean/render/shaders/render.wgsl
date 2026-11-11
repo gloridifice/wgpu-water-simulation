@@ -15,63 +15,12 @@
 @group(0) @binding(7) var<storage, read> shore_field: array<vec4<f32>>;
 @group(0) @binding(8) var<uniform> shore: ShoreParams;
 
-fn sky_with_halo(direction: vec3<f32>) -> vec3<f32> {
-    let sun = max(dot(direction, camera.sun.xyz), 0.0);
-    return sky_background(direction, optics.sky_color)
-        + vec3(1.0, 0.75, 0.40) * (0.20 * pow(sun, 40.0));
-}
-
 fn sky_color(direction: vec3<f32>) -> vec3<f32> {
     let sun = max(dot(direction, camera.sun.xyz), 0.0);
     return sky_with_halo(direction) + vec3(1.0, 0.75, 0.40) * (3.0 * pow(sun, 3000.0));
 }
 
-// Cook–Torrance dielectric reflection under a directional sun: BRDF times N·L.
-fn water_sun_response(normal: vec3<f32>, view: vec3<f32>, light: vec3<f32>) -> f32 {
-    let no_v = clamp(dot(normal, view), 0.0, 1.0);
-    let no_l = clamp(dot(normal, light), 0.0, 1.0);
-    if no_v <= 0.0 || no_l <= 0.0 || light.y <= 0.0 {
-        return 0.0;
-    }
-    let half_sum = view + light;
-    let half_length_squared = dot(half_sum, half_sum);
-    if half_length_squared < 1e-8 {
-        return 0.0;
-    }
-    let half_vector = half_sum * inverseSqrt(half_length_squared);
-    let no_h = clamp(dot(normal, half_vector), 0.0, 1.0);
-    let lo_h = clamp(dot(light, half_vector), 0.0, 1.0);
-
-    // Residual roughness below the scale of the resolved wave normal.
-    let roughness = 0.28;
-    let alpha = roughness * roughness;
-    let alpha_squared = alpha * alpha;
-    let no_h_squared = no_h * no_h;
-    let ggx = (1.0 - no_h_squared) + alpha_squared * no_h_squared;
-    let distribution = alpha_squared / (3.14159265 * ggx * ggx);
-    // Height-correlated Smith visibility (includes the BRDF denominator).
-    let shadow_view = no_l * sqrt(no_v * no_v * (1.0 - alpha_squared) + alpha_squared);
-    let shadow_light = no_v * sqrt(no_l * no_l * (1.0 - alpha_squared) + alpha_squared);
-    let visibility_times_cosine = 0.5 * no_l / (shadow_view + shadow_light);
-    return distribution * visibility_times_cosine * water_fresnel(lo_h);
-}
-
 struct SkyOut { @builtin(position) position: vec4<f32>, @location(0) ndc: vec2<f32> }
-// RGB is the sampled scene radiance; alpha is SSR's contribution weight.
-fn screen_reflection(origin:vec3<f32>, normal:vec3<f32>, incoming:vec3<f32>) -> vec4<f32> {
-    if optics.reflection.x<0.5 || incoming.y>=0.0 || dot(normal,-incoming)<=0.0 {
-        return vec4(0.0);
-    }
-    let maximum=optics.reflection.y;
-    let hit=trace_screen(origin,reflect(incoming,normal),maximum,true);
-    if !hit.valid { return vec4(0.0); }
-    let size=vec2<f32>(textureDimensions(scene_depth));
-    let pixel=vec2<f32>(hit.pixel)+vec2(0.5);
-    let edge=min(min(pixel.x,pixel.y),min(size.x-pixel.x,size.y-pixel.y));
-    let edge_weight=smoothstep(0.0,max(optics.reflection.w,0.0001),edge);
-    let confidence=optics.reflection.z*edge_weight*(1.0-smoothstep(0.8*maximum,maximum,hit.distance));
-    return vec4(textureLoad(scene_color,hit.pixel,0).rgb,confidence);
-}
 @vertex
 fn sky_vertex(@builtin(vertex_index) index: u32) -> SkyOut {
     let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
@@ -337,6 +286,7 @@ fn foam_material_phase(material: vec2<f32>, world: vec3<f32>, base: vec3<f32>, v
 
 @fragment
 fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
+    if input.local_grid == 2u { return lake_water(input); }
     if shore.model.x>0.5 && shore_active(shore) && input.local_grid==0u {
         if all(input.base>=shore.domain.xy) && all(input.base<=shore.domain.xy+shore.domain.zw) { discard; }
     }
@@ -374,126 +324,26 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     // Water and lifted foam share the detail slope, not their base normals.
     let detail_slope = shore_detail_slope(input.grid, input.world, local_depth, detail_footprint);
     let normal = apply_detail_slope(normalize(input.normal), detail_slope);
-    let incoming=normalize(input.world-camera.eye.xyz);
-    let refracted=refract(incoming,normal,1.0/optics.refraction.y);
-    var refracted_valid=false;
-    var water_ray=incoming;
-    let pixel = vec2<i32>(input.position.xy);
-    let size = vec2<f32>(textureDimensions(scene_depth));
-    let depth = textureLoad(scene_depth, pixel, 0);
-    // A missing opaque hit is treated as an optically deep, finite water ray.
-    // Avoid infinities so zero extinction and a nonzero source remain defined.
-    var distance = 1000.0;
-    var bg = vec3(0.0);
-    var receiver=vec3(0.0);
-    var receiver_valid=false;
-    if depth < 1.0 {
-        let uv = input.position.xy / size;
-        let ndc = vec3(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
-        let reconstructed = camera.inverse_view_projection * vec4(ndc, 1.0);
-        let bottom = reconstructed.xyz / reconstructed.w;
-        receiver=bottom; receiver_valid=true;
-        distance = length(bottom - input.world);
-        bg = textureLoad(scene_color, pixel, 0).rgb;
-    }
-    if optics.refraction.x>0.5 && camera.eye.y>input.world.y && dot(incoming,normal)<0.0 {
-        if optics.refraction.x>1.5 {
-            if receiver_valid {
-                let hit=fast_refraction_hit(input.world,receiver,incoming,refracted,normal);
-                if hit.valid {
-                    let edge=min(min(hit.uv.x*size.x,hit.uv.y*size.y),min((1.0-hit.uv.x)*size.x,(1.0-hit.uv.y)*size.y));
-                    let confidence=smoothstep(0.0,4.0,edge);
-                    bg=mix(bg,fast_refraction_color(hit.uv,input.position.z,bg),confidence);
-                    distance=mix(distance,hit.distance,confidence);
-                    water_ray=normalize(mix(incoming,normalize(hit.world-input.world),confidence));
-                    receiver=hit.world; receiver_valid=true; refracted_valid=true;
-                }
-            }
-        } else if shore.model.x>0.5 {
-            let hit=trace_screen(input.world,refracted,optics.refraction.z,false);
-            if hit.valid {
-                let uv=(vec2<f32>(hit.pixel)+vec2(0.5))/size;
-                let edge=min(min(uv.x*size.x,uv.y*size.y),min((1.0-uv.x)*size.x,(1.0-uv.y)*size.y));
-                let confidence=smoothstep(0.0,4.0,edge);
-                bg=mix(bg,textureLoad(scene_color,hit.pixel,0).rgb,confidence);
-                distance=mix(distance,hit.distance,confidence);
-                water_ray=normalize(mix(incoming,refracted,confidence));
-                receiver=screen_world(hit.pixel,textureLoad(scene_depth,hit.pixel,0));
-                receiver_valid=true; refracted_valid=true;
-            }
-        } else {
-            let path=water_bed_intersection(input.world,refracted);
-            let hit=input.world+refracted*max(path,0.0);
-            let clip=camera.view_projection*vec4(hit,1.0);
-            if path>0.0 && path<=optics.refraction.z && clip.w>0.0 {
-                let projected=clip.xyz/clip.w;
-                let uv=vec2(projected.x*0.5+0.5,0.5-projected.y*0.5);
-                if all(uv>=vec2(0.0)) && all(uv<vec2(1.0)) && projected.z>=0.0 && projected.z<=1.0 {
-                    let hit_pixel=vec2<i32>(uv*size);
-                    let hit_depth=textureLoad(scene_depth,hit_pixel,0);
-                    let hit_uv=(vec2<f32>(hit_pixel)+vec2(0.5))/size;
-                    let reconstructed=camera.inverse_view_projection*vec4(hit_uv.x*2.0-1.0,1.0-hit_uv.y*2.0,hit_depth,1.0);
-                    let opaque=reconstructed.xyz/reconstructed.w;
-                    let adjacent=camera.inverse_view_projection*vec4(hit_uv.x*2.0-1.0+2.0/size.x,1.0-hit_uv.y*2.0+2.0/size.y,hit_depth,1.0);
-                    let pixel_footprint=length(adjacent.xyz/adjacent.w-opaque);
-                    // A visible foreground object must never be stretched onto the
-                    // analytic seabed. Missing/offscreen hits retain the original ray.
-                    if hit_depth<1.0 && abs(opaque.y-water_bed_height(opaque.xz))<0.04
-                        && length(opaque-hit)<max(0.04,pixel_footprint*1.5) {
-                        let edge=min(min(uv.x*size.x,uv.y*size.y),min((1.0-uv.x)*size.x,(1.0-uv.y)*size.y));
-                        let confidence=smoothstep(0.0,4.0,edge);
-                        bg=mix(bg,textureLoad(scene_color,hit_pixel,0).rgb,confidence);
-                        distance=mix(distance,path,confidence);
-                        water_ray=normalize(mix(incoming,refracted,confidence));
-                        receiver=opaque; receiver_valid=true;
-                        refracted_valid=true;
-                    }
-                }
-            }
-        }
-    }
+    var path=water_path(input,normal,true);
     var model_light=vec3(0.0);
-    if shore.model.x>0.5 && optics.caustics.x>0.5 && receiver_valid {
+    if shore.model.x>0.5 && optics.caustics.x>0.5 && path.receiver_valid {
+        let receiver=path.receiver;
         let grid=shore.domain.zw/shore.options.z;
         let bed=model_terrain(receiver.xz,shore).x;
         let receiver_mask=1.0-smoothstep(max(0.04,min(grid.x,grid.y)*0.3),max(0.08,min(grid.x,grid.y)*0.8),abs(receiver.y-bed));
         let wave=surface((receiver.xz/camera.ocean.y+vec2(0.5))*camera.ocean.x,vec2(0.0)).y;
         if receiver.y<wave-0.015 {
             model_light=caustic_light(receiver,wave)*receiver_mask;
-            // Photogrammetry already contains baked lighting. Add the focused
-            // excess instead of multiplying a second directional light into it.
-            bg*=vec3(1.0)+0.65*optics.caustics.y*max(model_light-flat_water_light(receiver,wave),vec3(0.0));
+            // Photogrammetry already contains baked lighting; add only focused excess.
+            path.background*=vec3(1.0)+0.65*optics.caustics.y*max(model_light-flat_water_light(receiver,wave),vec3(0.0));
         }
     }
-    let ray = water_ray;
-    let manual = integrate_medium(bg, optics.sigma_depth.xyz, optics.source_view.xyz, distance);
-    let skylight = integrate_skylight(input.world, ray, distance);
-    let medium = MediumResult(manual.transmittance, manual.background, manual.scattering + skylight);
-    let mode = u32(optics.source_view.w);
-    if mode == 15u {
-        let ssr=screen_reflection(input.world,normal,incoming);
-        return vec4(ssr.rgb*ssr.a,1.0);
-    }
-    if mode == 12u {
-        if shore.model.x>0.5 { return vec4(model_light,1.0); }
-        return vec4(select(vec3(0.0),bg,optics.caustics.x>0.5),1.0);
-    }
-    if mode == 13u { return vec4(water_ray*0.5+vec3(0.5),1.0); }
-    if mode == 14u {
-        if optics.refraction.x<0.5 { return vec4(0.2,0.2,0.2,1.0); }
-        return vec4(select(vec3(0.8,0.05,0.02),vec3(0.02,0.8,0.1),refracted_valid),1.0);
-    }
-    if mode == 1u { return vec4(vec3(clamp(distance / optics.options.x, 0.0, 1.0)), 1.0); }
-    if mode == 2u { return vec4(medium.transmittance, 1.0); }
-    if mode == 3u { return vec4(medium.background, 1.0); }
-    if mode == 4u { return vec4(medium.scattering, 1.0); }
-    if mode == 5u { return vec4(bg * (vec3(1.0) - medium.transmittance), 1.0); }
-    if mode == 6u { return vec4(bg, 1.0); }
-    if mode == 7u { return vec4(medium.background + medium.scattering, 1.0); }
-    if mode == 8u { return vec4(sky_source_at(input.world + ray * distance * 0.5), 1.0); }
-    if mode == 9u { return vec4(skylight, 1.0); }
-    if mode == 10u { return vec4(manual.scattering, 1.0); }
-    if mode == 11u { return vec4(optics.source_view.xyz + sky_source_at(input.world + ray * distance * 0.5), 1.0); }
+    let caustic_debug=select(select(vec3(0.0),path.background,optics.caustics.x>0.5),model_light,shore.model.x>0.5);
+    let lighting=shade_water(input.world,normal,path,caustic_debug);
+    if optics.source_view.w>0.5 { return vec4(lighting.color,1.0); }
+    let medium=lighting.medium;
+    let reflected=lighting.reflected;
+    let fresnel=lighting.fresnel;
     var foam_data = sample_foam(input.grid);
     foam_data.x = 1.0 - (1.0 - foam_data.x * ocean_weight(input.world.xz, shore)) * (1.0 - foam_density_level(shore_history.x,shore));
     if camera.misc.z > 1.5 { return vec4(vec3(foam_data.x), 1.0); }
@@ -505,16 +355,7 @@ fn water_fragment(input: WaterOut) -> @location(0) vec4<f32> {
     }
 
     let view = normalize(camera.eye.xyz - input.world);
-    let facing = max(dot(normal, view), 0.0);
-    let fresnel = water_fresnel(facing) * optics.options.y;
-    let reflection_ray = reflect(-view, normal);
-    let ssr=screen_reflection(input.world,normal,incoming);
-    // The sky's visible sun disc is represented here by direct BRDF lighting.
-    let reflected=mix(sky_with_halo(reflection_ray),ssr.rgb,ssr.a);
-    var color = mix(medium.background + medium.scattering, reflected, fresnel);
-    // Scene-relative irradiance for the current SDR output.
-    let sun_irradiance = vec3(1.0, 0.86, 0.64) * 0.7;
-    color += sun_irradiance * water_sun_response(normal, view, camera.sun.xyz) * optics.options.y;
+    var color = lighting.color;
     // Foam is matte and scatters light; mix after water highlights/reflections.
     // World coordinates prevent repeated shoreline patterns on the 3x3 tiles.
     var detail = foam_detail(input.grid);

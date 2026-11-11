@@ -3,6 +3,7 @@ pub(in crate::ocean) mod collider;
 pub(in crate::ocean) mod configuration;
 mod controls;
 mod foam_material;
+pub(in crate::ocean) mod lake;
 pub(in crate::ocean) mod model;
 mod nearshore;
 mod offshore;

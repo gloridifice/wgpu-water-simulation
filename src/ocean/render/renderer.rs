@@ -7,10 +7,7 @@ use crate::ocean::{
     camera::CameraUniform,
     gpu::context::{Gpu, buffer},
     parameters::optics::OpticsConfig,
-    simulation::{
-        nearshore::Shore,
-        offshore::{Ocean, foam::Foam},
-    },
+    simulation::{nearshore::Shore, offshore::foam::Foam, spectral::FftWaves as Ocean},
 };
 
 pub struct Renderer {
@@ -18,6 +15,9 @@ pub struct Renderer {
     sky: wgpu::RenderPipeline,
     water: wgpu::RenderPipeline,
     local_water: wgpu::RenderPipeline,
+    lake_water: wgpu::RenderPipeline,
+    lake: super::lake::LakeRenderer,
+    lake_layout: wgpu::BindGroupLayout,
     local_indices: wgpu::Buffer,
     model_active: bool,
     pub(crate) model_assets: Option<std::sync::Arc<crate::ocean::render::model::ModelAssets>>,
@@ -329,21 +329,34 @@ impl Renderer {
                 },
             ],
         });
+        let lake_layout = crate::ocean::simulation::animated_lake::AnimatedLake::layout(device);
+        let lake = super::lake::LakeRenderer::new(
+            gpu,
+            Default::default(),
+            &lake_layout,
+            &uniform,
+            &optics,
+            format,
+            ocean,
+        )
+        .expect("disabled lake resources");
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ocean render pipeline"),
-            bind_group_layouts: &[Some(&layout)],
+            bind_group_layouts: &[Some(&layout), Some(&lake_layout)],
             immediate_size: 0,
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ocean and sky"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}\n{}\n{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}\n{}\n{}\n{}",
                     include_str!("shaders/optics.wgsl"),
                     include_str!("shaders/sky.wgsl"),
                     include_str!("shaders/skylight.wgsl"),
                     concat!(
                         include_str!("shaders/scene_types.wgsl"),
+                        "\n",
+                        include_str!("../simulation/spectral/shaders/sample.wgsl"),
                         "\n",
                         include_str!("shaders/surface.wgsl"),
                         "\n",
@@ -355,10 +368,15 @@ impl Renderer {
                         "\n",
                         include_str!("shaders/fast_refraction.wgsl"),
                         "\n",
-                        include_str!("shaders/render.wgsl")
+                        include_str!("shaders/render.wgsl"),
+                        "\n",
+                        include_str!("shaders/lake_sample.wgsl"),
+                        "\n",
+                        include_str!("shaders/lake_water.wgsl")
                     ),
                     include_str!("../simulation/nearshore/shaders/shore.wgsl"),
-                    include_str!("../simulation/nearshore/shaders/shore_read.wgsl")
+                    include_str!("../simulation/nearshore/shaders/shore_read.wgsl"),
+                    super::water::SHADER
                 )
                 .into(),
             ),
@@ -411,6 +429,7 @@ impl Renderer {
         let sky = pipeline("sky_vertex", "sky_fragment", false);
         let water = pipeline("water_vertex", "water_fragment", true);
         let local_water = pipeline("local_water_vertex", "water_fragment", true);
+        let lake_water = pipeline("lake_vertex", "water_fragment", true);
         let mesh = super::mesh::OceanMesh::new(device, ocean.config);
         let local_indices = super::mesh::square_indices(device, shore.resolution);
         Self {
@@ -418,6 +437,9 @@ impl Renderer {
             sky,
             water,
             local_water,
+            lake_water,
+            lake,
+            lake_layout,
             local_indices,
             model_active: false,
             model_assets: None,
@@ -508,6 +530,26 @@ impl Renderer {
         } else {
             format
         };
+        if optics.lake.enabled {
+            let old = self.lake.simulation.config;
+            if !old.enabled
+                || old.terrain != optics.lake.terrain
+                || old.mode != optics.lake.mode
+                || old.wave_seed != optics.lake.wave_seed
+            {
+                let next = super::lake::LakeRenderer::new(
+                    gpu,
+                    optics.lake,
+                    &self.lake_layout,
+                    &self.uniform,
+                    &self.optics,
+                    format,
+                    &self.lake.simulation.spectrum,
+                )?;
+                self.lake = next;
+            }
+            return Ok(());
+        }
         optics.model.validate()?;
         if optics.model.enabled && self.model_assets.is_none() {
             self.model_assets = Some(std::sync::Arc::new(
@@ -538,6 +580,7 @@ impl Renderer {
         if let Some(model) = &mut self.seabed.model {
             model.update(gpu, optics, self.shore.resolution);
         }
+        self.lake.simulation.deactivate(gpu);
         Ok(())
     }
 
@@ -646,6 +689,35 @@ impl Renderer {
         });
     }
 
+    pub fn encode_lake(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        dt: f64,
+        config: crate::ocean::parameters::lake::LakeConfig,
+        commands: crate::ocean::simulation::animated_lake::LakeCommands,
+    ) -> f64 {
+        if commands.reset {
+            self.lake.simulation.waves.reset();
+        }
+        self.lake
+            .simulation
+            .encode(gpu, encoder, dt, config, commands.emit, commands.clear);
+        self.lake.simulation.waves.time
+    }
+
+    pub fn lake_config(&self) -> crate::ocean::parameters::lake::LakeConfig {
+        self.lake.simulation.config
+    }
+
+    pub fn lake_status(&self) -> (usize, u64, u32) {
+        (
+            self.lake.simulation.waves.active_count(),
+            self.lake.simulation.waves.dropped,
+            self.lake.simulation.rocks,
+        )
+    }
+
     /// Consume GPU-only emission after Shore::encode, including snapshot warmup steps.
     pub fn encode_spray(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder) {
         let Some(source) = &self.shore.spray else {
@@ -686,12 +758,23 @@ impl Renderer {
                 optics.view != 0
                     || (optics.swe_enabled()
                         && (optics.shore.view != 0 || optics.shore.foam_material_view != 0))
-                    || (optics.spray.enabled && optics.spray.debug),
+                    || (!optics.lake.enabled && optics.spray.enabled && optics.spray.debug)
+                    || (optics.lake.enabled && optics.lake.view != 0),
             );
         }
         self.shore.configure(gpu, optics);
-        self.caustics.configure(optics);
-        let screen_refraction = optics.model.enabled
+        let mut effective = *optics;
+        if optics.lake.enabled {
+            effective.caustics = false;
+            if effective.refraction_method
+                == crate::ocean::parameters::optics::OpticalMethod::Physical
+            {
+                effective.refraction = false;
+            }
+        }
+        self.caustics.configure(&effective);
+        let screen_refraction = !optics.lake.enabled
+            && optics.model.enabled
             && optics.refraction
             && optics.refraction_method
                 == crate::ocean::parameters::optics::OpticalMethod::Physical;
@@ -702,7 +785,7 @@ impl Renderer {
         self.needs_screen_depth
             .set(screen_refraction || screen_reflection);
         self.sky_lut.update(gpu, &optics.sky);
-        let value: OpticsUniform = optics.uniform();
+        let value: OpticsUniform = effective.uniform();
         gpu.queue
             .write_buffer(&self.optics, 0, bytemuck::bytes_of(&value));
     }
@@ -737,9 +820,17 @@ impl Renderer {
         mark(encoder, 0);
         self.sky_lut.encode(encoder);
         mark(encoder, 1);
-        self.caustics.encode(encoder, timing);
+        let lake_active = self.lake.simulation.config.enabled;
+        if !lake_active {
+            self.caustics.encode(encoder, timing);
+        }
         mark(encoder, 4);
-        self.seabed.encode(encoder);
+        if lake_active {
+            self.lake
+                .encode(encoder, &self.seabed.color, &self.seabed.depth);
+        } else {
+            self.seabed.encode(encoder);
+        }
         mark(encoder, 5);
         if self.needs_screen_depth.get() {
             self.screen_depth.encode(encoder);
@@ -774,30 +865,42 @@ impl Renderer {
         });
         pass.set_bind_group(0, &self.bind, &[]);
         pass.set_pipeline(&self.sky);
+        pass.set_bind_group(1, &self.lake.simulation.bind, &[]);
         pass.draw(0..3, 0..1);
-        self.seabed.draw(&mut pass);
+        if lake_active {
+            self.lake.draw(&mut pass, false);
+        } else {
+            self.seabed.draw(&mut pass);
+        }
         if let Some(t) = timing {
             t.draw_mark(&mut pass, 7);
         }
         pass.set_bind_group(0, &self.bind, &[]);
-        pass.set_pipeline(&self.water);
-        pass.set_vertex_buffer(0, self.mesh.vertices.slice(..));
-        pass.set_index_buffer(self.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-        // Both topologies share periodic boundary vertices across the 3×3 tiles.
-        pass.draw_indexed(0..self.mesh.index_count, 0, 0..9);
-        if self.model_active {
-            pass.set_pipeline(&self.local_water);
-            pass.set_index_buffer(self.local_indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..6 * self.shore.resolution.pow(2), 0, 0..1);
+        pass.set_bind_group(1, &self.lake.simulation.bind, &[]);
+        if lake_active {
+            pass.set_pipeline(&self.lake_water);
+            pass.set_index_buffer(self.lake.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..6 * (self.lake.simulation.n - 1).pow(2), 0, 0..1);
+        } else {
+            pass.set_pipeline(&self.water);
+            pass.set_vertex_buffer(0, self.mesh.vertices.slice(..));
+            pass.set_index_buffer(self.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            // Both topologies share periodic boundary vertices across the 3×3 tiles.
+            pass.draw_indexed(0..self.mesh.index_count, 0, 0..9);
+            if self.model_active {
+                pass.set_pipeline(&self.local_water);
+                pass.set_index_buffer(self.local_indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..6 * self.shore.resolution.pow(2), 0, 0..1);
+            }
         }
         if let Some(t) = timing {
             t.draw_mark(&mut pass, 8);
         }
-        if let Some(model) = &self.seabed.model {
+        if !lake_active && let Some(model) = &self.seabed.model {
             model.draw_bounds(&mut pass);
         }
         drop(pass);
-        if let (Some(particles), Some(source)) = (&self.spray, &self.shore.spray) {
+        if !lake_active && let (Some(particles), Some(source)) = (&self.spray, &self.shore.spray) {
             particles.render(encoder, scene_target, source);
         }
         mark(encoder, 9);

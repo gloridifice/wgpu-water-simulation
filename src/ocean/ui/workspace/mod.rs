@@ -36,14 +36,16 @@ pub enum WorkspaceId {
     Scene,
     Shallow,
     Offshore,
+    AnimatedSdf,
     Shading,
     Configurations,
 }
 impl WorkspaceId {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Scene,
         Self::Shallow,
         Self::Offshore,
+        Self::AnimatedSdf,
         Self::Shading,
         Self::Configurations,
     ];
@@ -51,10 +53,17 @@ impl WorkspaceId {
         Self::ALL.iter().position(|x| *x == self).unwrap()
     }
     pub fn name(self) -> &'static str {
-        ["场景", "浅水", "远海", "着色", "配置"][self.index()]
+        ["场景", "浅水", "远海", "动画 SDF 波纹", "着色", "配置"][self.index()]
     }
     pub fn key(self) -> &'static str {
-        ["scene", "shallow", "offshore", "shading", "configurations"][self.index()]
+        [
+            "scene",
+            "shallow",
+            "offshore",
+            "animated_sdf",
+            "shading",
+            "configurations",
+        ][self.index()]
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -62,6 +71,8 @@ impl WorkspaceId {
 pub enum Panel {
     View,
     Scene,
+    Lake,
+    AnimatedSdf,
     Model,
     Colliders,
     Shore,
@@ -82,9 +93,11 @@ pub enum Panel {
     Unknown,
 }
 impl Panel {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 20] = [
         Self::View,
         Self::Scene,
+        Self::Lake,
+        Self::AnimatedSdf,
         Self::Model,
         Self::Colliders,
         Self::Shore,
@@ -106,6 +119,8 @@ impl Panel {
         match self {
             Self::View => "渲染视图",
             Self::Scene => "场景与地形",
+            Self::Lake => "湖泊地形",
+            Self::AnimatedSdf => "动画 SDF 波纹",
             Self::Model => "模型与区域",
             Self::Colliders => "碰撞体",
             Self::Shore => "SWE 与输入",
@@ -127,6 +142,10 @@ impl Panel {
     }
     pub fn available(self, optics: &OpticsConfig) -> bool {
         match self {
+            Self::Lake => optics.lake.enabled,
+            Self::Model | Self::Shore | Self::OffshoreFoam | Self::FoamMaterial | Self::Surface => {
+                !optics.lake.enabled
+            }
             Self::Colliders | Self::ShoreFoam | Self::Spray => optics.swe_enabled(),
             Self::SprayAppearance => optics.swe_enabled() && optics.spray.enabled,
             Self::Unknown => false,
@@ -149,9 +168,14 @@ pub fn default_layout(id: WorkspaceId) -> Layout {
         )
     };
     let parameters = match id {
-        WorkspaceId::Scene => stacked(Panel::Scene, vec![Panel::Model, Panel::Colliders], 0.32),
+        WorkspaceId::Scene => stacked(
+            Panel::Scene,
+            vec![Panel::Lake, Panel::Model, Panel::Colliders],
+            0.32,
+        ),
         WorkspaceId::Shallow => stacked(Panel::Shore, vec![Panel::ShoreFoam, Panel::Spray], 0.48),
         WorkspaceId::Offshore => stacked(Panel::Ocean, vec![Panel::OffshoreFoam], 0.68),
+        WorkspaceId::AnimatedSdf => Layout::tabs(vec![Panel::AnimatedSdf]),
         WorkspaceId::Shading => Layout::split(
             Axis::Vertical,
             0.58,
@@ -178,7 +202,7 @@ pub fn default_layout(id: WorkspaceId) -> Layout {
 }
 pub struct Workspaces {
     pub active: WorkspaceId,
-    pub items: [Workspace; 5],
+    pub items: [Workspace; WorkspaceId::ALL.len()],
 }
 impl Default for Workspaces {
     fn default() -> Self {

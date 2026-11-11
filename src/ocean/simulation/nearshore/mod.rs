@@ -1,7 +1,17 @@
 //! Local hydrostatic-reconstruction SWE, foam transport and ground memory.
 use crate::ocean::gpu::context::Gpu;
 use crate::ocean::parameters::optics::OpticsConfig;
-use crate::ocean::simulation::offshore::Ocean;
+use crate::ocean::simulation::spectral::FftWaves as Ocean;
+
+impl From<&crate::ocean::parameters::shore::ShoreConfig> for super::spectral::InputFilter {
+    fn from(config: &crate::ocean::parameters::shore::ShoreConfig) -> Self {
+        Self {
+            cutoff: config.filter_cutoff,
+            transition: config.filter_transition,
+            enabled: config.filter_enabled,
+        }
+    }
+}
 use wgpu::util::DeviceExt;
 
 pub use crate::ocean::parameters::shore::*;

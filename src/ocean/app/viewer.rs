@@ -6,9 +6,9 @@ use crate::ocean::{
     parameters::ocean::OceanConfig,
     render::Renderer,
     settings::{ConfigurationLibrary, SavedSettings, SettingsStore},
-    simulation::offshore::{
-        Ocean,
-        foam::{Foam, FoamStep},
+    simulation::{
+        offshore::foam::{Foam, FoamStep},
+        spectral::FftWaves as Ocean,
     },
     ui::{
         gui::Gui,
@@ -155,6 +155,8 @@ impl State {
         if settings.ocean != self.ocean.config {
             self.rebuild_ocean(settings.ocean)?;
         }
+        self.renderer
+            .prepare_scene(&self.gpu, &settings.optics, self.config.format)?;
         self.gui.draft = settings.draft;
         self.gui.foam_settings = settings.foam;
         self.gui.optics = settings.optics;
@@ -243,7 +245,11 @@ impl State {
         if let Some(config) = apply {
             let distance_scale = config.length / self.ocean.config.length;
             match self.rebuild_ocean(config) {
-                Ok(()) => self.camera.distance *= distance_scale,
+                Ok(()) => {
+                    if !self.gui.optics.lake.enabled {
+                        self.camera.distance *= distance_scale;
+                    }
+                }
                 Err(error) => self.gui.error = Some(error.to_string()),
             }
         }
@@ -259,6 +265,10 @@ impl State {
             self.renderer
                 .resize(&self.gpu.device, self.render_size[0], self.render_size[1]);
         }
+        if let Err(error) = self.gui.optics.lake.validate() {
+            self.gui.lake_panel.error = Some(error);
+            self.gui.optics.lake = self.renderer.lake_config();
+        }
         self.renderer.set_shore_resolution(
             &self.gpu,
             &self.ocean,
@@ -272,6 +282,9 @@ impl State {
         {
             self.gui.model_panel.error = Some(error.to_string());
             self.gui.optics.model = self.applied_model;
+            self.gui.lake_panel.error = Some(error.to_string());
+            self.gui.lake_panel.reset = false;
+            self.gui.optics.lake = self.renderer.lake_config();
             // Re-establish the previous valid scene after a failed asset load.
             if let Err(error) =
                 self.renderer
@@ -298,41 +311,68 @@ impl State {
         if timed_frame {
             self.frame_timer.as_ref().unwrap().mark(&mut encoder, 0);
         }
-        self.ocean
-            .encode_filtered(&self.gpu, &mut encoder, self.time, &self.gui.optics.shore);
+        let lake_active = self.gui.optics.lake.enabled;
+        if !lake_active {
+            self.ocean
+                .encode_filtered(&self.gpu, &mut encoder, self.time, &self.gui.optics.shore);
+        }
         let camera = self.camera.uniform(
             self.ocean.config,
             self.render_size[0] as f32 / self.render_size[1] as f32,
         );
-        let reset = std::mem::take(&mut self.gui.clear_foam) || self.time < self.foam_time;
+        let lake_reset = std::mem::take(&mut self.gui.lake_panel.reset);
+        let reset =
+            std::mem::take(&mut self.gui.clear_foam) || self.time < self.foam_time || lake_reset;
+        if lake_active && reset {
+            self.time = 0.0;
+        }
         let dt = if reset {
             0.0
         } else {
             (self.time - self.foam_time).max(0.0)
         };
-        self.foam_field.encode(
-            &self.gpu,
-            &mut encoder,
-            FoamStep::new(
-                self.ocean.config.resolution,
-                self.ocean.config.length,
-                camera.ocean[2] * camera.ocean[3],
-                dt,
-                self.gui.foam_settings,
+        if lake_active {
+            self.time = self.renderer.encode_lake(
+                &self.gpu,
+                &mut encoder,
+                if self.paused || reset {
+                    0.0
+                } else {
+                    f64::from(elapsed) * f64::from(self.gui.speed)
+                },
+                self.gui.optics.lake,
+                crate::ocean::simulation::animated_lake::LakeCommands {
+                    emit: std::mem::take(&mut self.gui.lake_panel.emit),
+                    clear: std::mem::take(&mut self.gui.lake_panel.clear),
+                    reset,
+                },
+            ) as f32;
+            self.gui.lake_panel.status = self.renderer.lake_status();
+        } else {
+            self.foam_field.encode(
+                &self.gpu,
+                &mut encoder,
+                FoamStep::new(
+                    self.ocean.config.resolution,
+                    self.ocean.config.length,
+                    camera.ocean[2] * camera.ocean[3],
+                    dt,
+                    self.gui.foam_settings,
+                    reset,
+                ),
+            );
+            self.renderer.shore.encode(
+                &self.gpu,
+                &mut encoder,
+                &self.gui.optics,
+                self.time,
                 reset,
-            ),
-        );
+                camera.ocean[3],
+            );
+            self.renderer.encode_spray(&self.gpu, &mut encoder);
+            self.gui.spray_error = self.renderer.shore.spray_error.clone();
+        }
         self.foam_time = self.time;
-        self.renderer.shore.encode(
-            &self.gpu,
-            &mut encoder,
-            &self.gui.optics,
-            self.time,
-            reset,
-            camera.ocean[3],
-        );
-        self.renderer.encode_spray(&self.gpu, &mut encoder);
-        self.gui.spray_error = self.renderer.shore.spray_error.clone();
         let simulation = simulation_start.elapsed().as_secs_f64() * 1000.0;
         let render_start = Instant::now();
         self.renderer
@@ -414,7 +454,9 @@ impl common::app::WindowScene for State {
                         self.camera.gain = (self.camera.gain - 0.1).max(0.1)
                     }
                     PhysicalKey::Code(KeyCode::KeyR) => {
-                        self.camera = if self.gui.optics.beach {
+                        self.camera = if self.gui.optics.lake.enabled {
+                            Camera::lake(self.gui.optics.lake.terrain.radius)
+                        } else if self.gui.optics.beach {
                             Camera::beach(self.ocean.config.length)
                         } else {
                             Camera::new(self.ocean.config.length)

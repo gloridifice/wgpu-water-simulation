@@ -4,5 +4,5 @@ pub(in crate::ocean) mod timer;
 pub use crate::ocean::Error;
 pub use crate::ocean::camera::CameraUniform;
 pub use crate::ocean::render::Renderer;
-pub use crate::ocean::simulation::offshore::Ocean;
+pub use crate::ocean::simulation::spectral::FftWaves as Ocean;
 pub use context::Gpu;

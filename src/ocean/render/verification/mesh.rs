@@ -6,7 +6,7 @@ use crate::ocean::{
     gpu::context::Gpu,
     parameters::{ocean::OceanConfig, optics::OpticsConfig},
     render::Renderer,
-    simulation::offshore::{Ocean, foam::Foam},
+    simulation::{offshore::foam::Foam, spectral::FftWaves as Ocean},
 };
 use glam::{Mat4, Vec4};
 

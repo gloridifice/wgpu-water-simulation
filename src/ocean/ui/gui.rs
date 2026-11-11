@@ -86,6 +86,7 @@ pub struct Gui {
     pub performance: crate::ocean::ui::performance::Performance,
     pub swe_domain: [f32; 4],
     pub model_panel: crate::ocean::ui::panels::model::ModelPanel,
+    pub lake_panel: crate::ocean::ui::panels::lake::LakePanel,
     pub error: Option<String>,
     pub spray_error: Option<String>,
     pub foam_settings: FoamConfig,
@@ -99,7 +100,7 @@ pub struct Gui {
     pub load_configuration: Option<SavedSettings>,
     pub workspaces: Workspaces,
     pub workspace_store: Option<WorkspaceStore>,
-    icons: [egui::Image<'static>; 5],
+    icons: [egui::Image<'static>; WorkspaceId::ALL.len()],
     dock_style: egui_dock::Style,
     show_dock_padding: bool,
     pub viewport_size: [u32; 2],
@@ -136,6 +137,7 @@ impl Gui {
             include_str!("../../../assets/ui/workspaces/scene.svg"),
             include_str!("../../../assets/ui/workspaces/shallow.svg"),
             include_str!("../../../assets/ui/workspaces/offshore.svg"),
+            include_str!("../../../assets/ui/workspaces/animated-sdf.svg"),
             include_str!("../../../assets/ui/workspaces/shading.svg"),
             include_str!("../../../assets/ui/workspaces/configurations.svg"),
         ];
@@ -154,6 +156,7 @@ impl Gui {
             performance: crate::ocean::ui::performance::Performance::default(),
             swe_domain: [-32.0, -192.0, 64.0, 384.0],
             model_panel: crate::ocean::ui::panels::model::ModelPanel::default(),
+            lake_panel: Default::default(),
             error: None,
             spray_error: None,
             foam_settings: FoamConfig::default(),
@@ -228,7 +231,11 @@ impl Gui {
                                         ui.close();
                                     }
                                     if ui.button("重置相机").clicked() {
-                                        *camera = Camera::new(current.length);
+                                        *camera = if self.optics.lake.enabled {
+                                            Camera::lake(self.optics.lake.terrain.radius)
+                                        } else {
+                                            Camera::new(current.length)
+                                        };
                                         ui.close();
                                     }
                                     if self.optics.beach && ui.button("沙滩相机").clicked() {
@@ -421,8 +428,16 @@ impl Gui {
                             ui,
                             &mut PanelViewer(|panel, ui: &mut egui::Ui| {
                                 if panel == Panel::View {
-                                    self.viewport_size =
-                                        ocean_view(ui, self.viewport.id, camera, current.length);
+                                    self.viewport_size = ocean_view(
+                                        ui,
+                                        self.viewport.id,
+                                        camera,
+                                        if self.optics.lake.enabled {
+                                            self.optics.lake.terrain.radius * 3.0
+                                        } else {
+                                            current.length
+                                        },
+                                    );
                                     return;
                                 }
                                 ui.push_id((active, panel), |ui| {
@@ -440,6 +455,13 @@ impl Gui {
                     workspace.capture();
                 });
         });
+        if std::mem::take(&mut self.lake_panel.open) {
+            workspaces.current().add(Panel::Lake);
+        }
+        if std::mem::take(&mut self.lake_panel.open_ripples) {
+            workspaces.active = WorkspaceId::AnimatedSdf;
+            workspaces.current().add(Panel::AnimatedSdf);
+        }
         self.workspaces = workspaces;
         (output, apply)
     }
@@ -494,6 +516,8 @@ impl Gui {
     ) {
         match panel {
             Panel::Scene => self.scene_panel(ui, camera, current.length),
+            Panel::Lake => self.lake_panel(ui),
+            Panel::AnimatedSdf => self.animated_sdf_panel(ui),
             Panel::Model => self
                 .model_panel
                 .show(ui, &mut self.optics, camera, current.length),

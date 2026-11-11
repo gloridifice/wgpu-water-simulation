@@ -7,8 +7,8 @@ use crate::ocean::parameters::ocean::OceanConfig;
 use crate::ocean::parameters::optics::OpticsConfig;
 use crate::ocean::render::Renderer;
 use crate::ocean::render::optics;
-use crate::ocean::simulation::offshore::Ocean;
 use crate::ocean::simulation::offshore::foam::Foam;
+use crate::ocean::simulation::spectral::FftWaves as Ocean;
 use glam::{Mat4, Vec4};
 
 fn image(

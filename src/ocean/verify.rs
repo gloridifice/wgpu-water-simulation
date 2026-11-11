@@ -9,6 +9,8 @@ use super::{
 pub async fn run() -> Result<(), Error> {
     let gpu = Gpu::new(&wgpu::Instance::default(), None).await?;
     eprintln!("GPU verification: {}", gpu.name);
+    super::simulation::animated_lake::verification::run(&gpu)?;
+    verification::lake::run(&gpu)?;
     offshore::verification::verify_fft(&gpu)?;
     sand::verify(&gpu)?;
     offshore::verification::verify_coupling(&gpu)?;
@@ -22,6 +24,13 @@ pub async fn run() -> Result<(), Error> {
     verification::optics::run(&gpu)?;
     verification::skylight::run(&gpu)?;
     Ok(())
+}
+
+pub async fn lake() -> Result<(), Error> {
+    let gpu = Gpu::new(&wgpu::Instance::default(), None).await?;
+    eprintln!("GPU lake verification: {}", gpu.name);
+    super::simulation::animated_lake::verification::run(&gpu)?;
+    verification::lake::run(&gpu)
 }
 
 /// Focused production raster checks for planar and model water lighting.

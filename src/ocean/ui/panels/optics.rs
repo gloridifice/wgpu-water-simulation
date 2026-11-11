@@ -114,7 +114,11 @@ impl Gui {
 }
 
 pub fn depth_graph(ui: &mut egui::Ui, optics: &crate::ocean::parameters::optics::OpticsConfig) {
-    let depth = optics.depth;
+    let depth = if optics.lake.enabled {
+        optics.lake.terrain.depth
+    } else {
+        optics.depth
+    };
     let colors = [
         egui::Color32::LIGHT_RED,
         egui::Color32::LIGHT_GREEN,

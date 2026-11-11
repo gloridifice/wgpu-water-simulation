@@ -1,10 +1,12 @@
 mod caustics;
+mod lake;
 mod mesh;
 pub mod optics;
 mod post_process;
 mod renderer;
 mod screen_depth;
 mod timing;
+pub(in crate::ocean) mod water;
 pub use timing::RenderTiming;
 pub mod skylight;
 pub use renderer::Renderer;

@@ -187,6 +187,8 @@ impl Seabed {
                         "\n",
                         include_str!("shaders/caustic_sample.wgsl"),
                         "\n",
+                        include_str!("../simulation/spectral/shaders/sample.wgsl"),
+                        "\n",
                         include_str!("shaders/surface.wgsl"),
                         "\n",
                         include_str!("shaders/seabed.wgsl")

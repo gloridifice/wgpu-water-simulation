@@ -6,9 +6,9 @@ use crate::ocean::{
     Error,
     gpu::context::Gpu,
     parameters::{foam::FoamConfig, ocean::OceanConfig},
-    simulation::offshore::{
-        Ocean,
-        foam::{Foam, FoamStep},
+    simulation::{
+        offshore::foam::{Foam, FoamStep},
+        spectral::FftWaves as Ocean,
     },
 };
 use wgpu::util::DeviceExt;

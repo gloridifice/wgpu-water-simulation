@@ -5,8 +5,8 @@ use crate::ocean::camera::CameraUniform;
 use crate::ocean::parameters::ocean::OceanConfig;
 use crate::ocean::parameters::optics::OpticsConfig;
 use crate::ocean::render::Renderer;
-use crate::ocean::simulation::offshore::Ocean;
 use crate::ocean::simulation::offshore::foam::Foam;
+use crate::ocean::simulation::spectral::FftWaves as Ocean;
 
 fn floats(gpu: &Gpu, buffer: &wgpu::Buffer) -> Result<Vec<f32>, Error> {
     let bytes = gpu.read_buffer(buffer, buffer.size())?;

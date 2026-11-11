@@ -4,7 +4,7 @@ use crate::ocean::{
     Error,
     gpu::context::{Gpu, buffer},
     parameters::{ocean::OceanConfig, optics::OpticsConfig},
-    simulation::{nearshore::Shore, offshore::Ocean},
+    simulation::{nearshore::Shore, spectral::FftWaves as Ocean},
 };
 use glam::Vec3;
 

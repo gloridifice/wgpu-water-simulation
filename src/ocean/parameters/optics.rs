@@ -41,6 +41,7 @@ impl OpticalMethod {
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OpticsConfig {
+    pub lake: crate::ocean::parameters::lake::LakeConfig,
     pub post_process: crate::ocean::parameters::post_process::PostProcessConfig,
     pub model: crate::ocean::parameters::model::ModelConfig,
     pub shore: crate::ocean::parameters::shore::ShoreConfig,
@@ -96,6 +97,7 @@ pub struct OpticsConfig {
 impl Default for OpticsConfig {
     fn default() -> Self {
         Self {
+            lake: crate::ocean::parameters::lake::LakeConfig::default(),
             post_process: crate::ocean::parameters::post_process::PostProcessConfig::default(),
             model: crate::ocean::parameters::model::ModelConfig::default(),
             shore: crate::ocean::parameters::shore::ShoreConfig::default(),
@@ -158,11 +160,19 @@ impl OpticsConfig {
         optics
     }
 
+    pub fn lake_scene() -> Self {
+        let mut config = Self::default();
+        config.lake.enabled = true;
+        config.lake.fft_strength = 0.2;
+        config
+    }
+
     pub fn swe_enabled(&self) -> bool {
-        (self.beach || self.model.enabled) && self.shore.enabled
+        !self.lake.enabled && (self.beach || self.model.enabled) && self.shore.enabled
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        self.lake.validate()?;
         for (name, value, low, high) in [
             ("SSR strength", self.reflection_strength, 0.0, 1.0),
             (

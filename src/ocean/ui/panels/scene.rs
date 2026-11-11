@@ -11,11 +11,12 @@ impl Gui {
         camera: &mut Camera,
         length: f32,
     ) {
-        let [beach, model] = action_row(
+        let [beach, model, lake] = action_row(
             ui,
             [
                 PanelButton::new("沙滩场景"),
                 PanelButton::new("岩岸模型场景"),
+                PanelButton::new("湖泊场景"),
             ],
         );
         if beach
@@ -31,6 +32,29 @@ impl Gui {
         {
             self.optics = OpticsConfig::model_scene();
             *camera = Camera::model(length);
+        }
+        if lake
+            .on_hover_text(
+                "生成噪波不规则湖泊与岩石，运行参数化波纹并按强度叠加共享 FFT，不运行 SWE。",
+            )
+            .clicked()
+        {
+            self.optics = OpticsConfig::lake_scene();
+            *camera = Camera::lake(self.optics.lake.terrain.radius);
+            self.lake_panel.open = true;
+            self.lake_panel.reset = true;
+        }
+        if self.optics.lake.enabled {
+            let [terrain, ripples] = action_row(
+                ui,
+                [
+                    PanelButton::new("打开湖泊地形"),
+                    PanelButton::new("打开动画 SDF 波纹"),
+                ],
+            );
+            self.lake_panel.open |= terrain.clicked();
+            self.lake_panel.open_ripples |= ripples.clicked();
+            return;
         }
         group(ui, "地形与水底", |ui| {
             if !self.optics.model.enabled {

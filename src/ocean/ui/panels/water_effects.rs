@@ -17,6 +17,10 @@ fn refraction_mode(ui: &mut egui::Ui, enabled: &mut bool, method: &mut OpticalMe
 }
 impl Gui {
     pub(in crate::ocean::ui) fn caustics_panel(&mut self, ui: &mut egui::Ui) {
+        if self.optics.lake.enabled {
+            ui.label("湖泊模式暂不支持物理焦散，原参数保留。波反射请在“动画 SDF 波纹”分类设置。");
+            return;
+        }
         let o = &mut self.optics;
         segmented_control(ui, &mut o.caustics, &[(false, "关闭"), (true, "物理")])
             .on_hover_text("实时切换物理焦散，保留参数，不重置模拟。");
@@ -60,6 +64,10 @@ impl Gui {
     pub(in crate::ocean::ui) fn refraction_panel(&mut self, ui: &mut egui::Ui) {
         let o = &mut self.optics;
         refraction_mode(ui, &mut o.refraction, &mut o.refraction_method);
+        if o.lake.enabled && o.refraction && o.refraction_method == OpticalMethod::Physical {
+            ui.label("湖泊模式暂不支持物理折射；此设置保留但不运行，可选择快速折射。");
+            return;
+        }
         if o.refraction {
             group(ui, "折射参数", |ui| {
                 number(ui, "水折射率", &mut o.water_ior, 1.0..=1.6, false);

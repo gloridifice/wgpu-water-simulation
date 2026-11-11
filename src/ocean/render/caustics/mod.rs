@@ -49,7 +49,11 @@ impl Caustics {
             "caustic light tracing",
             format!(
                 "{shared}\n{}\n{}\n{}\n{}",
-                include_str!("../shaders/surface.wgsl"),
+                concat!(
+                    include_str!("../../simulation/spectral/shaders/sample.wgsl"),
+                    "\n",
+                    include_str!("../shaders/surface.wgsl")
+                ),
                 include_str!("../../simulation/nearshore/shaders/shore_read.wgsl"),
                 include_str!("shaders/trace.wgsl"),
                 include_str!("shaders/height_trace.wgsl")

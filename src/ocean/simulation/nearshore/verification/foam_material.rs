@@ -23,12 +23,14 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
             label: Some("NSH material and texture probe"),
             source: wgpu::ShaderSource::Wgsl(
                 format!(
-                    "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                     include_str!("../../../render/shaders/optics.wgsl"),
                     include_str!("../../../render/shaders/sky.wgsl"),
                     include_str!("../../../render/shaders/skylight.wgsl"),
                     concat!(
                         include_str!("../../../render/shaders/scene_types.wgsl"),
+                        "\n",
+                        include_str!("../../spectral/shaders/sample.wgsl"),
                         "\n",
                         include_str!("../../../render/shaders/surface.wgsl"),
                         "\n",
@@ -40,10 +42,15 @@ pub(super) fn verify(gpu: &Gpu) -> Result<(), Error> {
                         "\n",
                         include_str!("../../../render/shaders/fast_refraction.wgsl"),
                         "\n",
-                        include_str!("../../../render/shaders/render.wgsl")
+                        include_str!("../../../render/shaders/render.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/lake_sample.wgsl"),
+                        "\n",
+                        include_str!("../../../render/shaders/lake_water.wgsl")
                     ),
                     include_str!("../shaders/shore.wgsl"),
                     include_str!("../shaders/shore_read.wgsl"),
+                    crate::ocean::render::water::SHADER,
                     r#"
 @group(1) @binding(0) var<storage, read_write> nsh_results: array<vec4<f32>>;
 @compute @workgroup_size(64) fn nsh_probe(@builtin(global_invocation_id) id: vec3<u32>) {

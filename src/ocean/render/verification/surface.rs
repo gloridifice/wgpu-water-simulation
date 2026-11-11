@@ -102,7 +102,11 @@ pub(super) fn run(gpu: &Gpu) -> Result<(), Error> {
         include_str!("../shaders/scene_types.wgsl"),
         include_str!("../../simulation/nearshore/shaders/shore.wgsl"),
         include_str!("../../simulation/nearshore/shaders/shore_read.wgsl"),
-        include_str!("../shaders/surface.wgsl"),
+        concat!(
+            include_str!("../../simulation/spectral/shaders/sample.wgsl"),
+            "\n",
+            include_str!("../shaders/surface.wgsl")
+        ),
         r#"
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<storage, read> fields: array<vec2<f32>>;

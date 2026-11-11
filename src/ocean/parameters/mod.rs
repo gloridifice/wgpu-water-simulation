@@ -1,5 +1,6 @@
 //! Shared serializable parameters, defaults and validation; no window or GPU resources.
 pub mod foam;
+pub mod lake;
 pub mod model;
 pub mod ocean;
 pub mod optics;

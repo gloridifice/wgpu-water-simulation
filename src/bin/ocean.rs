@@ -25,7 +25,12 @@ Usage: cargo run -- [options]  (use --release before -- for performance)
   --spray          Enable nearshore GPU textured spray (place after scene preset)
   --spray-debug    Show normalized spray emission intensity (also enables spray)
   --snapshot PATH  Render an offscreen PNG; file must not exist
+  --headless      Start one windowless Ocean scene controlled via MCP stdio
+  --no-ui         Show only the Ocean scene window, no egui/Dock; MCP stdio active
   --beach         Sloped sand beach preset, shallow-to-deep water and overview camera
+  --lake          Procedural irregular lake + rocks; no FFT/SWE
+  --lake-mode MODE depth or sdf (apply after --lake)
+  --verify-lake   Headless animated lake GPU checks
   --model         Challaborough model + disk heightfield preset (bake first)
   --model-position X,Y,Z  Model translation in meters (source datum)
   --model-scale N  Uniform meters per model unit (0.01..100)
@@ -128,6 +133,9 @@ fn run() -> Result<(), Error> {
     let mut verify = false;
     let mut verify_terrain = false;
     let mut verify_optics = false;
+    let mut verify_lake = false;
+    let mut headless = false;
+    let mut no_ui = false;
     let mut path: Option<PathBuf> = None;
     let mut time = 3.0_f32;
     let mut foam_view: Option<u32> = None;
@@ -163,6 +171,17 @@ fn run() -> Result<(), Error> {
             "--seed" => config.seed = value(&mut args, &arg)?,
             "--beach" => optics = OpticsConfig::beach_scene(),
             "--model" => optics = OpticsConfig::model_scene(),
+            "--lake" => optics = OpticsConfig::lake_scene(),
+            "--lake-mode" => {
+                optics.lake.mode = match value::<String>(&mut args, &arg)?.as_str() {
+                    "depth" => water_simulation::ocean::parameters::lake::PropagationMode::Depth,
+                    "sdf" => water_simulation::ocean::parameters::lake::PropagationMode::Sdf,
+                    _ => return Err("lake mode must be depth or sdf".into()),
+                };
+            }
+            "--verify-lake" => verify_lake = true,
+            "--headless" => headless = true,
+            "--no-ui" => no_ui = true,
             "--model-position" => optics.model.position = rgb(&mut args,&arg)?,
             "--model-scale" => optics.model.scale = value(&mut args,&arg)?,
             "--model-yaw" => optics.model.yaw_deg = value(&mut args,&arg)?,
@@ -292,16 +311,41 @@ fn run() -> Result<(), Error> {
                 .into(),
         );
     }
+    if headless
+        && (frames.is_some()
+            || path.is_some()
+            || verify
+            || verify_optics
+            || verify_terrain
+            || verify_lake)
+    {
+        return Err("--headless cannot be combined with --frames, --snapshot, or --verify*".into());
+    }
+    if no_ui
+        && (headless || path.is_some() || verify || verify_optics || verify_terrain || verify_lake)
+    {
+        return Err("--no-ui cannot be combined with --headless, --snapshot, or --verify*".into());
+    }
+    if (headless || no_ui) && settings_path.is_some() && no_settings {
+        return Err("--settings and --no-settings cannot be combined".into());
+    }
     if frames == Some(0) {
         return Err("--frames must be positive".into());
     }
-    if ((verify || verify_terrain || verify_optics) && path.is_some())
-        || (frames.is_some() && (verify || verify_terrain || verify_optics || path.is_some()))
-        || (u32::from(verify) + u32::from(verify_terrain) + u32::from(verify_optics) > 1)
+    let verification_modes = [verify, verify_terrain, verify_optics, verify_lake]
+        .into_iter()
+        .filter(|v| *v)
+        .count();
+    if (verification_modes > 0 && path.is_some())
+        || (frames.is_some() && (verification_modes > 0 || path.is_some()))
+        || verification_modes > 1
     {
         return Err(
-            "--verify, --verify-terrain, --verify-optics, --snapshot and --frames select different run modes".into(),
+            "--verify, --verify-terrain, --verify-optics, --verify-lake, --snapshot and --frames select different run modes".into(),
         );
+    }
+    if verify_lake {
+        return pollster::block_on(verify::lake());
     }
     if verify_optics {
         pollster::block_on(verify::water_lighting())
@@ -314,6 +358,23 @@ fn run() -> Result<(), Error> {
         })
     } else if verify {
         pollster::block_on(verify::run())
+    } else if headless || no_ui {
+        // Neither automated mode opens or writes personal settings implicitly.
+        let (mut initial, store) = if let Some(path) = &config_path {
+            (settings::load_config(path)?, None)
+        } else if let Some(path) = settings_path {
+            let (initial, store) = SettingsStore::open(path);
+            (initial, Some(store))
+        } else {
+            (SavedSettings::default(), None)
+        };
+        initial.apply_cli(config, optics, &explicit);
+        initial.validate()?;
+        if headless {
+            water_simulation::ocean::app::headless::run(initial, store)
+        } else {
+            water_simulation::ocean::app::scene_window::run(initial, store, frames)
+        }
     } else if let Some(path) = path {
         let mut initial = if let Some(path) = &config_path {
             settings::load_config(path)?
