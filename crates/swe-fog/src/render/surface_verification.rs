@@ -35,6 +35,7 @@ fn plane(slope: f32) -> BakeSource {
         obstacle: vec![],
         colors: vec![],
         collision: vec![],
+        support: vec![],
     }
 }
 fn opacity_at(p: Vec3, pixels: &[u8], session: &Session, source: &BakeSource) -> u8 {

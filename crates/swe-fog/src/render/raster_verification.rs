@@ -27,6 +27,7 @@ pub(crate) fn run(gpu: &Gpu) -> Result<(), Error> {
             obstacle: if opaque { wall.clone() } else { vec![] },
             colors: vec![],
             collision: vec![],
+            support: vec![],
         };
         let terrain = Terrain::bake(&source, [-8.0, -6.0, 16.0, 12.0], [13, 7])?;
         let mut sim = Simulation::new(gpu, &terrain)?;

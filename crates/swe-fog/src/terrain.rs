@@ -16,6 +16,10 @@ pub struct BakeSource {
     /// Simplified static collider; empty for small hand-authored scenes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collision: Vec<Triangle>,
+    /// Explicit heightfield support, independent of visual roofs/props.
+    /// Empty retains legacy all-floor behavior for hand-authored scenes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub support: Vec<Triangle>,
 }
 impl BakeSource {
     pub fn playground() -> Self {
@@ -29,6 +33,7 @@ impl BakeSource {
                 .iter()
                 .chain(&self.obstacle)
                 .chain(&self.collision)
+                .chain(&self.support)
                 .flatten()
                 .flatten()
                 .any(|v| !v.is_finite())
@@ -181,7 +186,12 @@ impl Terrain {
         };
         let origin = Vec2::new(domain[0], domain[1]);
         let step = t.spacing();
-        for tri in &source.floor {
+        let support = if source.support.is_empty() {
+            &source.floor
+        } else {
+            &source.support
+        };
+        for tri in support {
             let p = tri.map(Vec3::from_array);
             let v = p.map(|v| Vec2::new(v.x, v.z));
             let area = (v[1] - v[0]).perp_dot(v[2] - v[0]);

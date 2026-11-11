@@ -17,6 +17,7 @@ fn static_bake_preserves_rectangular_coordinates_voids_thin_walls_and_source_ide
         obstacle: vec![[[-1.0, 0.0, -1.0], [-1.0, 2.0, -1.0], [-1.0, 2.0, 1.0]]],
         colors: vec![],
         collision: vec![],
+        support: vec![],
     };
     let terrain = Terrain::bake(&source, [-2.0, -1.0, 4.0, 2.0], [8, 4]).unwrap();
     assert_eq!(terrain.spacing(), Vec2::splat(0.5));
@@ -141,7 +142,15 @@ fn fog_session_roundtrip_keeps_independent_density_actions_and_legacy_defaults()
     assert_eq!(s.interaction.movement_mode, MovementMode::Wake);
     assert_eq!(s.grid_resolution, None);
     assert_eq!(s.domain_scale, 1.0);
-    assert_eq!(s.scene, swe_fog::scenes::ScenePreset::Datun);
+    assert_eq!(s.scene, swe_fog::scenes::ScenePreset::Grandma);
+    let migrated: Session =
+        serde_json::from_str(r#"{"scene":"datun","fog":{"base_height":0.35}}"#).unwrap();
+    assert_eq!(migrated.scene, swe_fog::scenes::ScenePreset::Grandma);
+    assert_eq!(
+        migrated.fog.base_height, 0.35,
+        "removed scene must not discard saved parameters"
+    );
+    assert_eq!(serde_json::to_value(&migrated).unwrap()["scene"], "grandma");
     assert_eq!(s.render_mode, RenderMode::HeightFog);
     assert_eq!(s.height_fog_noise, 0.2);
     assert_eq!(s.reconstruction, Reconstruction::Bilinear);
@@ -163,7 +172,7 @@ fn fog_session_roundtrip_keeps_independent_density_actions_and_legacy_defaults()
     s.reconstruction = Reconstruction::PreSmoothed;
     s.reconstruction_smoothing = 0.8;
     s.integration_steps = 16;
-    s.scene = swe_fog::scenes::ScenePreset::Grandma;
+    s.scene = swe_fog::scenes::ScenePreset::Playground;
     s.render_mode = RenderMode::Tetrahedra;
     s.height_fog_noise = 0.7;
     s.interactions_enabled = false;

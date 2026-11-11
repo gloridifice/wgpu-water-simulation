@@ -6,12 +6,11 @@
 
 | 模型 | 作者与来源 | 许可 | 文件 |
 | --- | --- | --- | --- |
-| Taiwan Yangmingshan - Datun Nature Park | [LightStory.tw](https://sketchfab.com/lightstory.tw)，[原作品](https://sketchfab.com/3d-models/taiwan-yangmingshan-datun-nature-park-9df4753dcf3b431891b76d268135fde2) | [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)，[完整条款](https://creativecommons.org/licenses/by-nc/4.0/legalcode)；**仅限非商业用途** | `taiwan_yangmingshan_-_datun_nature_park.glb`；`crates/swe-fog/assets/datun.fogscene`、`datun.fogterrain` |
 | DAE Diorama - Grandma's House | [Yarina Usenko / Crimoonza](https://sketchfab.com/Crimoonza)，[原作品](https://sketchfab.com/3d-models/dae-diorama-grandmas-house-fe347d42b3374511ab169c0c0f9f4ed9) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)，[完整条款](https://creativecommons.org/licenses/by/4.0/legalcode) | `dae_diorama_-_grandmas_house.glb`；`crates/swe-fog/assets/grandma.fogscene`、`grandma.fogterrain` |
 
-派生处理：应用节点层级变换、最长水平边归一化为 64 米、XZ 居中及最低 Y 平移到零；仅导入不透明三角形，将基色贴图烘焙成线性 RGB 顶点颜色；静态碰撞独立焊接并简化，另烘焙单层最高表面高度场及阻挡面。透明／裁剪材质、完整 PBR、真实测绘尺度和多层室内空间不在此转换范围。详见 [烘焙记录](../../crates/swe-fog/assets/SCENES.md)。
+派生处理：应用节点层级变换、最长水平边归一化为 64 米、XZ 居中及最低 Y 平移到零；仅导入不透明三角形，将基色贴图烘焙成线性 RGB 顶点颜色；静态碰撞排除人工展台外壳，独立焊接、保留开放边界并以 0.025 米误差预算简化；高度场仅选取地面、桥和石阶的向上表面，不再将屋顶、树干与道具顶部当作地面，另烘焙阻挡面。透明／裁剪材质、完整 PBR、真实测绘尺度和多层室内空间不在此转换范围。详见 [烘焙记录](../../crates/swe-fog/assets/SCENES.md)。
 
-再分发上述原件或派生资源时，保留作者、来源、许可和修改说明。尤其不得将大屯自然公园素材及派生文件作为可自由商用资源发布。素材按许可以现状提供，不作保证。
+再分发上述原件或派生资源时，保留作者、来源、许可和修改说明。素材按许可以现状提供，不作保证。
 
 ## Challaborough Pillbox
 

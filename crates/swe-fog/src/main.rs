@@ -6,10 +6,11 @@ const HELP: &str = "SWE Fog — independent Rust / wgpu playground
 cargo run --release -p swe-fog -- [options]
   --verify               Run real GPU solver and thin-layer rendering checks
   --bake PATH            Explicit offline bake; output must not exist
-  --scene NAME|PATH      datun (default), grandma, playground, or JSON/.fogscene
+  --scene NAME|PATH      grandma (default), playground, or JSON/.fogscene
   --terrain PATH         Baked fog terrain; default is the selected bundled asset
   --import-glb PATH      Offline model conversion (opaque primitives only)
   --bake-scene PATH      Packed visual mesh + simplified collider; must not exist
+  --bake-profile PATH    Explicit support meshes and collision quality for GLB bake
   --model-span M         Normalize longest XZ extent to M metres (default 64)
   --domain X,Z,W,D       Bake bounds in metres (default -32,-32,64,64)
   --resolution N or NxM  Grid resolution, each 2..1024 (bake default 256)
@@ -36,6 +37,7 @@ fn run() -> Result<(), Error> {
     let mut bake = None;
     let mut import_glb = None;
     let mut bake_scene = None;
+    let mut bake_profile = None;
     let mut model_span = 64.0;
     let mut scene = None;
     let mut terrain_path = None;
@@ -58,6 +60,7 @@ fn run() -> Result<(), Error> {
             "--bake" => bake = Some(PathBuf::from(next(&mut args, &flag)?)),
             "--import-glb" => import_glb = Some(PathBuf::from(next(&mut args, &flag)?)),
             "--bake-scene" => bake_scene = Some(PathBuf::from(next(&mut args, &flag)?)),
+            "--bake-profile" => bake_profile = Some(PathBuf::from(next(&mut args, &flag)?)),
             "--model-span" => model_span = next(&mut args, &flag)?.parse::<f32>()?,
             "--scene" => scene = Some(PathBuf::from(next(&mut args, &flag)?)),
             "--terrain" => terrain_path = Some(PathBuf::from(next(&mut args, &flag)?)),
@@ -110,7 +113,16 @@ fn run() -> Result<(), Error> {
         if output.exists() || bake.as_ref().is_some_and(|p| p.exists()) {
             return Err("bake outputs must not exist".into());
         }
-        let source = swe_fog::model::import_glb(&input, model_span)?;
+        let profile = bake_profile
+            .map(|path| -> Result<swe_fog::model::BakeProfile, Error> {
+                Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+            })
+            .transpose()?;
+        let source = if let Some(profile) = &profile {
+            swe_fog::model::import_glb_with_profile(&input, model_span, Some(profile))?
+        } else {
+            swe_fog::model::import_glb(&input, model_span)?
+        };
         swe_fog::model::save(&source, &output)?;
         if let Some(path) = bake {
             let terrain = Terrain::bake(&source, domain, resolution.unwrap_or([256, 256]))?;
@@ -124,6 +136,9 @@ fn run() -> Result<(), Error> {
             );
         }
         return Ok(());
+    }
+    if bake_profile.is_some() {
+        return Err("--bake-profile requires --import-glb".into());
     }
     if bake_scene.is_some() {
         return Err("--bake-scene requires --import-glb".into());

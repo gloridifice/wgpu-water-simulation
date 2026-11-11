@@ -17,17 +17,16 @@ cargo run --release -p swe-fog -- --help
 - 暂停只停止雾；玩家和相机仍能移动。暂停、重置或关闭玩家交互会清除待发动作，不在恢复时补放。
 - 顶部“操作”菜单列出操作方法。程序初始不强制捕获鼠标。
 
-默认场景为 **Taiwan Yangmingshan - Datun Nature Park（大屯自然公园）**。在“模拟 → 初始化 → 场景”切换 **Grandma’s House** 或原**网格实验场**；切换重置雾并重新安置角色，保留雾参数、相机轨道、暂停及网格／区域设置。选择随会话手动保存；旧配置缺少 `scene` 时采用 `datun`。加载失败保留原场景并显示错误。
+默认场景为 **Grandma’s House**，在“模拟 → 初始化 → 场景”可切回原**网格实验场**；切换重置雾并重新安置角色，保留雾参数、相机轨道、暂停及网格／区域设置。选择随会话手动保存；旧配置缺少 `scene` 时采用 `grandma`；已移除的 `datun` 配置值兼容映射到 `grandma`，不丢弃其他参数。加载失败保留原场景并显示错误。
 
 ```powershell
-cargo run --release -p swe-fog -- --scene datun --no-settings
 cargo run --release -p swe-fog -- --scene grandma --no-settings
 cargo run --release -p swe-fog -- --scene playground --no-settings
 ```
 
-两个模型的最长水平边归一化为 64 米，不代表真实测绘尺度；原网格实验场仍为 64×64 米黄绿色网格，细线 1 米、主线 5 米。胶囊高 1.8 米、半径 0.35 米。人物使用高度场与阻挡面，相机使用独立简化静态网格的 BVH 查询，未引入物理引擎。大屯碰撞从 358,598 降至 30,365 三角形；Grandma’s House 的不透明网格从 77,554 降至 20,188。简化误差预算 0.10 米，不为硬凑 8,000 目标牺牲误差限制。
+模型的最长水平边归一化为 64 米，不代表真实测绘尺度；原网格实验场仍为 64×64 米黄绿色网格，细线 1 米、主线 5 米。胶囊高 1.8 米、半径 0.35 米。人物使用高度场与阻挡面，相机使用独立简化静态网格的 BVH 查询，未引入物理引擎。Grandma’s House 的碰撞从 77,369 个实心三角形简化到 51,894 个，排除展台外壳。误差预算由 0.10 米收紧到 0.025 米，并保护开放边界；比旧碰撞面数更多，但仍通过 BVH 筛选查询，不为硬凑 8,000 目标牺牲精度。
 
-模型显示使用原不透明几何和贴图烘焙顶点色，不是完整 PBR；透明／裁剪树叶、草片、水面等不导入。高度场是单层最高表面，不支持桥下／树冠下／室内分层。资源、重叠计数、尺度与重烘焙命令见 [内置场景记录](../../crates/swe-fog/assets/SCENES.md)。**大屯模型为 CC BY-NC 4.0，仅限非商业用途；Grandma’s House 为 CC BY 4.0**，署名与来源见 [NOTICE](../../assets/models/NOTICE.md)。
+模型显示使用原不透明几何和贴图烘焙顶点色，不是完整 PBR；透明／裁剪树叶、草片、水面等不导入。高度场明确选取地面、桥和石阶的向上表面，不再把屋顶、树干、道具顶部当作地面；仍是单层，不能同时表示桥上桥下。资源、重叠计数、尺度与重烘焙命令见 [内置场景记录](../../crates/swe-fog/assets/SCENES.md)。**Grandma’s House 为 CC BY 4.0**，署名与来源见 [NOTICE](../../assets/models/NOTICE.md)。
 
 ## 参数与显示
 
@@ -92,7 +91,7 @@ h = max(0, 0.25 m + 0.25 m × noise + (-0.2 m))
 
 ## 离线高度场
 
-随 crate 嵌入 `datun`、`grandma` 的 `.fogscene`（显示网格、顶点色、简化静态碰撞）与 `.fogterrain`（高度、有效格、通行面），同时保留 `assets/playground.scene.json` / `playground.fogterrain`。默认运行加载并校验所选资产；仅在面板、会话或 CLI 显式选择不同分辨率时，根据同一来源三角形重建内存地形及阻挡面，不修改烘焙文件，不用缩放旧网格代替地形查询。
+随 crate 嵌入 `grandma` 的 `.fogscene`（显示网格、顶点色、简化静态碰撞、独立承载面）与 `.fogterrain`（高度、有效格、通行面），同时保留 `assets/playground.scene.json` / `playground.fogterrain`。默认运行加载并校验所选资产；仅在面板、会话或 CLI 显式选择不同分辨率时，根据同一来源三角形重建内存地形及阻挡面，不修改烘焙文件，不用缩放旧网格代替地形查询。
 
 ```powershell
 cargo run --release -p swe-fog -- --scene playground --bake map.fogterrain
@@ -102,7 +101,7 @@ cargo run --release -p swe-fog -- --scene scene.json --terrain map.fogterrain --
 cargo run --release -p swe-fog -- --no-settings --resolution 128
 ```
 
-输出路径必须不存在；已有资产不会被隐式覆盖。JSON 的 `floor` 和 `obstacle` 分别是世界坐标三角形数组，每个三角形由三个 `[x,y,z]` 顶点组成。它们对应原型的静态承载面与阻挡组。`--scene` 也接受离线 `.fogscene`；外部场景须配对 `--terrain`，重新启动需再次提供路径。`--import-glb PATH --bake-scene PATH [--bake PATH] --model-span 64` 是显式离线不透明 GLB 转换，不是运行时通用 glTF/PBR 场景导入器。
+输出路径必须不存在；已有资产不会被隐式覆盖。JSON 的 `floor` 和 `obstacle` 分别是世界坐标三角形数组，每个三角形由三个 `[x,y,z]` 顶点组成。它们对应原型的静态承载面与阻挡组。`--scene` 也接受离线 `.fogscene`；外部场景须配对 `--terrain`，重新启动需再次提供路径。`--import-glb PATH --bake-profile crates/swe-fog/assets/grandma.bake.json --bake-scene PATH [--bake PATH] --model-span 64` 是 Grandma 的显式离线 GLB 转换；配置绑定源文件 SHA、地面网格清单及碰撞精度，不是运行时通用 glTF/PBR 场景导入器。
 
 二进制格式记录版本、XZ 范围、矩形分辨率、来源 SHA256、高度、有效格和共享通行面。无命中保持无效，不能退回零高度；投影退化的薄竖墙仍阻挡通量。重叠表面只保留最高层，烘焙报告重叠计数，不支持桥上桥下两层雾。
 

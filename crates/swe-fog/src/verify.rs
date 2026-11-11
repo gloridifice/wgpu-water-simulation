@@ -333,6 +333,7 @@ fn verify_wake(gpu: &Gpu) -> Result<(), Error> {
         obstacle: vec![],
         colors: vec![],
         collision: vec![],
+        support: vec![],
     };
     let terrain = Terrain::bake(&source, [-6.0, -6.0, 12.0, 12.0], [48, 48])?;
     let mut sim = Simulation::new(gpu, &terrain)?;

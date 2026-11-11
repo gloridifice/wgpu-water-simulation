@@ -4,12 +4,13 @@ use crate::{Error, terrain::BakeSource};
 use glam::{Mat4, Vec2, Vec3};
 use std::{io::Write, path::Path};
 
-const MAGIC: &[u8; 8] = b"FOGSCN02";
+const MAGIC: &[u8; 8] = b"FOGSCN03";
+const LEGACY_MAGIC: &[u8; 8] = b"FOGSCN02";
 const MAX_TRIANGLES: usize = 2_000_000;
 
 pub fn load(path: &Path) -> Result<BakeSource, Error> {
     let bytes = std::fs::read(path)?;
-    if bytes.starts_with(MAGIC) {
+    if bytes.starts_with(MAGIC) || bytes.starts_with(LEGACY_MAGIC) {
         decode(&bytes)
     } else {
         let source: BakeSource = serde_json::from_slice(&bytes)?;
@@ -19,23 +20,33 @@ pub fn load(path: &Path) -> Result<BakeSource, Error> {
 }
 
 pub fn decode(bytes: &[u8]) -> Result<BakeSource, Error> {
-    if bytes.len() < 24 || &bytes[..8] != MAGIC {
+    let header = if bytes.starts_with(MAGIC) {
+        28
+    } else if bytes.starts_with(LEGACY_MAGIC) {
+        24
+    } else {
         return Err("invalid packed fog scene header".into());
+    };
+    if bytes.len() < header {
+        return Err("truncated packed fog scene header".into());
     }
     let u32_at = |i| u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap()) as usize;
     let floor = u32_at(8);
     let obstacle = u32_at(12);
     let colored = u32_at(16);
     let collision_count = u32_at(20);
+    let support_count = if header == 28 { u32_at(24) } else { 0 };
     let count = floor.checked_add(obstacle).ok_or("scene count overflow")?;
     if count > MAX_TRIANGLES
         || collision_count > MAX_TRIANGLES
+        || support_count > MAX_TRIANGLES
         || colored > 1
-        || bytes.len() != 24 + count * (36 + colored * 36) + collision_count * 36
+        || bytes.len()
+            != header + count * (36 + colored * 36) + (collision_count + support_count) * 36
     {
         return Err("invalid packed fog scene counts/length".into());
     }
-    let mut values = bytes[24..]
+    let mut values = bytes[header..]
         .as_chunks::<4>()
         .0
         .iter()
@@ -53,11 +64,15 @@ pub fn decode(bytes: &[u8]) -> Result<BakeSource, Error> {
     let collision = (0..collision_count)
         .map(|_| std::array::from_fn(|_| std::array::from_fn(|_| values.next().unwrap())))
         .collect();
+    let support = (0..support_count)
+        .map(|_| std::array::from_fn(|_| std::array::from_fn(|_| values.next().unwrap())))
+        .collect();
     let source = BakeSource {
         floor: floors,
         obstacle: obstacles,
         colors,
         collision,
+        support,
     };
     source.validate()?;
     Ok(source)
@@ -67,6 +82,7 @@ pub fn save(source: &BakeSource, path: &Path) -> Result<(), Error> {
     source.validate()?;
     if source.floor.len() + source.obstacle.len() > MAX_TRIANGLES
         || source.collision.len() > MAX_TRIANGLES
+        || source.support.len() > MAX_TRIANGLES
     {
         return Err("too many scene triangles".into());
     }
@@ -77,6 +93,7 @@ pub fn save(source: &BakeSource, path: &Path) -> Result<(), Error> {
         source.obstacle.len(),
         usize::from(!source.colors.is_empty()),
         source.collision.len(),
+        source.support.len(),
     ] {
         out.write_all(&(n as u32).to_le_bytes())?;
     }
@@ -88,6 +105,7 @@ pub fn save(source: &BakeSource, path: &Path) -> Result<(), Error> {
         .flatten()
         .chain(source.colors.iter().flatten())
         .chain(source.collision.iter().flatten().flatten())
+        .chain(source.support.iter().flatten().flatten())
     {
         out.write_all(&v.to_le_bytes())?;
     }
@@ -95,13 +113,57 @@ pub fn save(source: &BakeSource, path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Explicit asset-specific support selection, never guessed from material opacity.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BakeProfile {
+    pub source_sha256: String,
+    pub support_meshes: Vec<String>,
+    pub collision_exclude_meshes: Vec<String>,
+    pub minimum_support_up: f32,
+    pub collision_error_m: f32,
+    pub lock_collision_borders: bool,
+}
+
 /// Normalize the longest horizontal extent to `span` metres, centre XZ, put min Y at zero.
 /// Input must be a self-contained GLB with triangle primitives and TEXCOORD_0 textures.
 pub fn import_glb(path: &Path, span: f32) -> Result<BakeSource, Error> {
+    import_glb_with_profile(path, span, None)
+}
+pub fn import_glb_with_profile(
+    path: &Path,
+    span: f32,
+    profile: Option<&BakeProfile>,
+) -> Result<BakeSource, Error> {
     if !span.is_finite() || !(1.0..=1000.0).contains(&span) {
         return Err("model span must be 1..1000 metres".into());
     }
     let gltf = gltf::Gltf::open(path)?;
+    if let Some(profile) = profile {
+        use sha2::{Digest, Sha256};
+        if format!("{:x}", Sha256::digest(std::fs::read(path)?)) != profile.source_sha256 {
+            return Err("bake profile GLB SHA256 mismatch".into());
+        }
+        crate::parameters::range("support up normal", profile.minimum_support_up, 0.01, 1.0)?;
+        crate::parameters::range(
+            "collision error metres",
+            profile.collision_error_m,
+            0.001,
+            0.1,
+        )?;
+        if profile.support_meshes.is_empty() {
+            return Err("bake profile requires explicit support meshes".into());
+        }
+        for name in profile
+            .support_meshes
+            .iter()
+            .chain(&profile.collision_exclude_meshes)
+        {
+            if !gltf.meshes().any(|mesh| mesh.name() == Some(name.as_str())) {
+                return Err(format!("bake profile mesh not found: {name}").into());
+            }
+        }
+    }
     let blob = gltf
         .blob
         .as_deref()
@@ -127,15 +189,22 @@ pub fn import_glb(path: &Path, span: f32) -> Result<BakeSource, Error> {
         obstacle: Vec::new(),
         colors: Vec::new(),
         collision: Vec::new(),
+        support: Vec::new(),
     };
     let scene = gltf
         .default_scene()
         .or_else(|| gltf.scenes().next())
         .ok_or("GLB has no scene")?;
     for node in scene.nodes() {
-        visit(node, Mat4::IDENTITY, blob, &images, &mut source)?;
+        visit(node, Mat4::IDENTITY, blob, &images, &mut source, profile)?;
     }
     source.validate()?;
+    if profile.is_some() && source.support.is_empty() {
+        return Err("bake profile selected no upward support triangles".into());
+    }
+    if profile.is_some() && source.collision.is_empty() {
+        return Err("bake profile excluded every collision triangle".into());
+    }
     let mut low = Vec3::splat(f32::INFINITY);
     let mut high = Vec3::splat(f32::NEG_INFINITY);
     for p in source.floor.iter().flatten() {
@@ -152,10 +221,19 @@ pub fn import_glb(path: &Path, span: f32) -> Result<BakeSource, Error> {
     for p in source.floor.iter_mut().flatten() {
         *p = ((Vec3::from_array(*p) - center) * scale).to_array();
     }
-    for p in source.collision.iter_mut().flatten() {
+    for p in source
+        .collision
+        .iter_mut()
+        .chain(&mut source.support)
+        .flatten()
+    {
         *p = ((Vec3::from_array(*p) - center) * scale).to_array();
     }
-    simplify_collision(&mut source)?;
+    simplify_collision(&mut source, profile)?;
+    eprintln!(
+        "Explicit heightfield support: {} triangles",
+        source.support.len()
+    );
     eprintln!(
         "GLB bake: {} triangles; original bounds {low:?}..{high:?}; subtract {center:?}, scale {scale}; world extent {:?}",
         source.floor.len(),
@@ -171,9 +249,20 @@ fn visit(
     blob: &[u8],
     images: &[image::RgbImage],
     source: &mut BakeSource,
+    profile: Option<&BakeProfile>,
 ) -> Result<(), Error> {
     let transform = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
     if let Some(mesh) = node.mesh() {
+        let support_mesh = profile.is_some_and(|p| {
+            p.support_meshes
+                .iter()
+                .any(|name| Some(name.as_str()) == mesh.name())
+        });
+        let collision_mesh = !profile.is_some_and(|p| {
+            p.collision_exclude_meshes
+                .iter()
+                .any(|name| Some(name.as_str()) == mesh.name())
+        });
         for primitive in mesh.primitives() {
             if primitive.mode() != gltf::mesh::Mode::Triangles {
                 return Err("only triangle GLB primitives are supported".into());
@@ -232,20 +321,27 @@ fn visit(
                     colors[corner] = color.clamp(Vec3::ZERO, Vec3::ONE).to_array();
                 }
                 source.floor.push(world);
-                // Foliage/decal/transparent cards are visual, not solid colliders.
-                if solid {
+                // A visual mesh can collide without becoming heightfield support.
+                if collision_mesh {
                     source.collision.push(world);
+                }
+                if support_mesh {
+                    let [a, b, c] = world.map(Vec3::from_array);
+                    let up = (b - a).cross(c - a).normalize_or_zero().y;
+                    if up >= profile.unwrap().minimum_support_up {
+                        source.support.push(world);
+                    }
                 }
                 source.colors.extend(colors);
             }
         }
     }
     for child in node.children() {
-        visit(child, transform, blob, images, source)?;
+        visit(child, transform, blob, images, source, profile)?;
     }
     Ok(())
 }
-fn simplify_collision(source: &mut BakeSource) -> Result<(), Error> {
+fn simplify_collision(source: &mut BakeSource, profile: Option<&BakeProfile>) -> Result<(), Error> {
     let before = source.collision.len();
     let mut vertices = Vec::<[f32; 3]>::new();
     let mut map = std::collections::HashMap::new();
@@ -262,12 +358,17 @@ fn simplify_collision(source: &mut BakeSource) -> Result<(), Error> {
     }
     let adapter = meshopt::VertexDataAdapter::new(bytemuck::cast_slice(&vertices), 12, 0)?;
     let mut error = 0.0;
+    let budget = profile.map_or(0.10, |p| p.collision_error_m);
+    let mut options = meshopt::SimplifyOptions::ErrorAbsolute;
+    if profile.is_some_and(|p| p.lock_collision_borders) {
+        options |= meshopt::SimplifyOptions::LockBorder;
+    }
     let reduced = meshopt::simplify(
         &indices,
         &adapter,
         (8_000 * 3).min(indices.len()),
-        0.10,
-        meshopt::SimplifyOptions::ErrorAbsolute,
+        budget,
+        options,
         Some(&mut error),
     );
     source.collision = reduced
@@ -283,7 +384,7 @@ fn simplify_collision(source: &mut BakeSource) -> Result<(), Error> {
         })
         .collect();
     eprintln!(
-        "Collision: {before} -> {} triangles, meshopt reported error {error:.5} m (budget 0.10 m, target 8000; topology/error may stop early)",
+        "Collision: {before} -> {} triangles, meshopt reported error {error:.5} m (budget {budget} m, target 8000; topology/error may stop early)",
         source.collision.len()
     );
     Ok(())

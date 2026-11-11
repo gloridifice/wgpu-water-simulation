@@ -475,11 +475,7 @@ fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
                     .width(ui.available_width())
                     .selected_text(s.scene.label())
                     .show_ui(ui, |ui| {
-                        for scene in [
-                            ScenePreset::Datun,
-                            ScenePreset::Grandma,
-                            ScenePreset::Playground,
-                        ] {
+                        for scene in [ScenePreset::Grandma, ScenePreset::Playground] {
                             ui.selectable_value(&mut s.scene, scene, scene.label());
                         }
                     })
