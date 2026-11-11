@@ -1,6 +1,7 @@
 //! Fog business panels on the common egui/Dock and persistence mechanisms.
 #[cfg(test)]
 mod tests;
+mod volumes;
 use crate::{
     interactions::MovementMode,
     parameters::{Reconstruction, RenderMode, Session},
@@ -86,6 +87,7 @@ pub struct Actions {
     pub load: Option<(Option<usize>, Session)>,
 }
 pub struct Status {
+    pub view_projection: glam::Mat4,
     pub resolution: [u32; 2],
     pub domain: [f32; 4],
     pub diagnostics: Diagnostics,
@@ -300,7 +302,7 @@ impl Interface {
             egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(root,|ui|{
                 let active=self.active;let workspace=&mut workspaces[active];workspace.prepare(|p|p!=Panel::Unknown);
                 egui_dock::DockArea::new(&mut workspace.dock).id(egui::Id::new(("fog dock",active))).style(style.clone()).show_leaf_close_all_buttons(false).show_inside(ui,&mut Tabs(|panel,ui:&mut egui::Ui|{
-                    if panel==Panel::View{let size=ui.available_size().max(egui::vec2(1.0,1.0));let response=ui.add(egui::Image::new((self.viewport.id,size)).sense(egui::Sense::click()));self.size=[(size.x*ui.ctx().pixels_per_point()).round().max(1.0) as u32,(size.y*ui.ctx().pixels_per_point()).round().max(1.0) as u32];if response.clicked(){actions.capture=true;}return;}
+                    if panel==Panel::View{let size=ui.available_size().max(egui::vec2(1.0,1.0));let response=ui.add(egui::Image::new((self.viewport.id,size)).sense(egui::Sense::click()));self.size=[(size.x*ui.ctx().pixels_per_point()).round().max(1.0) as u32,(size.y*ui.ctx().pixels_per_point()).round().max(1.0) as u32];volumes::overlay(ui,response.rect,session,status.view_projection);if response.clicked(){actions.capture=true;}return;}
                     ui.push_id((active,panel),|ui|{egui::ScrollArea::vertical().auto_shrink([false,false]).show(ui,|ui|match panel{
                         Panel::Initialization=>{initialization(ui,session,&mut actions);ui.label(format!("实际范围 {:.2} × {:.2} m · 格距 {:.4} × {:.4} m",status.domain[2],status.domain[3],status.domain[2]/status.resolution[0] as f32,status.domain[3]/status.resolution[1] as f32));},Panel::Dynamics=>dynamics(ui,session,&mut actions),Panel::Interactions=>interactions(ui,session,&mut actions),Panel::Appearance=>appearance(ui,session,&mut actions),Panel::Configuration=>self.configuration(ui,session,&mut actions),Panel::Diagnostics=>{
                             let d=status.diagnostics;ui.label(format!("接受子步 {} · 连续重试 {}\n积压 {:.4} s · 丢弃 {:.4} s\nGPU fault {}",d.accepted,d.retries,d.remaining,d.dropped_time,d.fault));ui.label("GPU 为真实 timestamp 异步采样，仅计雾模拟；不含呈现等待。");if let Some(sidecar)=&self.sidecar && let Some(e)=&sidecar.error {ui.colored_label(egui::Color32::LIGHT_RED,e);}
@@ -465,6 +467,7 @@ fn integer(ui: &mut egui::Ui, name: &str, value: &mut u32, lo: u32, hi: u32) -> 
 }
 const RESET: &str = "拖动滑块调节，右侧数值可横拖、Shift 精调、双击输入；数值变化立即重置雾场，暂停状态与玩家位置保持不变。";
 fn initialization(ui: &mut egui::Ui, s: &mut Session, a: &mut Actions) {
+    volumes::editor(ui, s);
     yummy_egui::h3(ui, "初始化");
     parameter_table(ui, "fog scene selection", |ui| {
         parameter(

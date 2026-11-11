@@ -66,6 +66,10 @@ pub trait WindowScene {
     fn event(&mut self, event: WindowEvent) -> bool;
     /// Return true only for a successfully presented frame.
     fn draw(&mut self) -> Result<bool, Error>;
+    /// Service external scene commands even when the window cannot present a frame.
+    fn poll_commands(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
     /// Optional raw input for captured-pointer applications; regular UI apps ignore it.
     fn device_event(&mut self, _event: DeviceEvent) {}
     fn exiting(&mut self) {}
@@ -140,9 +144,14 @@ pub fn run<S: WindowScene, F: FnOnce(Arc<Window>) -> Result<S, Error>>(
                 scene.device_event(event);
             }
         }
-        fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-            if let Some(scene) = &self.scene {
-                scene.window().request_redraw();
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            if let Some(scene) = &mut self.scene {
+                if let Err(e) = scene.poll_commands() {
+                    self.error = Some(e.to_string());
+                    event_loop.exit();
+                } else {
+                    scene.window().request_redraw();
+                }
             }
         }
         fn exiting(&mut self, _: &ActiveEventLoop) {

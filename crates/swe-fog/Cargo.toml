@@ -6,7 +6,8 @@ default-run = "swe-fog"
 publish = false
 
 [dependencies]
-common = { path = "../common" }
+common = { path = "../common", features = ["mcp"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
 wgpu = "29.0.1"
 winit = "0.30.13"
 glam = { version = "0.30", features = ["serde"] }

@@ -191,6 +191,8 @@ pub struct Session {
     pub grid_resolution: Option<[u32; 2]>,
     /// Scale native XZ bounds about their centre, without changing cell count.
     pub domain_scale: f32,
+    /// Empty preserves the legacy native field; otherwise each box owns a field.
+    pub volumes: Vec<crate::volumes::FogVolume>,
     /// Barrier-aware h/m reconstruction for tetrahedron vertices.
     pub reconstruction: Reconstruction,
     /// Add an interior sample per cell (12 rather than 6 tetrahedra).
@@ -221,6 +223,7 @@ impl Default for Session {
             height_fog_noise: 0.2,
             grid_resolution: None,
             domain_scale: 1.0,
+            volumes: Vec::new(),
             reconstruction: Reconstruction::default(),
             reconstruction_detail: false,
             reconstruction_smoothing: 0.6,
@@ -248,6 +251,12 @@ impl common::settings::Settings for Session {
             return Err("网格分辨率每轴必须为 2–1024".into());
         }
         range("区域范围缩放", self.domain_scale, 0.0625, 1.0)?;
+        if self.volumes.len() > 8 {
+            return Err("最多支持 8 个独立雾场".into());
+        }
+        for volume in &self.volumes {
+            volume.validate().map_err(|e| e.to_string())?;
+        }
         for value in self.inspection.target {
             range("检查目标 (m)", value, -1000.0, 1000.0)?;
         }

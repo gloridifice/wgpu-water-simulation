@@ -23,8 +23,9 @@
 *.workspaces.json
 .ocean-workspaces-*.tmp
 
-# Local AI agent state and tooling; keep the versioned doco skill.
-.pi/
+# Local AI agent state and tooling; share only the project MCP entry.
+.pi/*
+!.pi/mcp.json
 .agent/
 .agents/
 !.agents/
@@ -32,6 +33,8 @@
 !.agents/skills/
 .agents/skills/*
 !.agents/skills/doco/
+!.agents/skills/ocean-scene-mcp/
+!.agents/skills/fog-scene-mcp/
 .claude/
 .codex/
 .cursor/

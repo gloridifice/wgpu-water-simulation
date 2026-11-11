@@ -10,3 +10,4 @@ pub mod scenes;
 pub mod simulation;
 pub mod terrain;
 pub mod verify;
+pub mod volumes;

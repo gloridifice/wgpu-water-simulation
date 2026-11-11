@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "ocean-scene": {
+      "command": "target/debug/ocean.exe",
+      "args": ["--headless", "--no-settings"],
+      "cwd": ".",
+      "timeout": 300,
+      "exposure": "deferred",
+      "description": "Control one persistent, windowless Ocean GPU scene: inspect and patch parameters, run actions, advance fixed simulation steps and capture PNGs. Never writes personal settings by default."
+    },
+    "fog-scene": {
+      "command": "target/debug/swe-fog.exe",
+      "args": ["--headless", "--scene", "playground", "--no-settings"],
+      "cwd": ".",
+      "timeout": 300,
+      "enabled": false,
+      "exposure": "deferred",
+      "description": "Opt-in persistent, windowless SWE Fog GPU scene with MCP parameter patches, reset, fixed 30 Hz steps, and PNG capture. Disabled by default to avoid starting a second GPU scene."
+    }
+  }
+}

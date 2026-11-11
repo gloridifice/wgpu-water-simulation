@@ -43,22 +43,9 @@ fn height_optical(ray:vec3f,distance:f32)->f32 {
     let density=layer.y/h*(1.0+camera.eye.w*height_noise(surface.xz*0.25));
     return max(0.0,camera.params.x*density*length_approx);
 }
-@fragment fn height_composite(in:Fullscreen)->@location(0) vec4f {
-    let pixel=vec2i(in.position.xy);var color=vec3f(0);
-    // Standard 4x MSAA locations match the opaque sample distances at edges.
+@fragment fn height_accumulate(in:Fullscreen, @builtin(sample_index) sample:u32)->@location(0) f32 {
+    let pixel=vec2i(in.position.xy);
     let offsets=array<vec2f,4>(vec2f(0.375,0.125),vec2f(0.875,0.375),vec2f(0.125,0.625),vec2f(0.625,0.875));
-    for(var sample=0;sample<4;sample++){
-        let ray=view_ray(vec2f(pixel)+offsets[sample]);
-        let background=textureLoad(scene_color,pixel,sample);
-        var optical=0.0;
-        // Same 45-degree limit as render/terrain_filter.rs. A visible wall is
-        // not a horizontal fog receiver even if its XZ maps to a flat floor cell.
-        if background.a>0.5 {
-            optical=height_optical(ray,textureLoad(scene_distance,pixel,sample).x);
-        }
-        let trans=exp(-min(optical,30.0));
-        if camera.params.w==5.0{color+=vec3f(1.0-trans);}
-        else{color+=background.rgb*trans+vec3f(camera.params.y)*(1.0-trans);}
-    }
-    return vec4f(color*0.25,1);
+    if textureLoad(scene_color,pixel,i32(sample)).a<=0.5 {return 0.0;}
+    return height_optical(view_ray(vec2f(pixel)+offsets[sample]),textureLoad(scene_distance,pixel,i32(sample)).x);
 }

@@ -1,4 +1,6 @@
 //! Fog application lifecycle. common owns the actual winit loop and GPU/egui plumbing.
+mod fields;
+mod headless;
 mod ui;
 use crate::{
     Error,
@@ -14,6 +16,7 @@ use common::{
     settings::{Settings, SettingsStore},
 };
 use glam::{Vec2, Vec3};
+pub use headless::run as run_headless;
 use std::{sync::Arc, time::Instant};
 use winit::{
     event::{DeviceEvent, ElementState, WindowEvent},
@@ -36,6 +39,7 @@ struct State {
     source: BakeSource,
     simulation: Simulation,
     renderer: Renderer,
+    extra_fields: Vec<fields::Field>,
     ui: ui::Interface,
     store: Option<SettingsStore<Session>>,
     queue: EventQueue,
@@ -72,22 +76,22 @@ impl State {
     ) -> Result<Self, Error> {
         session.validate()?;
         let native_terrain = terrain;
-        let terrain =
-            native_terrain.at_region(&source, session.grid_resolution, session.domain_scale)?;
-        session.player.place(&terrain)?;
+        session.player.place(&native_terrain)?;
         let desktop = Desktop::new(window).await?;
         eprintln!(
             "SWE Fog | {} | 128-bit state, GPU CFL, analytic thin-layer rendering",
             desktop.gpu.name
         );
-        let simulation = Simulation::new(&desktop.gpu, &terrain)?;
-        let renderer = Renderer::new(
+        let (terrain, simulation, renderer, extra_fields) = fields::build(
             &desktop.gpu,
-            &simulation,
-            &terrain,
+            &native_terrain,
             &source,
+            &session,
             desktop.config.format,
         )?;
+        if session.volumes.is_empty() {
+            session.player.place(&terrain)?;
+        }
         let ui = ui::Interface::new(
             &desktop.window,
             &desktop.gpu,
@@ -106,6 +110,7 @@ impl State {
             source,
             simulation,
             renderer,
+            extra_fields,
             ui,
             store,
             queue: EventQueue::default(),
@@ -138,23 +143,20 @@ impl State {
         self.emitter.clear();
     }
     fn rebuild_grid(&mut self) -> Result<(), Error> {
-        let terrain = self.native_terrain.at_region(
-            &self.source,
-            self.session.grid_resolution,
-            self.session.domain_scale,
-        )?;
-        let mut player = self.session.player.clone();
-        if terrain.metadata.domain != self.terrain.metadata.domain {
-            player.place(&terrain)?;
-        }
-        let simulation = Simulation::new(&self.desktop.gpu, &terrain)?;
-        let renderer = Renderer::new(
+        let (terrain, simulation, renderer, extra_fields) = fields::build(
             &self.desktop.gpu,
-            &simulation,
-            &terrain,
+            &self.native_terrain,
             &self.source,
+            &self.session,
             self.desktop.config.format,
         )?;
+        let mut player = self.session.player.clone();
+        if self.session.volumes.is_empty()
+            && terrain.metadata.domain != self.terrain.metadata.domain
+        {
+            player.place(&terrain)?;
+        }
+        self.extra_fields = extra_fields;
         self.session.player = player;
         self.physics_accumulator = 0.0;
         self.terrain = terrain;
@@ -168,22 +170,21 @@ impl State {
     }
     fn switch_scene(&mut self) -> Result<(), Error> {
         let (source, native_terrain) = self.session.scene.load()?;
-        let terrain = native_terrain.at_region(
+        let (terrain, simulation, renderer, extra_fields) = fields::build(
+            &self.desktop.gpu,
+            &native_terrain,
             &source,
-            self.session.grid_resolution,
-            self.session.domain_scale,
+            &self.session,
+            self.desktop.config.format,
         )?;
         let mut player = self.session.player.clone();
         player.feet = [0.0; 3];
-        player.place(&terrain)?;
-        let simulation = Simulation::new(&self.desktop.gpu, &terrain)?;
-        let renderer = Renderer::new(
-            &self.desktop.gpu,
-            &simulation,
-            &terrain,
-            &source,
-            self.desktop.config.format,
-        )?;
+        player.place(if self.session.volumes.is_empty() {
+            &terrain
+        } else {
+            &native_terrain
+        })?;
+        self.extra_fields = extra_fields;
         // Commit only after every resource is ready; failed switches retain the old scene.
         self.source = source;
         self.native_terrain = native_terrain;
@@ -251,7 +252,11 @@ impl State {
                 self.session.camera[0],
                 jump,
                 1.0 / 60.0,
-                &self.terrain,
+                if self.session.volumes.is_empty() {
+                    &self.terrain
+                } else {
+                    &self.native_terrain
+                },
             );
             if !self.session.paused
                 && self.session.interactions_enabled
@@ -394,12 +399,22 @@ impl WindowScene for State {
         else {
             return Ok(false);
         };
-        if let Some(d) = self.simulation.poll(&self.desktop.gpu)? {
+        if let Some(mut d) = self.simulation.poll(&self.desktop.gpu)? {
+            // A secondary field fault is latched until the explicit reset too.
+            d.fault = d.fault.max(self.diagnostics.fault);
             self.diagnostics = d;
             if d.fault != 0 {
                 self.error = Some(
                     "GPU 稳定步重试耗尽；雾已停止推进，玩家仍可操作。修改参数或重置以恢复。".into(),
                 );
+            }
+        }
+        for field in &mut self.extra_fields {
+            if let Some(d) = field.simulation.poll(&self.desktop.gpu)?
+                && d.fault != 0
+            {
+                self.diagnostics.fault = d.fault;
+                self.error = Some("局部雾场 GPU 稳定步重试耗尽；请重置。".into());
             }
         }
         if let Some(timer) = &mut self.timer {
@@ -423,6 +438,7 @@ impl WindowScene for State {
         let nominal = self.session.fog.noise_frequency
             * 2.0f32.powi(self.session.fog.noise_octaves as i32 - 1);
         let status = ui::Status {
+            view_projection: self.renderer.view_projection(&self.session, self.view_size),
             resolution: self.simulation.resolution,
             domain: self.simulation.domain,
             diagnostics: self.diagnostics,
@@ -452,7 +468,11 @@ impl WindowScene for State {
         if let Some((index, mut session)) = actions.load {
             match session.validate().and_then(|_| {
                 if session.scene == previous_session.scene {
-                    session.player.place(&self.terrain)
+                    session.player.place(if session.volumes.is_empty() {
+                        &self.terrain
+                    } else {
+                        &self.native_terrain
+                    })
                 } else {
                     Ok(())
                 }
@@ -472,7 +492,7 @@ impl WindowScene for State {
         self.reset |= actions.reset;
         if self.session.scene != previous_session.scene {
             if let Err(e) = self.switch_scene() {
-                self.session = previous_session;
+                self.session = previous_session.clone();
                 self.error = Some(format!("场景切换失败：{e}"));
             } else {
                 self.error = None;
@@ -482,12 +502,15 @@ impl WindowScene for State {
             .session
             .grid_resolution
             .unwrap_or(self.native_terrain.metadata.resolution);
-        if (requested_resolution != self.simulation.resolution
-            || domain_scale != self.session.domain_scale)
+        if self.session.scene == previous_session.scene
+            && (requested_resolution != self.simulation.resolution
+                || domain_scale != self.session.domain_scale
+                || previous_session.volumes != self.session.volumes)
             && let Err(e) = self.rebuild_grid()
         {
             self.session.grid_resolution = grid_resolution;
             self.session.domain_scale = domain_scale;
+            self.session.volumes = previous_session.volumes;
             self.reset = false;
             self.error = Some(format!("网格重建失败：{e}"));
         }
@@ -536,6 +559,11 @@ impl WindowScene for State {
         if self.reset {
             self.simulation
                 .encode(gpu, &mut encoder, &self.session.fog, 0.0, true, &[])?;
+            for field in &mut self.extra_fields {
+                field
+                    .simulation
+                    .encode(gpu, &mut encoder, &self.session.fog, 0.0, true, &[])?;
+            }
             self.reset = false;
             self.diagnostics = Diagnostics::default();
             self.error = None;
@@ -546,6 +574,16 @@ impl WindowScene for State {
             let events = self.queue.take();
             self.simulation
                 .encode(gpu, &mut encoder, &self.session.fog, dt, false, &events)?;
+            for field in &mut self.extra_fields {
+                field.simulation.encode(
+                    gpu,
+                    &mut encoder,
+                    &self.session.fog,
+                    dt,
+                    false,
+                    &events,
+                )?;
+            }
             self.fog_accumulator = (self.fog_accumulator - dt).max(0.0);
         }
         if timed {
@@ -555,6 +593,9 @@ impl WindowScene for State {
         }
         if self.diagnostic_clock >= 0.5 {
             self.simulation.request_diagnostics(&mut encoder);
+            for field in &mut self.extra_fields {
+                field.simulation.request_diagnostics(&mut encoder);
+            }
             self.diagnostic_clock = 0.0;
         }
         let render_timed = self.render_timer.as_ref().is_some_and(|t| t.ready());
@@ -568,12 +609,12 @@ impl WindowScene for State {
                 (self.physics_accumulator * 60.0).clamp(0.0, 1.0),
             )
             .to_array();
-        self.renderer.encode(
+        Renderer::encode_fields(
+            &fields::renderers(&self.renderer, self.simulation.domain, &self.extra_fields),
             gpu,
             &mut encoder,
             &self.ui.viewport.view,
             &visual,
-            self.simulation.domain,
             self.view_size,
         );
         if render_timed {
@@ -625,31 +666,39 @@ async fn warm_offscreen(
     terrain: &Terrain,
     source: &BakeSource,
     time: f32,
-) -> Result<(common::gpu::Gpu, Simulation), Error> {
+) -> Result<(common::gpu::Gpu, Vec<(Terrain, Simulation)>), Error> {
     session.validate()?;
-    let terrain = terrain.at_region(source, session.grid_resolution, session.domain_scale)?;
+    let terrains = crate::volumes::bake_fields(terrain, source, session)?;
     if !time.is_finite() || !(0.0..=120.0).contains(&time) {
         return Err("offscreen time must be 0..120 s".into());
     }
     let gpu = common::gpu::Gpu::new(&wgpu::Instance::default(), None).await?;
-    let mut sim = Simulation::new(&gpu, &terrain)?;
+    let mut fields = Vec::new();
+    for terrain in terrains {
+        let sim = Simulation::new(&gpu, &terrain)?;
+        fields.push((terrain, sim));
+    }
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    sim.encode(&gpu, &mut encoder, &session.fog, 0.0, true, &[])?;
+    for (_, sim) in &mut fields {
+        sim.encode(&gpu, &mut encoder, &session.fog, 0.0, true, &[])?;
+    }
     gpu.queue.submit([encoder.finish()]);
     let steps = (time * 30.0).ceil() as u32;
     for _ in 0..steps {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        sim.encode(
-            &gpu,
-            &mut encoder,
-            &session.fog,
-            time / steps.max(1) as f32,
-            false,
-            &[],
-        )?;
+        for (_, sim) in &mut fields {
+            sim.encode(
+                &gpu,
+                &mut encoder,
+                &session.fog,
+                time / steps.max(1) as f32,
+                false,
+                &[],
+            )?;
+        }
         gpu.queue.submit([encoder.finish()]);
     }
-    Ok((gpu, sim))
+    Ok((gpu, fields))
 }
 pub async fn snapshot(
     session: &Session,
@@ -658,28 +707,41 @@ pub async fn snapshot(
     time: f32,
     path: &std::path::Path,
 ) -> Result<(), Error> {
-    let (gpu, sim) = warm_offscreen(session, terrain, source, time).await?;
-    let terrain = terrain.at_region(source, session.grid_resolution, session.domain_scale)?;
-    let (clock, _) = sim.snapshot(&gpu)?;
-    if clock.fault != 0 {
-        return Err("fog snapshot simulation fault".into());
+    let (gpu, fields) = warm_offscreen(session, terrain, source, time).await?;
+    let mut renderers = Vec::new();
+    let mut actual_time = 0.0_f32;
+    for (terrain, sim) in &fields {
+        let (clock, _) = sim.snapshot(&gpu)?;
+        if clock.fault != 0 {
+            return Err("fog snapshot simulation fault".into());
+        }
+        actual_time = clock.simulated_time;
+        renderers.push(Renderer::new(
+            &gpu,
+            sim,
+            terrain,
+            source,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        )?);
     }
-    let renderer = Renderer::new(
-        &gpu,
-        &sim,
-        &terrain,
-        source,
-        wgpu::TextureFormat::Rgba8UnormSrgb,
-    )?;
     let size = [1280, 800];
     let mut placed = session.clone();
-    placed.player.place(&terrain)?;
-    let pixels = renderer.read_image(&gpu, &placed, sim.domain, size)?;
+    placed.player.place(if session.volumes.is_empty() {
+        &fields[0].0
+    } else {
+        terrain
+    })?;
+    let views: Vec<_> = renderers
+        .iter()
+        .zip(&fields)
+        .map(|(r, (_, sim))| (r, sim.domain))
+        .collect();
+    let pixels = Renderer::read_fields(&views, &gpu, &placed, size)?;
     crate::render::save_png(path, &pixels, size)?;
     eprintln!(
         "Fog snapshot {} at actual {:.3} simulated seconds",
         path.display(),
-        clock.simulated_time
+        actual_time
     );
     Ok(())
 }
@@ -690,9 +752,17 @@ pub async fn dump(
     time: f32,
     path: &std::path::Path,
 ) -> Result<(), Error> {
-    let (gpu, sim) = warm_offscreen(session, terrain, source, time).await?;
-    let (clock, field) = sim.snapshot(&gpu)?;
-    let value = serde_json::json!({"version":1,"domain":sim.domain,"resolution":sim.resolution,"simulated_time":clock.simulated_time,"fault":clock.fault,"dropped_time":clock.dropped_time,"layout":["h","m","ux","uz"],"field":field});
+    let (gpu, fields) = warm_offscreen(session, terrain, source, time).await?;
+    let mut values = Vec::new();
+    for (_, sim) in &fields {
+        let (clock, field) = sim.snapshot(&gpu)?;
+        values.push(serde_json::json!({"version":1,"domain":sim.domain,"resolution":sim.resolution,"simulated_time":clock.simulated_time,"fault":clock.fault,"dropped_time":clock.dropped_time,"layout":["h","m","ux","uz"],"field":field}));
+    }
+    let value = if session.volumes.is_empty() {
+        values.remove(0)
+    } else {
+        serde_json::json!({"version":2,"volumes":session.volumes,"fields":values})
+    };
     let mut file = std::fs::File::create_new(path)?;
     std::io::Write::write_all(&mut file, &serde_json::to_vec(&value)?)?;
     Ok(())

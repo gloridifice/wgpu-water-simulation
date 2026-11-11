@@ -359,6 +359,27 @@ impl Renderer {
             published_revision: sim.published_revision.clone(),
         })
     }
+    pub fn view_projection(&self, session: &Session, size: [u32; 2]) -> glam::Mat4 {
+        let inspecting = session.inspection.view != crate::parameters::GeometryView::Off;
+        let orbit = if inspecting {
+            common::camera::Orbit {
+                yaw: session.inspection.orbit[0],
+                pitch: session.inspection.orbit[1],
+                distance: session.inspection.orbit[2],
+                target: Vec3::from_array(session.inspection.target),
+            }
+        } else {
+            self.collision_source.orbit(&session.player, session.camera)
+        };
+        orbit
+            .matrices(
+                55.0f32.to_radians(),
+                size[0].max(1) as f32 / size[1].max(1) as f32,
+                if inspecting { 0.05 } else { 0.1 },
+                if inspecting { 500.0 } else { 200.0 },
+            )
+            .0
+    }
     pub fn encode(
         &self,
         gpu: &Gpu,
@@ -376,6 +397,41 @@ impl Renderer {
         let reconstruction = self.prepare_field(gpu, encoder, session);
         self.prepare_bounds(gpu, encoder, session, reconstruction);
         self.draw(gpu, encoder, target, session, domain, size, reconstruction);
+    }
+    /// Draw the opaque scene once and sum independent fields per MSAA sample.
+    pub fn encode_fields(
+        fields: &[(&Self, [f32; 4])],
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        session: &Session,
+        size: [u32; 2],
+    ) {
+        let first = fields[0].0;
+        if session.inspection.view != crate::parameters::GeometryView::Off {
+            first.encode(gpu, encoder, target, session, fields[0].1, size);
+            return;
+        }
+        let prepared: Vec<_> = fields
+            .iter()
+            .map(|(r, domain)| {
+                let reconstruction = r.prepare_field(gpu, encoder, session);
+                (
+                    r.raster.as_ref().expect("field renderer uses raster"),
+                    *domain,
+                    reconstruction,
+                )
+            })
+            .collect();
+        raster::Raster::encode_fields(
+            &prepared,
+            gpu,
+            encoder,
+            target,
+            session,
+            &first.collision_source,
+            size,
+        );
     }
     fn prepare_field(
         &self,
@@ -507,8 +563,17 @@ impl Renderer {
         domain: [f32; 4],
         size: [u32; 2],
     ) -> Result<Vec<u8>, Error> {
+        Self::read_fields(&[(self, domain)], gpu, session, size)
+    }
+    pub fn read_fields(
+        fields: &[(&Self, [f32; 4])],
+        gpu: &Gpu,
+        session: &Session,
+        size: [u32; 2],
+    ) -> Result<Vec<u8>, Error> {
+        let first = fields[0].0;
         if !matches!(
-            self.format,
+            first.format,
             wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb
         ) {
             return Err("capture renderer must use RGBA8".into());
@@ -523,7 +588,7 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: self.format,
+            format: first.format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
@@ -535,14 +600,25 @@ impl Renderer {
             mapped_at_creation: false,
         });
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        self.encode(
-            gpu,
-            &mut encoder,
-            &texture.create_view(&Default::default()),
-            session,
-            domain,
-            size,
-        );
+        if fields.len() == 1 {
+            first.encode(
+                gpu,
+                &mut encoder,
+                &texture.create_view(&Default::default()),
+                session,
+                fields[0].1,
+                size,
+            );
+        } else {
+            Self::encode_fields(
+                fields,
+                gpu,
+                &mut encoder,
+                &texture.create_view(&Default::default()),
+                session,
+                size,
+            );
+        }
         encoder.copy_texture_to_buffer(
             texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {

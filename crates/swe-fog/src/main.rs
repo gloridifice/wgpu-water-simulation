@@ -18,6 +18,7 @@ cargo run --release -p swe-fog -- [options]
   --settings PATH        Writable session; only explicit Save / Ctrl+S writes
   --no-settings          Do not load or save personal session/layout
   --frames N             Exit after N presented frames; use for smoke checks
+  --headless             One windowless Fog scene controlled by MCP stdio
   --snapshot PATH        Offscreen PNG at --time; never writes personal settings
   --dump PATH            Export actual GPU clock and h,m,ux,uz to JSON
   --time S               Offscreen simulated time, 0..120 seconds (default 3)
@@ -34,6 +35,7 @@ fn next(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, E
 fn run() -> Result<(), Error> {
     let mut args = std::env::args().skip(1);
     let mut verify = false;
+    let mut headless = false;
     let mut bake = None;
     let mut import_glb = None;
     let mut bake_scene = None;
@@ -57,6 +59,7 @@ fn run() -> Result<(), Error> {
                 return Ok(());
             }
             "--verify" => verify = true,
+            "--headless" => headless = true,
             "--bake" => bake = Some(PathBuf::from(next(&mut args, &flag)?)),
             "--import-glb" => import_glb = Some(PathBuf::from(next(&mut args, &flag)?)),
             "--bake-scene" => bake_scene = Some(PathBuf::from(next(&mut args, &flag)?)),
@@ -92,6 +95,20 @@ fn run() -> Result<(), Error> {
             }
             _ => return Err(format!("unknown option {flag}; see --help").into()),
         }
+    }
+    if headless
+        && (verify
+            || frames.is_some()
+            || snapshot.is_some()
+            || dump.is_some()
+            || bake.is_some()
+            || import_glb.is_some()
+            || bake_scene.is_some()
+            || bake_profile.is_some())
+    {
+        return Err(
+            "--headless cannot be combined with --frames, --verify or offline exports/bakes".into(),
+        );
     }
     if verify {
         return pollster::block_on(swe_fog::verify::run());
@@ -145,13 +162,11 @@ fn run() -> Result<(), Error> {
     }
     let offscreen = snapshot.is_some() || dump.is_some();
     if settings.is_some() && (offscreen || no_settings || bake.is_some()) {
-        return Err(
-            "--settings is for writable windows; use --config for read-only exports".into(),
-        );
+        return Err("--settings requires a writable window or --headless; use --config for read-only exports".into());
     }
     let (mut session, store) = if let Some(path) = config {
         (common::settings::load_config::<Session>(&path)?, None)
-    } else if offscreen || no_settings || bake.is_some() {
+    } else if offscreen || headless && settings.is_none() || no_settings || bake.is_some() {
         (Session::default(), None)
     } else {
         let (session, store) = SettingsStore::<Session>::open(settings.unwrap_or_else(|| {
@@ -212,6 +227,9 @@ fn run() -> Result<(), Error> {
     }
     if offscreen {
         return Ok(());
+    }
+    if headless {
+        return swe_fog::app::run_headless(session, terrain, source, store);
     }
     swe_fog::app::run(session, terrain, source, store, frames)
 }

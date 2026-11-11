@@ -33,6 +33,7 @@ struct Targets {
     occlusion: wgpu::TextureView,
     volume_bind: wgpu::BindGroup,
     composite_bind: wgpu::BindGroup,
+    height_bind: wgpu::BindGroup,
 }
 pub(super) struct Raster {
     uniform: wgpu::Buffer,
@@ -58,6 +59,7 @@ pub(super) struct Raster {
     height_fog: wgpu::RenderPipeline,
     distance_layout: wgpu::BindGroupLayout,
     composite_layout: wgpu::BindGroupLayout,
+    height_layout: wgpu::BindGroupLayout,
     targets: RefCell<Option<Targets>>,
     vertex_count: u32,
     cell_count: u32,
@@ -321,6 +323,16 @@ impl Raster {
             label: Some("fog composition"),
             entries: &[ms_texture(0), ms_texture(1), ms_texture(2)],
         });
+        let height_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("height fog scene inputs"),
+            entries: &[ms_texture(0), ms_texture(1)],
+        });
+        let height_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("height fog accumulation"),
+                bind_group_layouts: &[Some(&layout), Some(&height_layout)],
+                immediate_size: 0,
+            });
         let scene_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("fog opaque pipeline"),
             bind_group_layouts: &[Some(&layout)],
@@ -405,11 +417,7 @@ impl Raster {
                 },
                 depth_stencil,
                 multisample: wgpu::MultisampleState {
-                    count: if matches!(fragment, "composite" | "height_composite") {
-                        1
-                    } else {
-                        4
-                    },
+                    count: if fragment == "composite" { 1 } else { 4 },
                     ..Default::default()
                 },
                 multiview_mask: None,
@@ -526,9 +534,15 @@ impl Raster {
         let height_fog = pipeline(
             "screen-space height fog",
             "fullscreen",
-            "height_composite",
-            &resolve_layout,
-            &[color(format, None)],
+            "height_accumulate",
+            &height_pipeline_layout,
+            &[color(
+                wgpu::TextureFormat::R16Float,
+                Some(wgpu::BlendState {
+                    color: add,
+                    alpha: add,
+                }),
+            )],
             None,
             None,
         );
@@ -562,6 +576,7 @@ impl Raster {
             height_fog,
             distance_layout,
             composite_layout,
+            height_layout,
             targets: RefCell::new(None),
             vertex_count,
             cell_count: count as u32,
@@ -609,7 +624,13 @@ impl Raster {
             layout: &self.composite_layout,
             entries: &[entry(0, &distance), entry(1, &color), entry(2, &optical)],
         });
+        let height_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("height fog inputs"),
+            layout: &self.height_layout,
+            entries: &[entry(0, &distance), entry(1, &color)],
+        });
         Targets {
+            height_bind,
             size,
             color,
             distance,
@@ -632,6 +653,73 @@ impl Raster {
         size: [u32; 2],
         reconstruction: Reconstruction,
         queries: Option<&wgpu::QuerySet>,
+    ) {
+        let mut targets = self.targets.borrow_mut();
+        if targets.as_ref().is_none_or(|t| t.size != size) {
+            *targets = Some(self.targets(&gpu.device, size));
+        }
+        self.encode_layer(
+            gpu,
+            encoder,
+            target,
+            session,
+            source,
+            domain,
+            size,
+            reconstruction,
+            queries,
+            targets.as_ref().unwrap(),
+            true,
+            true,
+        );
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn encode_fields(
+        fields: &[(&Self, [f32; 4], Reconstruction)],
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        session: &Session,
+        source: &Collider,
+        size: [u32; 2],
+    ) {
+        let first = fields[0].0;
+        let mut targets = first.targets.borrow_mut();
+        if targets.as_ref().is_none_or(|t| t.size != size) {
+            *targets = Some(first.targets(&gpu.device, size));
+        }
+        for (i, (field, domain, reconstruction)) in fields.iter().enumerate() {
+            field.encode_layer(
+                gpu,
+                encoder,
+                target,
+                session,
+                source,
+                *domain,
+                size,
+                *reconstruction,
+                None,
+                targets.as_ref().unwrap(),
+                i == 0,
+                i + 1 == fields.len(),
+            );
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn encode_layer(
+        &self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        session: &Session,
+        source: &Collider,
+        domain: [f32; 4],
+        size: [u32; 2],
+        reconstruction: Reconstruction,
+        queries: Option<&wgpu::QuerySet>,
+        t: &Targets,
+        first: bool,
+        last: bool,
     ) {
         let orbit = source.orbit(&session.player, session.camera);
         let (view_projection, inverse) = orbit.matrices(
@@ -724,11 +812,6 @@ impl Raster {
                 end_of_pass_write_index: Some(index + 1),
             })
         };
-        let mut targets = self.targets.borrow_mut();
-        if targets.as_ref().is_none_or(|t| t.size != size) {
-            *targets = Some(self.targets(&gpu.device, size));
-        }
-        let t = targets.as_ref().unwrap();
         let attachment = |view| {
             Some(wgpu::RenderPassColorAttachment {
                 view,
@@ -740,7 +823,7 @@ impl Raster {
                 },
             })
         };
-        {
+        if first {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("fog raster opaque scene"),
                 timestamp_writes: timestamps(2),
@@ -763,17 +846,9 @@ impl Raster {
             pass.set_pipeline(&self.capsule);
             pass.draw(0..3, 0..1);
         }
-        if height_mode {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("screen-space height fog composition"),
-                color_attachments: &[attachment(target)],
-                ..Default::default()
-            });
-            pass.set_pipeline(&self.height_fog);
-            pass.set_bind_group(0, &self.bind, &[]);
-            pass.set_bind_group(1, &t.composite_bind, &[]);
-            pass.draw(0..3, 0..1);
-            return;
+        let mut optical_attachment = attachment(&t.optical).unwrap();
+        if !first {
+            optical_attachment.ops.load = wgpu::LoadOp::Load;
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -783,10 +858,15 @@ impl Raster {
                     beginning_of_pass_write_index: Some(4),
                     end_of_pass_write_index: None,
                 }),
-                color_attachments: &[attachment(&t.optical)],
+                color_attachments: &[Some(optical_attachment)],
                 ..Default::default()
             });
-            if session.visible && (session.debug_view == 0 || session.debug_view == 5) {
+            if height_mode {
+                pass.set_pipeline(&self.height_fog);
+                pass.set_bind_group(0, &self.bind, &[]);
+                pass.set_bind_group(1, &t.height_bind, &[]);
+                pass.draw(0..3, 0..1);
+            } else if session.visible && (session.debug_view == 0 || session.debug_view == 5) {
                 pass.set_pipeline(&self.volume);
                 pass.set_bind_group(0, &self.bind, &[]);
                 pass.set_bind_group(1, &t.volume_bind, &[]);
@@ -796,7 +876,7 @@ impl Raster {
                 pass.draw_indirect(&self.draws, 20);
             }
         }
-        {
+        if !height_mode {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("fog opacity occlusion mask"),
                 color_attachments: &[],
@@ -815,7 +895,7 @@ impl Raster {
             pass.set_bind_group(1, &t.composite_bind, &[]);
             pass.draw(0..3, 0..1);
         }
-        {
+        if !height_mode {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("far fog with early opacity rejection"),
                 timestamp_writes: queries.map(|query_set| wgpu::RenderPassTimestampWrites {
@@ -849,7 +929,7 @@ impl Raster {
                 pass.draw_indirect(&self.draws, 60);
             }
         }
-        {
+        if last {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("fog optical composition"),
                 timestamp_writes: timestamps(6),

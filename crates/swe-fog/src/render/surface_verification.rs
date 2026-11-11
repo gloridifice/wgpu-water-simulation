@@ -57,6 +57,7 @@ fn opacity_at(p: Vec3, pixels: &[u8], session: &Session, source: &BakeSource) ->
     pixels[((y * SIZE[0] + x) * 4) as usize]
 }
 pub(crate) fn run(gpu: &Gpu) -> Result<(), Error> {
+    verify_multiple_fields(gpu)?;
     let mut session = Session {
         height_fog_noise: 0.0,
         debug_view: 5,
@@ -112,6 +113,93 @@ pub(crate) fn run(gpu: &Gpu) -> Result<(), Error> {
     }
     eprintln!(
         "Fog terrain eligibility: PASS (vertical receiver rejected with visible floor control; gentle/steep heightfields in both rendering modes)"
+    );
+    Ok(())
+}
+
+fn verify_multiple_fields(gpu: &Gpu) -> Result<(), Error> {
+    let source = plane(0.0);
+    let volume = crate::volumes::FogVolume {
+        bottom: [0.0, -1.0, 0.0],
+        size: [8.0, 2.0, 8.0],
+        ..Default::default()
+    };
+    let terrain = volume.bake(&source, [32, 32])?;
+    let mut session = Session {
+        debug_view: 5,
+        height_fog_noise: 0.0,
+        camera: [0.0, 1.0, 10.0],
+        ..Default::default()
+    };
+    session.player.feet = [0.0, 5.0, 0.0];
+    session.fog.noise_amplitude = 0.0;
+    session.fog.height_offset = 0.0;
+    session.fog.base_height = 0.25;
+    session.fog.extinction = 0.7;
+    let mut renderers = Vec::new();
+    for _ in 0..2 {
+        let mut sim = Simulation::new(gpu, &terrain)?;
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        sim.encode(gpu, &mut encoder, &session.fog, 0.0, true, &[])?;
+        gpu.queue.submit([encoder.finish()]);
+        renderers.push(super::Renderer::new(
+            gpu,
+            &sim,
+            &terrain,
+            &source,
+            wgpu::TextureFormat::Rgba8Unorm,
+        )?);
+    }
+    for mode in [RenderMode::HeightFog, RenderMode::Tetrahedra] {
+        session.render_mode = mode;
+        let domain = terrain.metadata.domain;
+        let single = renderers[0].read_image(gpu, &session, domain, SIZE)?;
+        let both = super::Renderer::read_fields(
+            &[(&renderers[0], domain), (&renderers[1], domain)],
+            gpu,
+            &session,
+            SIZE,
+        )?;
+        let reversed = super::Renderer::read_fields(
+            &[(&renderers[1], domain), (&renderers[0], domain)],
+            gpu,
+            &session,
+            SIZE,
+        )?;
+        // Two identical media equal one medium with twice the extinction,
+        // including MSAA silhouettes where squaring pixel-average T is invalid.
+        let mut doubled = session.clone();
+        doubled.fog.extinction *= 2.0;
+        let reference = renderers[0].read_image(gpu, &doubled, domain, SIZE)?;
+        let mut samples = 0;
+        for (((a, b), c), expected) in single
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(both.as_chunks::<4>().0)
+            .zip(reversed.as_chunks::<4>().0)
+            .zip(reference.as_chunks::<4>().0)
+        {
+            if b[0].abs_diff(c[0]) > 1 {
+                return Err("fog volume ordering changed optical composition".into());
+            }
+            if b[0].abs_diff(expected[0]) > 2 {
+                return Err(format!(
+                    "multi-field optical sum {mode:?}: both={}, expected={}",
+                    b[0], expected[0]
+                )
+                .into());
+            }
+            if (20..100).contains(&a[0]) && b[0] > a[0] + 5 {
+                samples += 1;
+            }
+        }
+        if samples < 100 {
+            return Err("multi-field verification has insufficient fog coverage".into());
+        }
+    }
+    eprintln!(
+        "Fog multiple fields: PASS (independent resources, shared depth, per-sample optical sum, both render modes)"
     );
     Ok(())
 }

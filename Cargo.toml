@@ -12,7 +12,12 @@ default-run = "ocean"
 
 [features]
 default = ["ocean"]
-ocean = ["dep:common", "dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_extras", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:yummy_egui", "dep:gltf", "dep:sha2"]
+ocean = ["dep:common", "common/mcp", "dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck", "dep:pollster", "dep:png", "dep:image", "dep:egui", "dep:egui_extras", "dep:egui_dock", "dep:egui-winit", "dep:egui-wgpu", "dep:serde", "dep:serde_json", "dep:tokio", "dep:yummy_egui", "dep:gltf", "dep:sha2"]
+
+[dependencies.tokio]
+version = "1"
+features = ["rt-multi-thread"]
+optional = true
 
 [dependencies.common]
 path = "crates/common"
