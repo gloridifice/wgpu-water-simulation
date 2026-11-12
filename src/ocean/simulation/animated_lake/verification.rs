@@ -7,11 +7,11 @@ use crate::ocean::{
 };
 fn read(
     gpu: &Gpu,
-    lake: &AnimatedLake,
+    texture: &wgpu::Texture,
     encoder: wgpu::CommandEncoder,
 ) -> Result<Vec<[f32; 4]>, Error> {
     let mut encoder = encoder;
-    let n = lake.n;
+    let n = texture.width();
     let output = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("lake verification readback"),
         size: u64::from(n * n) * 16,
@@ -19,7 +19,7 @@ fn read(
         mapped_at_creation: false,
     });
     encoder.copy_texture_to_buffer(
-        lake.field.as_image_copy(),
+        texture.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
             buffer: &output,
             layout: wgpu::TexelCopyBufferLayout {
@@ -28,7 +28,7 @@ fn read(
                 rows_per_image: Some(n),
             },
         },
-        lake.field.size(),
+        texture.size(),
     );
     gpu.queue.submit([encoder.finish()]);
     Ok(gpu
@@ -58,7 +58,7 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
         let encoder = gpu.device.create_command_encoder(&Default::default());
         let mut encoder = encoder;
         lake.encode(gpu, &mut encoder, 2.0, c, false, false);
-        let field = read(gpu, &lake, encoder)?;
+        let field = read(gpu, &lake.field, encoder)?;
         let n = lake.n as usize;
         let step = lake.extent / (lake.n - 1) as f32;
         let mut peak = 0.0_f32;
@@ -103,7 +103,7 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
             lake.waves.emit(&c);
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
             lake.encode(gpu, &mut encoder, t, c, false, false);
-            handoff.push(read(gpu, &lake, encoder)?);
+            handoff.push(read(gpu, &lake.field, encoder)?);
         }
         let jump = handoff[0]
             .iter()
@@ -115,7 +115,7 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
         }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         lake.encode(gpu, &mut encoder, 0.0, c, false, true);
-        if read(gpu, &lake, encoder)?.iter().any(|v| v[0] != 0.0) {
+        if read(gpu, &lake.field, encoder)?.iter().any(|v| v[0] != 0.0) {
             return Err("clear left a lake wave".into());
         }
         println!(
@@ -134,6 +134,7 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
     }
     angular_seam_and_time_origin(gpu)?;
     shared_fft(gpu)?;
+    foam_flow::run(gpu)?;
     benchmark(gpu)?;
     Ok(())
 }
@@ -157,7 +158,7 @@ fn angular_seam_and_time_origin(gpu: &Gpu) -> Result<(), Error> {
         lake.waves.emit(&c);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         lake.encode(gpu, &mut encoder, 2.0, c, false, false);
-        let field = read(gpu, &lake, encoder)?;
+        let field = read(gpu, &lake.field, encoder)?;
         if let Some(expected) = &reference {
             let error = expected
                 .iter()
@@ -215,7 +216,7 @@ fn shared_fft(gpu: &Gpu) -> Result<(), Error> {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         // Clear only the procedural events; it must not erase or reset FFT.
         lake.encode(gpu, &mut encoder, dt, c, false, true);
-        let field = read(gpu, &lake, encoder)?;
+        let field = read(gpu, &lake.field, encoder)?;
         let size = lake.n as usize;
         let spacing = f64::from(lake.extent) / (size - 1) as f64;
         let phase =
@@ -273,6 +274,8 @@ fn shared_fft(gpu: &Gpu) -> Result<(), Error> {
     Ok(())
 }
 
+mod foam_flow;
+
 fn benchmark(gpu: &Gpu) -> Result<(), Error> {
     let Some(mut timer) = common::gpu::timer::GpuTimer::new(gpu) else {
         println!("GPU lake timing: timestamp unsupported");
@@ -280,11 +283,12 @@ fn benchmark(gpu: &Gpu) -> Result<(), Error> {
     };
     let layout = AnimatedLake::layout(&gpu.device);
     let spectrum = super::FftWaves::new(gpu, Default::default())?;
-    for full in [false, true] {
+    for (full, foam_strength) in [(false, 0.0), (true, 0.0), (false, 1.0)] {
         let c = LakeConfig {
             enabled: true,
             automatic: !full,
             reflect: !full,
+            foam_strength,
             ..Default::default()
         };
         let mut lake = AnimatedLake::new(gpu, c, &layout, &spectrum)?;
@@ -302,7 +306,7 @@ fn benchmark(gpu: &Gpu) -> Result<(), Error> {
             timer.mark(&mut encoder, 1);
             timer.resolve(&mut encoder);
             // Explicit verification only: this readback also waits for timestamp completion.
-            let _ = read(gpu, &lake, encoder)?;
+            let _ = read(gpu, &lake.field, encoder)?;
             timer.poll(gpu);
             let sample = timer
                 .latest
@@ -314,10 +318,11 @@ fn benchmark(gpu: &Gpu) -> Result<(), Error> {
         }
         samples.sort_by(f64::total_cmp);
         println!(
-            "GPU lake compute: {}x{}, {} active waves, median {:.3} ms, max {:.3} ms (9 samples, warm-up excluded)",
+            "GPU lake compute: {}x{}, {} active waves, foam flow {}, median {:.3} ms, max {:.3} ms (9 samples, warm-up excluded)",
             lake.n,
             lake.n,
             lake.waves.active_count(),
+            foam_strength > 0.0,
             samples[4],
             samples[8]
         );

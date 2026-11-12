@@ -23,6 +23,8 @@ struct Uniform {
     grid: [f32; 4],
     options: [f32; 4],
     fft: [f32; 4],
+    foam: [f32; 4],
+    foam_flow: [f32; 4],
 }
 
 pub struct AnimatedLake {
@@ -37,11 +39,15 @@ pub struct AnimatedLake {
     pub uniform: wgpu::Buffer,
     pub terrain: wgpu::TextureView,
     pub field: wgpu::Texture,
+    /// Two render-only material displacements (A.xy, B.zw), in metres.
+    foam_motion: wgpu::Texture,
     records: wgpu::Buffer,
     height_pipeline: wgpu::ComputePipeline,
     normal_pipeline: wgpu::ComputePipeline,
+    foam_flow_pipeline: wgpu::ComputePipeline,
     height_bind: wgpu::BindGroup,
     normal_bind: wgpu::BindGroup,
+    foam_flow_bind: wgpu::BindGroup,
 }
 impl AnimatedLake {
     pub fn layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -78,6 +84,16 @@ impl AnimatedLake {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         })
     }
@@ -104,6 +120,8 @@ impl AnimatedLake {
             &[Uniform {
                 grid: [n as f32, extent, 0.0, 0.0],
                 options: [0.0; 4],
+                foam: [0.0; 4],
+                foam_flow: [0.0; 4],
                 fft: [
                     spectrum.config.resolution as f32,
                     spectrum.config.length,
@@ -162,6 +180,11 @@ impl AnimatedLake {
             .create_view(&Default::default());
         let field = texture("lake height and slopes", wgpu::TextureFormat::Rgba32Float);
         let view = field.create_view(&Default::default());
+        let foam_motion = texture(
+            "lake foam material offsets",
+            wgpu::TextureFormat::Rgba32Float,
+        );
+        let foam_view = foam_motion.create_view(&Default::default());
         let shader = gpu
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -170,7 +193,9 @@ impl AnimatedLake {
                     concat!(
                         include_str!("../spectral/shaders/sample.wgsl"),
                         "\n",
-                        include_str!("shaders/waves.wgsl")
+                        include_str!("shaders/waves.wgsl"),
+                        "\n",
+                        include_str!("shaders/foam_flow.wgsl")
                     )
                     .into(),
                 ),
@@ -188,6 +213,7 @@ impl AnimatedLake {
         };
         let height_pipeline = pipeline("height_main");
         let normal_pipeline = pipeline("normal_main");
+        let foam_flow_pipeline = pipeline("foam_flow_main");
         let make_bind =
             |label, layout: &wgpu::BindGroupLayout, entries: &[wgpu::BindGroupEntry<'_>]| {
                 gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -240,6 +266,24 @@ impl AnimatedLake {
                 },
             ],
         );
+        let foam_flow_bind = make_bind(
+            "lake foam flow inputs",
+            &foam_flow_pipeline.get_bind_group_layout(0),
+            &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&terrain),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&foam_view),
+                },
+            ],
+        );
         let bind = make_bind(
             "lake render fields",
             layout,
@@ -256,6 +300,10 @@ impl AnimatedLake {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&foam_view),
+                },
             ],
         );
         Ok(Self {
@@ -269,11 +317,14 @@ impl AnimatedLake {
             uniform,
             terrain,
             field,
+            foam_motion,
             records,
             height_pipeline,
             normal_pipeline,
+            foam_flow_pipeline,
             height_bind,
             normal_bind,
+            foam_flow_bind,
         })
     }
     pub fn deactivate(&mut self, gpu: &Gpu) {
@@ -313,6 +364,19 @@ impl AnimatedLake {
         }
         let u = Uniform {
             grid: [self.n as f32, self.extent, time, records.len() as f32],
+            foam: [
+                config.foam_strength,
+                config.foam_width,
+                config.foam_size,
+                0.0,
+            ],
+            // Absolute f64 clock: wave-record time rebasing must not reset UV flow.
+            foam_flow: [
+                config.foam_flow_speed,
+                config.foam_flow_period,
+                (self.waves.time / f64::from(config.foam_flow_period)).rem_euclid(1.0) as f32,
+                config.foam_flow_distortion,
+            ],
             options: [
                 f32::from(config.enabled),
                 f32::from(config.mode == crate::ocean::parameters::lake::PropagationMode::Sdf),
@@ -331,6 +395,7 @@ impl AnimatedLake {
         for (pipeline, bind) in [
             (&self.height_pipeline, &self.height_bind),
             (&self.normal_pipeline, &self.normal_bind),
+            (&self.foam_flow_pipeline, &self.foam_flow_bind),
         ] {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(pipeline);

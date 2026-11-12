@@ -1,7 +1,8 @@
-struct LakeParams { grid:vec4<f32>, options:vec4<f32>, fft:vec4<f32> }
+struct LakeParams { grid:vec4<f32>, options:vec4<f32>, fft:vec4<f32>, foam:vec4<f32>, foam_flow:vec4<f32> }
 @group(1) @binding(0) var<uniform> lake:LakeParams;
 @group(1) @binding(1) var lake_terrain:texture_2d<f32>;
 @group(1) @binding(2) var lake_field:texture_2d<f32>;
+@group(1) @binding(3) var lake_foam_motion:texture_2d<f32>;
 fn lake_sample(map:texture_2d<f32>,world:vec2<f32>) -> vec4<f32> {
     let grid=clamp((world/lake.grid.y+vec2(0.5))*(lake.grid.x-1.0),vec2(0.0),vec2(lake.grid.x-1.001));
     let p=vec2<i32>(floor(grid));let f=fract(grid);

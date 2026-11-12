@@ -164,6 +164,7 @@ impl OpticsConfig {
         let mut config = Self::default();
         config.lake.enabled = true;
         config.lake.fft_strength = 0.2;
+        config.lake.foam_strength = 0.85;
         config
     }
 

@@ -1,4 +1,4 @@
-struct LakeUniform { grid:vec4<f32>, options:vec4<f32>, fft:vec4<f32> }
+struct LakeUniform { grid:vec4<f32>, options:vec4<f32>, fft:vec4<f32>, foam:vec4<f32>, foam_flow:vec4<f32> }
 struct Wave { direction_birth_life:vec4<f32>, propagation:vec4<f32>, envelope:vec4<f32>, appearance:vec4<f32>, limits:vec4<f32> }
 @group(0) @binding(0) var<uniform> lake:LakeUniform;
 @group(0) @binding(1) var terrain:texture_2d<f32>;

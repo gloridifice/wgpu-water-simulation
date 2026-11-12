@@ -68,6 +68,17 @@ pub struct LakeConfig {
     pub amplitude: f32,
     /// Shared FFT height multiplier; zero preserves legacy procedural-only water.
     pub fft_strength: f32,
+    /// Render-only foam opacity; zero preserves legacy lake appearance.
+    pub foam_strength: f32,
+    /// Shore band width and cellular pattern size, in world metres.
+    pub foam_width: f32,
+    pub foam_size: f32,
+    /// Inward render-only flow, metres per simulation second; zero freezes the UVs.
+    pub foam_flow_speed: f32,
+    /// Duration of each UV advection/reset cycle, simulation seconds.
+    pub foam_flow_period: f32,
+    /// Nearshore speed-gradient strength, not a density or wave-height multiplier.
+    pub foam_flow_distortion: f32,
     pub tip_ratio: f32,
     pub reflect: bool,
     pub reflectivity: f32,
@@ -95,6 +106,12 @@ impl Default for LakeConfig {
             jitter_deg: 18.0,
             amplitude: 0.09,
             fft_strength: 0.0,
+            foam_strength: 0.0,
+            foam_width: 5.0,
+            foam_size: 2.0,
+            foam_flow_speed: 0.35,
+            foam_flow_period: 6.0,
+            foam_flow_distortion: 1.0,
             tip_ratio: 0.2,
             reflect: true,
             reflectivity: 0.4,
@@ -127,6 +144,12 @@ impl LakeConfig {
             ("jitter", self.jitter_deg, 0.0, 180.0),
             ("amplitude", self.amplitude, 0.0, 0.5),
             ("FFT strength", self.fft_strength, 0.0, 1.0),
+            ("foam strength", self.foam_strength, 0.0, 1.0),
+            ("foam width", self.foam_width, 0.1, 10.0),
+            ("foam size", self.foam_size, 0.1, 5.0),
+            ("foam flow speed", self.foam_flow_speed, 0.0, 2.0),
+            ("foam flow period", self.foam_flow_period, 1.0, 20.0),
+            ("foam flow distortion", self.foam_flow_distortion, 0.0, 1.0),
             ("tip width ratio", self.tip_ratio, 0.05, 1.0),
             ("reflectivity", self.reflectivity, 0.0, 0.95),
             ("reflection half life", self.reflected_half_life, 0.1, 30.0),
@@ -168,11 +191,15 @@ mod tests {
             serde_json::from_str(r#"{"optics":{"lake":{"enabled":true,"mode":"sdf"}}}"#).unwrap();
         assert!(old_lake.optics.lake.enabled);
         assert_eq!(old_lake.optics.lake.fft_strength, 0.0);
+        assert_eq!(old_lake.optics.lake.foam_flow_distortion, 1.0);
         assert_eq!(old_lake.optics.lake.mode, PropagationMode::Sdf);
         let mut settings = legacy;
         settings.optics.lake.enabled = true;
         settings.optics.lake.mode = PropagationMode::Sdf;
         settings.optics.lake.fft_strength = 0.37;
+        settings.optics.lake.foam_flow_speed = 0.72;
+        settings.optics.lake.foam_flow_period = 9.0;
+        settings.optics.lake.foam_flow_distortion = 0.6;
         let restored: crate::ocean::settings::SavedSettings =
             serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
         assert_eq!(restored, settings);
@@ -185,6 +212,39 @@ mod tests {
         for strength in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
             let lake = LakeConfig {
                 fft_strength: strength,
+                ..Default::default()
+            };
+            assert!(lake.validate().is_err());
+        }
+        for (speed, period) in [(0.0, 1.0), (2.0, 20.0)] {
+            let lake = LakeConfig {
+                foam_flow_speed: speed,
+                foam_flow_period: period,
+                ..Default::default()
+            };
+            lake.validate().unwrap();
+        }
+        for (speed, period) in [
+            (f32::NAN, 6.0),
+            (f32::INFINITY, 6.0),
+            (-0.01, 6.0),
+            (2.01, 6.0),
+            (0.35, 0.0),
+            (0.35, 0.99),
+            (0.35, 20.01),
+            (0.35, f32::NAN),
+            (0.35, f32::INFINITY),
+        ] {
+            let lake = LakeConfig {
+                foam_flow_speed: speed,
+                foam_flow_period: period,
+                ..Default::default()
+            };
+            assert!(lake.validate().is_err());
+        }
+        for distortion in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
+            let lake = LakeConfig {
+                foam_flow_distortion: distortion,
                 ..Default::default()
             };
             assert!(lake.validate().is_err());
