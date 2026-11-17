@@ -387,7 +387,7 @@ impl AnimatedLake {
                 self.spectrum.config.resolution as f32,
                 self.spectrum.config.length,
                 config.fft_strength,
-                0.0,
+                f32::from(config.fft_shore_fade),
             ],
         };
         gpu.queue

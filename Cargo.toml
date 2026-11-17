@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/common", "crates/swe-fog", "crates/tui-2d-prototype"]
+members = [".", "crates/common", "crates/tui-2d-prototype"]
 default-members = ["."]
 exclude = ["crates/tall-cell-fluid"]
 resolver = "3"

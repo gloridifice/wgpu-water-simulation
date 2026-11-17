@@ -34,7 +34,6 @@
 .agents/skills/*
 !.agents/skills/doco/
 !.agents/skills/ocean-scene-mcp/
-!.agents/skills/fog-scene-mcp/
 .claude/
 .codex/
 .cursor/

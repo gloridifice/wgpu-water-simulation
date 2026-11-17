@@ -49,16 +49,42 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
             automatic: false,
             mode,
             jitter_deg: 0.0,
+            spread_jitter: 0.0,
+            width_jitter: 0.0,
+            position_jitter: 0.0,
             ..Default::default()
         };
         c.terrain.resolution = 128;
         let scene = crate::ocean::scene::lake::LakeScene::build(&c)?;
         let mut lake = AnimatedLake::new(gpu, c, &layout, &spectrum)?;
         lake.waves.emit(&c);
-        let encoder = gpu.device.create_command_encoder(&Default::default());
-        let mut encoder = encoder;
-        lake.encode(gpu, &mut encoder, 2.0, c, false, false);
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        lake.encode(gpu, &mut encoder, 1.0, c, false, false);
+        let early = read(gpu, &lake.field, encoder)?;
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        lake.encode(gpu, &mut encoder, 1.0, c, false, false);
         let field = read(gpu, &lake.field, encoder)?;
+        // Observe actual GPU motion in each propagation field, independent of records.
+        let coordinate = match mode {
+            PropagationMode::Depth => 1,
+            PropagationMode::Sdf => 2,
+        };
+        let centroid = |values: &[[f32; 4]]| {
+            let (weighted, energy) =
+                values
+                    .iter()
+                    .zip(&scene.cells)
+                    .fold((0.0, 0.0), |(sum, weight), (v, cell)| {
+                        let e = f64::from(v[0]).powi(2);
+                        (sum + e * f64::from(cell[coordinate]), weight + e)
+                    });
+            weighted / energy
+        };
+        if centroid(&field).partial_cmp(&(centroid(&early) + 0.02))
+            != Some(std::cmp::Ordering::Greater)
+        {
+            return Err("lake wave did not propagate from shore toward larger coordinates".into());
+        }
         let n = lake.n as usize;
         let step = lake.extent / (lake.n - 1) as f32;
         let mut peak = 0.0_f32;
@@ -119,7 +145,7 @@ pub fn run(gpu: &Gpu) -> Result<(), Error> {
             return Err("clear left a lake wave".into());
         }
         println!(
-            "GPU lake {mode:?}: wet/dry, trough bound, height/slopes, sector, reflection handoff (max jump {jump:.3e}), clear OK"
+            "GPU lake {mode:?}: wet/dry, trough bound, height/slopes, inward motion, sector, reflection handoff (max jump {jump:.3e}), clear OK"
         );
         results.push(field);
     }
@@ -145,6 +171,9 @@ fn angular_seam_and_time_origin(gpu: &Gpu) -> Result<(), Error> {
         enabled: true,
         automatic: false,
         jitter_deg: 0.0,
+        spread_jitter: 0.0,
+        width_jitter: 0.0,
+        position_jitter: 0.0,
         ..Default::default()
     };
     c.terrain.resolution = 128;
@@ -211,8 +240,17 @@ fn shared_fft(gpu: &Gpu) -> Result<(), Error> {
         t * t * (3.0 - 2.0 * t)
     };
     let mut previous = None;
-    for (dt, strength) in [(0.0, 0.3), (0.7, 0.3), (0.0, 0.3), (0.0, 0.6), (0.0, 0.0)] {
+    for (dt, strength, fade) in [
+        (0.0, 0.3, true),
+        (0.7, 0.3, true),
+        (0.0, 0.3, true),
+        (0.0, 0.6, true),
+        (0.0, 0.6, false),
+        (0.0, 0.6, true),
+        (0.0, 0.0, false),
+    ] {
         c.fft_strength = strength;
+        c.fft_shore_fade = fade;
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         // Clear only the procedural events; it must not erase or reset FFT.
         lake.encode(gpu, &mut encoder, dt, c, false, true);
@@ -237,8 +275,11 @@ fn shared_fft(gpu: &Gpu) -> Result<(), Error> {
                 } else {
                     ((cosine(cell) * (1.0 - t) + cosine(cell + 1.0) * t)
                         * f64::from(strength)
-                        * smooth(-bed / 0.5)
-                        * smooth(distance))
+                        * if fade {
+                            smooth(-bed / 0.5) * smooth(distance)
+                        } else {
+                            1.0
+                        })
                     .max(bed * 0.7)
                 };
                 maximum = maximum.max((f64::from(field[i][0]) - expected).abs());
@@ -269,7 +310,7 @@ fn shared_fft(gpu: &Gpu) -> Result<(), Error> {
         previous = Some(field);
     }
     println!(
-        "GPU shared FFT lake: analytic traveling cosine, periodic metric mapping, shore mask, gain, final slopes, pause/clear/off OK"
+        "GPU shared FFT lake: analytic traveling cosine, periodic metric mapping, shore fade on/off, gain, final slopes, pause/clear/off OK"
     );
     Ok(())
 }

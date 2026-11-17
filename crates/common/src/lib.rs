@@ -1,4 +1,4 @@
-//! Desktop/GPU infrastructure shared by the Ocean and fog applications.
+//! Reusable desktop/GPU infrastructure for simulation applications.
 //! No simulation parameters, business panels or application-specific paths live here.
 pub type Error = Box<dyn std::error::Error>;
 pub mod app;

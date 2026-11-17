@@ -13,7 +13,11 @@ fn bounded_fft_height(world:vec2<f32>, bed:f32, shore_distance:f32) -> f32 {
     let grid=(world/lake.fft.y+vec2(0.5))*lake.fft.x;
     // Fade by physical depth/distance, not the selected propagation coordinate.
     // No horizontal displacement: the fixed wet mask and rock footprint stay aligned.
-    return sample_field(grid,0u)*lake.fft.z*smoothstep(0.0,0.5,-bed)*smoothstep(0.0,1.0,shore_distance);
+    var fade=1.0;
+    if lake.fft.w>0.5 {
+        fade=smoothstep(0.0,0.5,-bed)*smoothstep(0.0,1.0,shore_distance);
+    }
+    return sample_field(grid,0u)*lake.fft.z*fade;
 }
 fn coordinate(p:vec2<i32>) -> f32 {
     let c=textureLoad(terrain,clamp(p,vec2(0),vec2(i32(lake.grid.x)-1)),0);

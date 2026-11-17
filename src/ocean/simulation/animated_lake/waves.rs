@@ -55,24 +55,30 @@ impl Waves {
             return;
         }
         let p = config.propagation();
-        let angle = (config.direction_deg
-            + (random(config.wave_seed, serial) * 2.0 - 1.0) * config.jitter_deg)
+        // Independent seeded channels keep each control from reshuffling the others.
+        let jitter = |channel| random(config.wave_seed.wrapping_add(channel), serial) * 2.0 - 1.0;
+        let angle = (config.direction_deg + jitter(0) * config.jitter_deg).to_radians();
+        let spread = (config.spread_deg * (1.0 + jitter(1) * config.spread_jitter))
+            .clamp(5.0, 150.0)
             .to_radians();
-        let travel = (p.start - p.reflection) / p.speed;
+        let width = (p.width * (1.0 + jitter(2) * config.width_jitter)).clamp(0.005, 0.15);
+        let launch =
+            (p.reflection + jitter(3) * config.position_jitter).clamp(0.005, p.start - 0.005);
+        let travel = (p.start - launch) / p.speed;
         let record = WaveRecord {
             direction_birth_life: [angle.cos(), angle.sin(), 0.0, travel + config.transition],
-            propagation: [p.start, -p.speed, p.width, config.amplitude],
-            envelope: [0.0, 0.0, config.spread_deg.to_radians(), config.tip_ratio],
+            propagation: [launch, p.speed, width, config.amplitude],
+            envelope: [0.0, 0.0, spread, config.tip_ratio],
             appearance: [config.transition, config.transition, 0.0, 0.0],
-            limits: [p.reflection, 0.98, config.transition, 0.0],
+            limits: [launch, p.start, config.transition, 0.0],
         };
         let reflection = config.reflect.then(|| {
             let mut r = record;
-            r.direction_birth_life[3] = ((0.98 - p.reflection) / p.speed)
+            r.direction_birth_life[3] = travel
                 .min(config.reflected_half_life * 8.0)
                 .max(config.transition * 2.0);
-            r.propagation[0] = p.reflection;
-            r.propagation[1] = p.speed;
+            r.propagation[0] = p.start;
+            r.propagation[1] = -p.speed;
             r.propagation[3] *= config.reflectivity;
             r.appearance[2] = config.reflected_half_life;
             (self.time + f64::from(travel), r)
@@ -170,7 +176,7 @@ mod tests {
         let (tb, rb) = b.records();
         assert!((ta - tb).abs() < 1e-4);
         assert_eq!(ra, rb);
-        let reflected: Vec<_> = ra.iter().filter(|r| r.propagation[1] > 0.0).collect();
+        let reflected: Vec<_> = ra.iter().filter(|r| r.propagation[1] < 0.0).collect();
         assert!(!reflected.is_empty());
         for r in reflected {
             assert!((r.direction_birth_life[0] - c.direction_deg.to_radians().cos()).abs() < 1e-6);
@@ -186,9 +192,106 @@ mod tests {
         assert_eq!(a.active_count(), 0);
     }
     #[test]
+    fn seeded_emissions_vary_span_angle_thickness_and_inward_launch() {
+        let c = LakeConfig {
+            automatic: false,
+            ..Default::default()
+        };
+        let mut waves = Waves::default();
+        for _ in 0..24 {
+            waves.emit(&c);
+        }
+        let records = waves.records().1;
+        let p = c.propagation();
+        for r in &records {
+            let launch = r.propagation[0];
+            assert!(
+                (p.reflection - c.position_jitter..=p.reflection + c.position_jitter)
+                    .contains(&launch)
+            );
+            assert!(r.propagation[1] > 0.0);
+            let hit = r.direction_birth_life[3] - c.transition;
+            assert!((launch + hit * r.propagation[1] - p.start).abs() < 1e-6);
+            let angle = r.direction_birth_life[1]
+                .atan2(r.direction_birth_life[0])
+                .to_degrees();
+            assert!((angle - c.direction_deg).abs() <= c.jitter_deg + 1e-5);
+            assert!(
+                (c.spread_deg * (1.0 - c.spread_jitter)..=c.spread_deg * (1.0 + c.spread_jitter))
+                    .contains(&r.envelope[2].to_degrees())
+            );
+            assert!(
+                (p.width * (1.0 - c.width_jitter)..=p.width * (1.0 + c.width_jitter))
+                    .contains(&r.propagation[2])
+            );
+        }
+        for values in [
+            records
+                .iter()
+                .map(|r| r.direction_birth_life[0])
+                .collect::<Vec<_>>(),
+            records.iter().map(|r| r.envelope[2]).collect(),
+            records.iter().map(|r| r.propagation[2]).collect(),
+            records.iter().map(|r| r.propagation[0]).collect(),
+        ] {
+            assert!(values.windows(2).any(|v| v[0] != v[1]));
+        }
+        waves.reset();
+        for _ in 0..24 {
+            waves.emit(&c);
+        }
+        assert_eq!(waves.records().1, records);
+        // A reflected child must reuse its parent's random shape and actual launch.
+        let parent = records[0];
+        let mut isolated = Waves::default();
+        isolated.emit(&c);
+        isolated.advance(f64::from((p.start - parent.propagation[0]) / p.speed), &c);
+        let child = isolated
+            .records()
+            .1
+            .into_iter()
+            .find(|r| r.propagation[1] < 0.0)
+            .unwrap();
+        assert_eq!(child.envelope, parent.envelope);
+        assert_eq!(child.limits, parent.limits);
+        assert_eq!(child.propagation[0], p.start);
+        assert_eq!(child.propagation[2], parent.propagation[2]);
+        let fixed = LakeConfig {
+            jitter_deg: 0.0,
+            spread_jitter: 0.0,
+            width_jitter: 0.0,
+            position_jitter: 0.0,
+            ..c
+        };
+        waves.reset();
+        waves.emit(&fixed);
+        let r = waves.records().1[0];
+        assert_eq!(r.propagation[0], p.reflection);
+        assert_eq!(r.propagation[2], p.width);
+        assert_eq!(r.envelope[2], c.spread_deg.to_radians());
+        // Extreme settings still produce bounded, finite records and nonzero widths.
+        let extreme = LakeConfig {
+            spread_jitter: 1.0,
+            width_jitter: 1.0,
+            position_jitter: 0.3,
+            ..c
+        };
+        waves.reset();
+        for _ in 0..24 {
+            waves.emit(&extreme);
+        }
+        for r in waves.records().1 {
+            assert!((0.005..=p.start - 0.005).contains(&r.propagation[0]));
+            assert!((0.005..=0.15).contains(&r.propagation[2]));
+            assert!((5.0_f32.to_radians()..=150.0_f32.to_radians()).contains(&r.envelope[2]));
+            assert!(r.direction_birth_life[3].is_finite());
+        }
+    }
+    #[test]
     fn reserved_reflections_are_not_lost_when_full_and_clear_cancels_them() {
         let c = LakeConfig {
             automatic: false,
+            position_jitter: 0.0,
             ..Default::default()
         };
         let mut a = Waves::default();
@@ -204,7 +307,7 @@ mod tests {
             a.records()
                 .1
                 .iter()
-                .filter(|r| r.propagation[1] > 0.0)
+                .filter(|r| r.propagation[1] < 0.0)
                 .count(),
             64
         );

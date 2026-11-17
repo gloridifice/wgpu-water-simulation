@@ -117,6 +117,12 @@ impl Gui {
                         ))
                     },
                 );
+                parameter(
+                    ui,
+                    "FFT 岸边渐隐",
+                    "实时生效、不重置。启用时在水深 0～0.5 米、岸距 0～1 米内减弱 FFT；关闭后保留完整强度，仍屏蔽干地并限制波谷不穿湖底。",
+                    |ui| ui.checkbox(&mut self.optics.lake.fft_shore_fade, "启用"),
+                );
             });
             return apply;
         }

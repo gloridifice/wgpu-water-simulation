@@ -7,7 +7,7 @@
 - `yummy_egui` 0.1.2 使用 egui 0.34.3、可选 egui_dock 0.19.1，需要 Rust 1.92 或更新版本。
 - 宿主同步使用 egui／egui_extras／egui-winit／egui-wgpu 0.34.3、egui_dock 0.19.1 和 wgpu 29，避免不同版本的 UI 或 GPU 类型混用。
 - 根包只在 `ocean` feature 下启用 `yummy_egui`，并开启库的 `dock` feature。独立 `crates/tall-cell-fluid` workspace 仅在 `demo` feature 下启用该 UI 依赖。
-- CPU 包 `tui-2d-prototype` 不依赖 egui、yummy_egui 或 GPU；根 workspace 只有根包和 CPU 包。
+- CPU 包 `tui-2d-prototype` 不依赖 egui、yummy_egui 或 GPU；根 workspace 包含根包、公共库 `common` 和 CPU 包。
 - 配置选中状态、载入失败回滚、模拟参数保存及 Dock 布局均归宿主，不由组件库管理。
 
 ## 默认主题
@@ -30,7 +30,7 @@ let dock_style = theme.dock_style().clone();
 
 业务面板直接调用 `yummy_egui::ParameterSlider`、`ParameterList`、`SelectionList`、`PanelButton`、`group`、`parameter`、`choices` 和 h1／h2／h3。逻辑参数组共用两列网格，保留 42%／58% 列宽和名称 hover 提示；选择列表只返回交互响应，业务状态仍由调用方提交。
 
-Ocean 和 Fog 的浮点参数统一使用 `ParameterSlider`，沿用现有合法范围并保留右侧精确输入；跨度大的非负参数可使用对数刻度，有符号坐标和角度使用线性刻度。新替换的输入仅在编辑时约束范围，不因显示改写已载入值，也不改变默认值、显式应用、重置或手动保存语义。Ocean 顶部时间倍率滑块限制宽度，避免占满工具栏。
+Ocean 的浮点参数统一使用 `ParameterSlider`，沿用现有合法范围并保留右侧精确输入；跨度大的非负参数可使用对数刻度，有符号坐标和角度使用线性刻度。新替换的输入仅在编辑时约束范围，不因显示改写已载入值，也不改变默认值、显式应用、重置或手动保存语义。Ocean 顶部时间倍率滑块限制宽度，避免占满工具栏。
 
 Ocean 左侧导航使用 `IconSegmentedControl::vertical()`，五个 SVG 图标组成连续分段栏；工作区选择仍由宿主保存，分段中文 hover 由宿主补充，不改变模拟或 Dock 布局语义。
 

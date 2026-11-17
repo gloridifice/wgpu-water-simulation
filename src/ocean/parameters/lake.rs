@@ -65,9 +65,16 @@ pub struct LakeConfig {
     pub direction_deg: f32,
     pub spread_deg: f32,
     pub jitter_deg: f32,
+    /// Relative random ranges for angular span and propagation-coordinate thickness.
+    pub spread_jitter: f32,
+    pub width_jitter: f32,
+    /// Random offset of the nearshore launch coordinate (dimensionless).
+    pub position_jitter: f32,
     pub amplitude: f32,
     /// Shared FFT height multiplier; zero preserves legacy procedural-only water.
     pub fft_strength: f32,
+    /// Fade FFT height by physical water depth and distance to shore.
+    pub fft_shore_fade: bool,
     /// Render-only foam opacity; zero preserves legacy lake appearance.
     pub foam_strength: f32,
     /// Shore band width and cellular pattern size, in world metres.
@@ -104,8 +111,12 @@ impl Default for LakeConfig {
             direction_deg: 15.0,
             spread_deg: 55.0,
             jitter_deg: 18.0,
+            spread_jitter: 0.35,
+            width_jitter: 0.35,
+            position_jitter: 0.04,
             amplitude: 0.09,
             fft_strength: 0.0,
+            fft_shore_fade: true,
             foam_strength: 0.0,
             foam_width: 5.0,
             foam_size: 2.0,
@@ -142,6 +153,9 @@ impl LakeConfig {
             ("direction", self.direction_deg, -180.0, 180.0),
             ("angular half width", self.spread_deg, 5.0, 150.0),
             ("jitter", self.jitter_deg, 0.0, 180.0),
+            ("angular span jitter", self.spread_jitter, 0.0, 1.0),
+            ("thickness jitter", self.width_jitter, 0.0, 1.0),
+            ("launch position jitter", self.position_jitter, 0.0, 0.3),
             ("amplitude", self.amplitude, 0.0, 0.5),
             ("FFT strength", self.fft_strength, 0.0, 1.0),
             ("foam strength", self.foam_strength, 0.0, 1.0),
@@ -191,12 +205,20 @@ mod tests {
             serde_json::from_str(r#"{"optics":{"lake":{"enabled":true,"mode":"sdf"}}}"#).unwrap();
         assert!(old_lake.optics.lake.enabled);
         assert_eq!(old_lake.optics.lake.fft_strength, 0.0);
+        assert!(old_lake.optics.lake.fft_shore_fade);
+        assert_eq!(old_lake.optics.lake.spread_jitter, 0.35);
+        assert_eq!(old_lake.optics.lake.width_jitter, 0.35);
+        assert_eq!(old_lake.optics.lake.position_jitter, 0.04);
         assert_eq!(old_lake.optics.lake.foam_flow_distortion, 1.0);
         assert_eq!(old_lake.optics.lake.mode, PropagationMode::Sdf);
         let mut settings = legacy;
         settings.optics.lake.enabled = true;
         settings.optics.lake.mode = PropagationMode::Sdf;
         settings.optics.lake.fft_strength = 0.37;
+        settings.optics.lake.fft_shore_fade = false;
+        settings.optics.lake.spread_jitter = 0.7;
+        settings.optics.lake.width_jitter = 0.6;
+        settings.optics.lake.position_jitter = 0.12;
         settings.optics.lake.foam_flow_speed = 0.72;
         settings.optics.lake.foam_flow_period = 9.0;
         settings.optics.lake.foam_flow_distortion = 0.6;
@@ -249,6 +271,40 @@ mod tests {
             };
             assert!(lake.validate().is_err());
         }
+        for invalid in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
+            for lake in [
+                LakeConfig {
+                    spread_jitter: invalid,
+                    ..Default::default()
+                },
+                LakeConfig {
+                    width_jitter: invalid,
+                    ..Default::default()
+                },
+                LakeConfig {
+                    position_jitter: invalid,
+                    ..Default::default()
+                },
+            ] {
+                assert!(lake.validate().is_err());
+            }
+        }
+        assert!(
+            LakeConfig {
+                position_jitter: 0.31,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+        LakeConfig {
+            spread_jitter: 1.0,
+            width_jitter: 1.0,
+            position_jitter: 0.3,
+            ..Default::default()
+        }
+        .validate()
+        .unwrap();
         let mut lake = LakeConfig::default();
         lake.depth_wave.reflection = lake.depth_wave.start;
         assert!(lake.validate().is_err());

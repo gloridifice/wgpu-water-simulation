@@ -1,6 +1,6 @@
 ---
 name: ocean-scene-mcp
-description: 使用本仓库 Ocean 场景 MCP 做自动化调试：查询和批量修改海洋、近岸、湖泊参数，执行已注册动作，固定步进并截取当前 GPU 场景。用户要求调场景参数、执行场景按钮、自动截图或对比物理与渲染结果时使用；不适用于普通代码静态分析或 Fog 场景。
+description: 使用本仓库 Ocean 场景 MCP 做自动化调试：查询和批量修改海洋、近岸、湖泊参数，执行已注册动作，固定步进并截取当前 GPU 场景。用户要求调场景参数、执行场景按钮、自动截图或对比物理与渲染结果时使用；不适用于普通代码静态分析。
 ---
 
 # Ocean 场景 MCP
@@ -25,4 +25,4 @@ cargo build --features ocean --bin ocean
 
 - 项目 MCP 默认为只读会话；修改仅在内存中。确需手动持久化，必须用户明确指定独立的 `--settings PATH` 启动参数，再调用 `configuration.save`；不要改成个人配置路径，不改写 `.pi/mcp.json` 或覆盖用户快照以便调试。
 - 若要从非默认场景（如 `--beach`、`--lake`）启动，先与用户确认目标场景；可改用一次性的独立 MCP 启动配置，或任务专用只读 `--config PATH`，不覆盖当前 `.pi/mcp.json` 里其他人依赖的默认场景。
-- 当前工具只控制**该 MCP 子进程中的一个 Ocean 场景**，不会连接用户以普通 `cargo run` 启动的 Dock 窗口。需要无参数界面但能显示场景时，可显式用 `--no-ui` 代替 `--headless` 启动另一个 MCP 进程；Fog 使用独立的 `fog-scene` MCP 服务和 `fog-scene-mcp` 技能；此 Ocean 入口不控制 Fog。HTTP 附加、任意面板按钮和逐字段单位／范围元数据尚不支持。详细合约见 `doco/specs/scene-control.md`，启动说明见 `doco/guides/ocean.md`。
+- 当前工具只控制**该 MCP 子进程中的一个 Ocean 场景**，不会连接用户以普通 `cargo run` 启动的 Dock 窗口。需要无参数界面但能显示场景时，可显式用 `--no-ui` 代替 `--headless` 启动另一个 MCP 进程。HTTP 附加、任意面板按钮和逐字段单位／范围元数据尚不支持。详细合约见 `doco/specs/scene-control.md`，启动说明见 `doco/guides/ocean.md`。
