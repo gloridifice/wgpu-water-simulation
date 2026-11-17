@@ -2,7 +2,7 @@ use super::{GpuContext, build_adaptive, project, transport};
 use crate::adaptivity::AdaptiveGrid;
 use crate::{Grid, SimulationConfig, StepReport};
 
-/// f32 求解所用容限。CPU f64 默认的 1e-9 相对残差不适合 GPU f32。
+/// Tolerances for f32 solving. The CPU f64 default relative residual of 1e-9 is unsuitable for GPU f32.
 pub fn default_config() -> SimulationConfig {
     let mut config = SimulationConfig::default();
     config.pressure.relative_tolerance = 2e-5;
@@ -11,7 +11,7 @@ pub fn default_config() -> SimulationConfig {
     config
 }
 
-/// 无窗口三维 GPU 液体。`grid` 是阶段回读的可检查快照，不是 CPU 求解器。
+/// Headless 3D GPU liquid. `grid` is an inspectable stage-readback snapshot, not a CPU solver.
 pub struct GpuSimulation<'a> {
     pub context: &'a GpuContext,
     pub grid: Grid,
@@ -54,20 +54,23 @@ impl<'a> GpuSimulation<'a> {
             .min(self.config.cfl * self.grid.domain.cell_size / speed.max(1e-12))
     }
 
-    /// 失败不提交 grid/time/steps；没有 CPU 数值求解回退。
+    /// On failure, do not commit grid/time/steps; there is no CPU numerical solver fallback.
     pub fn step(&mut self, dt: f64) -> Result<StepReport, String> {
         validate_config(&self.config)?;
         self.context.validate_grid(&self.grid)?;
-        let next_step = self.steps.checked_add(1).ok_or("模拟步数溢出")?;
+        let next_step = self
+            .steps
+            .checked_add(1)
+            .ok_or("Simulation step count overflow")?;
         if !dt.is_finite()
             || dt <= 0.0
             || !(dt as f32).is_normal()
             || dt > self.stable_time_step() * (1.0 + 1e-12)
         {
-            return Err("GPU 时间步须为 f32 可表示的正数且不超过 stable_time_step()".into());
+            return Err("GPU time step must be positive, representable as f32, and no greater than stable_time_step()".into());
         }
         if !(self.time + dt).is_finite() || self.time + dt == self.time {
-            return Err("累计时间不可表示".into());
+            return Err("Accumulated time is not representable".into());
         }
         let volume_before = self.grid.liquid_volume();
         let (mut next, volume_correction) =
@@ -83,7 +86,7 @@ impl<'a> GpuSimulation<'a> {
         )?;
         if !projection.converged {
             return Err(format!(
-                "GPU 压力投影未收敛：residual={}, divergence={} /s",
+                "GPU pressure projection did not converge: residual={}, divergence={} /s",
                 projection.residual_norm, projection.divergence_after
             ));
         }
@@ -106,7 +109,7 @@ impl<'a> GpuSimulation<'a> {
         Ok(report)
     }
 
-    /// 自动按 CFL 分子步；后续失败时保留此前已成功子步。
+    /// Automatically split into CFL substeps; retain previously successful substeps if a later one fails.
     pub fn advance(&mut self, seconds: f64) -> Result<Vec<StepReport>, String> {
         validate_config(&self.config)?;
         self.context.validate_grid(&self.grid)?;
@@ -116,12 +119,12 @@ impl<'a> GpuSimulation<'a> {
             || !target.is_finite()
             || (seconds > 0.0 && target == self.time)
         {
-            return Err("推进时长不可表示".into());
+            return Err("Advance duration is not representable".into());
         }
         let mut reports = Vec::new();
         while self.time < target {
             if reports.len() >= self.config.max_substeps {
-                return Err("达到 GPU 子步上限，已成功子步保留".into());
+                return Err("GPU substep limit reached; successful substeps retained".into());
             }
             reports.push(self.step(self.stable_time_step().min(target - self.time))?);
         }
@@ -138,7 +141,7 @@ fn validate_config(config: &SimulationConfig) -> Result<(), String> {
             .iter()
             .any(|&v| !(v as f32).is_finite() || (v != 0.0 && (v as f32).abs() < f32::MIN_POSITIVE))
     {
-        return Err("GPU 参数超出 f32 范围".into());
+        return Err("GPU parameters exceed f32 range".into());
     }
     Ok(())
 }

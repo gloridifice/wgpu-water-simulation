@@ -8,51 +8,66 @@ use yummy_egui::{PanelButton, ParameterSlider, choices, group, parameter, parame
 
 impl Gui {
     pub(in crate::ocean::ui) fn optics_panel(&mut self, ui: &mut egui::Ui) {
-        self.sigma_editor
-            .ui(ui, "消光系数（每米）", &mut self.optics.sigma_t);
-        self.source_editor
-            .ui(ui, "手动散射源（辐亮度／米）", &mut self.optics.source);
-        group(ui, "天空照明与反射", |ui| {
+        self.sigma_editor.ui(
+            ui,
+            "Extinction Coefficient (per meter)",
+            &mut self.optics.sigma_t,
+        );
+        self.source_editor.ui(
+            ui,
+            "Manual Scattering Source (radiance / m)",
+            &mut self.optics.source,
+        );
+        group(ui, "Sky Lighting and Reflections", |ui| {
             parameter(
                 ui,
-                "天空颜色（线性 RGB）",
-                help("天空颜色（线性 RGB）"),
+                "Sky Color (linear RGB)",
+                help("Sky Color (linear RGB)"),
                 |ui| ui.color_edit_button_rgb(&mut self.optics.sky.color),
             );
             number(
                 ui,
-                "天空强度",
+                "Sky Intensity",
                 &mut self.optics.sky.intensity,
                 0.0..=20.0,
                 true,
             );
-            toggle(ui, "天空反射与高光", &mut self.optics.reflections);
+            toggle(
+                ui,
+                "Sky Reflection and Highlights",
+                &mut self.optics.reflections,
+            );
         });
-        group(ui, "天空散射", |ui| {
-            toggle(ui, "启用天空散射", &mut self.optics.sky.enabled);
+        group(ui, "Sky Scattering", |ui| {
+            toggle(ui, "Enable Sky Scattering", &mut self.optics.sky.enabled);
             if self.optics.sky.enabled {
                 parameter(
                     ui,
-                    "散射反照率 RGB",
-                    help("散射反照率 RGB"),
+                    "Scattering Albedo RGB",
+                    help("Scattering Albedo RGB"),
                     |ui| ui.color_edit_button_rgb(&mut self.optics.sky.albedo),
                 );
-                parameter(ui, "天空积分步数", help("天空积分步数"), |ui| {
-                    choices(
-                        ui,
-                        &mut self.optics.sky.steps,
-                        &[(8, "8"), (16, "16"), (32, "32")],
-                    )
-                });
+                parameter(
+                    ui,
+                    "Sky Integration Steps",
+                    help("Sky Integration Steps"),
+                    |ui| {
+                        choices(
+                            ui,
+                            &mut self.optics.sky.steps,
+                            &[(8, "8"), (16, "16"), (32, "32")],
+                        )
+                    },
+                );
             }
         });
-        ui.collapsing("天空 RGB 精确值", |ui| {
+        ui.collapsing("Exact Sky RGB Values", |ui| {
             parameter_table(ui, "sky exact", |ui| {
                 for (c, name) in ["R", "G", "B"].iter().enumerate() {
                     parameter(
                         ui,
-                        &format!("颜色 {name}"),
-                        "天空颜色的线性 RGB 分量，0～1，实时生效。",
+                        &format!("Color {name}"),
+                        "Linear RGB component of the sky color, 0–1, applied immediately.",
                         |ui| {
                             ui.add(
                                 ParameterSlider::new(&mut self.optics.sky.color[c], 0.0..=1.0)
@@ -64,8 +79,8 @@ impl Gui {
                     if self.optics.sky.enabled {
                         parameter(
                             ui,
-                            &format!("反照率 {name}"),
-                            "散射反照率，0～1，实时生效。",
+                            &format!("Albedo {name}"),
+                            "Scattering albedo, 0–1, applied immediately.",
                             |ui| {
                                 ui.add(
                                     ParameterSlider::new(&mut self.optics.sky.albedo[c], 0.0..=1.0)
@@ -79,22 +94,22 @@ impl Gui {
             });
         });
         if self.optics.sky.enabled {
-            ui.collapsing("天空散射源随深度变化", |ui| {
+            ui.collapsing("Sky Scattering Source by Depth", |ui| {
                 depth_graph(ui, &self.optics)
             });
         }
         self.post_process_controls(ui);
-        group(ui, "光学诊断", |ui| {
+        group(ui, "Optics Diagnostics", |ui| {
             let names: Vec<_> = VIEW_NAMES
                 .iter()
                 .enumerate()
                 .map(|(i, n)| (i as u32, *n))
                 .collect();
-            list(ui, "水体调试视图", &mut self.optics.view, &names);
+            list(ui, "Water Debug View", &mut self.optics.view, &names);
             if self.optics.view == 1 {
                 number(
                     ui,
-                    "光程白色参考值（米）",
+                    "Path Length White Reference (m)",
                     &mut self.optics.path_range,
                     1.0..=300.0,
                     true,
@@ -102,9 +117,9 @@ impl Gui {
             }
         });
         if ui
-            .add(PanelButton::new("重置光学参数"))
+            .add(PanelButton::new("Reset Optics Parameters"))
             .on_hover_text(
-                "沿用原操作：恢复整个光学配置（含场景、SWE、材质、浪花），会重置相应模拟历史。",
+                "As before, restore the entire optics configuration (including scene, SWE, materials, and spray), resetting the corresponding simulation history.",
             )
             .clicked()
         {
@@ -134,13 +149,16 @@ pub fn depth_graph(ui: &mut egui::Ui, optics: &crate::ocean::parameters::optics:
     };
     let peak = (0..3).map(|c| source(0.0, c)).fold(0.0_f32, f32::max);
     parameter_table(ui, "graph axes", |ui| {
-        parameter(ui, "深度范围", "图表横轴，单位为米。", |ui| {
-            ui.label(format!("0 .. {depth:.2} m"))
-        });
         parameter(
             ui,
-            "散射源范围",
-            "局部天空散射源，单位为每米辐亮度，尚未向观察点积分。",
+            "Depth Range",
+            "Graph horizontal axis, in meters.",
+            |ui| ui.label(format!("0 .. {depth:.2} m")),
+        );
+        parameter(
+            ui,
+            "Scattering Source Range",
+            "Local sky scattering source, in radiance per meter, not yet integrated toward the observer.",
             |ui| ui.label(format!("0 .. {peak:.5}")),
         );
     });

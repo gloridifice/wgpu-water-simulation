@@ -33,7 +33,7 @@ impl Gui {
     }
     pub(in crate::ocean::ui) fn animated_sdf_panel(&mut self, ui: &mut egui::Ui) {
         if !self.optics.lake.enabled {
-            ui.label("仅用于湖泊场景；请先在“场景”分类选择“湖泊场景”。");
+            ui.label("Only available in the Lake scene; first select Lake in the Scene category.");
             return;
         }
         self.lake_panel.show_ripples(ui, &mut self.optics.lake);
@@ -72,38 +72,38 @@ impl LakePanel {
         self.sync_draft(config);
         let panel = self;
         let d = &mut panel.draft;
-        group(ui, "湖泊地形（应用后重置）", |ui| {
+        group(ui, "Lake Terrain (reset on apply)", |ui| {
             number(
                 ui,
-                "湖泊半径（米）",
+                "Lake radius (m)",
                 &mut d.terrain.radius,
                 8.0..=100.0,
-                "基础半径 8～100 米；岸线噪波围绕它变化，显式应用后重建并清空波纹。",
+                "Base radius 8–100 m; shoreline noise varies around it. Applying rebuilds the terrain and clears ripples.",
             );
             number(
                 ui,
-                "最大水深（米）",
+                "Maximum depth (m)",
                 &mut d.terrain.depth,
                 0.5..=12.0,
-                "碗状湖底基础深度 0.5～12 米；应用后重建。",
+                "Base depth of the bowl-shaped lake bed, 0.5–12 m; rebuilt on apply.",
             );
             number(
                 ui,
-                "岸线不规则度",
+                "Shoreline irregularity",
                 &mut d.terrain.irregularity,
                 0.0..=0.35,
-                "径向周期噪波比例 0～0.35，无量纲；应用后重建。",
+                "Dimensionless radial periodic noise ratio, 0–0.35; rebuilt on apply.",
             );
             parameter(
                 ui,
-                "场景种子",
-                "确定性地形及岩石种子；应用后重建。",
+                "Scene seed",
+                "Deterministic terrain and rock seed; rebuilt on apply.",
                 |ui| ui.add(ParameterSlider::new(&mut d.terrain.seed, 0..=100000)),
             );
             parameter(
                 ui,
-                "网格分辨率",
-                "场景和波场共用网格；应用后重建，512 的开销更高。",
+                "Grid resolution",
+                "Grid shared by the scene and wave field; rebuilt on apply. 512 is more expensive.",
                 |ui| {
                     segmented_control(
                         ui,
@@ -114,19 +114,22 @@ impl LakePanel {
             );
             parameter(
                 ui,
-                "岩石数量",
-                "0～32；间距不足时跳过，实际数量显示在状态中。每第三块尝试水下岩石。应用后重建。",
+                "Rock count",
+                "0–32; skipped if spacing is insufficient, with the actual count shown in the status. Every third rock attempts underwater placement. Rebuilt on apply.",
                 |ui| ui.add(ParameterSlider::new(&mut d.terrain.rocks, 0..=32)),
             );
             number(
                 ui,
-                "岩石尺寸（米）",
+                "Rock size (m)",
                 &mut d.terrain.rock_size,
                 0.5..=8.0,
-                "岩石基础水平半径 0.5～8 米；应用后重建。岩石为单层高度几何，无悬挑。",
+                "Base horizontal rock radius, 0.5–8 m; rebuilt on apply. Rocks use single-layer height geometry without overhangs.",
             );
         });
-        if ui.add(PanelButton::new("应用地形并重置")).clicked() {
+        if ui
+            .add(PanelButton::new("Apply terrain and reset"))
+            .clicked()
+        {
             let mut next = *config;
             next.terrain = d.terrain;
             panel.apply(config, next);
@@ -134,66 +137,69 @@ impl LakePanel {
         if let Some(e) = &panel.error {
             ui.colored_label(egui::Color32::LIGHT_RED, e);
         }
-        group(ui, "共享 FFT 波浪", |ui| {
+        group(ui, "Shared FFT waves", |ui| {
             number(
                 ui,
-                "FFT 叠加强度",
+                "FFT overlay strength",
                 &mut config.fft_strength,
                 0.0..=1.0,
-                "共享波谱高度的无量纲倍率 0～1，实时生效、不重置沿岸波；0 关闭 FFT。波谱在远海分类的“波谱与波形”面板编辑并应用，两场景共用；湖泊只叠加垂直波高，可切换岸边及浅水渐隐，不搬动岸线，不生成泡沫。清空波纹只清沿岸波，不清 FFT。",
+                "Dimensionless multiplier for shared spectrum height, 0–1; takes effect immediately without resetting shore waves. 0 disables FFT. Edit and apply the spectrum in the Offshore category’s Spectrum and Waveform panel; both scenes share it. The lake overlays only vertical wave height, with optional shore and shallow-water fading; it does not move the shoreline or generate foam. Clearing ripples clears only shore waves, not FFT.",
             );
             parameter(
                 ui,
-                "FFT 岸边渐隐",
-                "实时生效、不重置。启用时在水深 0～0.5 米、岸距 0～1 米内减弱 FFT；关闭后保留完整强度，仍屏蔽干地并限制波谷不穿湖底。",
-                |ui| ui.checkbox(&mut config.fft_shore_fade, "启用"),
+                "FFT shore fade",
+                "Takes effect immediately without resetting. When enabled, attenuates FFT at depths of 0–0.5 m and shore distances of 0–1 m; when disabled, retains full strength while still masking dry land and preventing troughs from penetrating the lake bed.",
+                |ui| ui.checkbox(&mut config.fft_shore_fade, "Enabled"),
             );
         });
-        group(ui, "卡通岸边泡沫", |ui| {
+        group(ui, "Cartoon shore foam", |ui| {
             number(
                 ui,
-                "泡沫强度",
+                "Foam strength",
                 &mut config.foam_strength,
                 0.0..=1.0,
-                "覆盖不透明度，无量纲 0～1；0 关闭。实时生效、不重置；仅显示沿向心流向 SDF 增大的岸边／露水岩石背流侧，不输送模拟密度。",
+                "Overlay opacity, dimensionless 0–1; 0 disables it. Takes effect immediately without resetting; shown only on shore or exposed-rock sides where SDF increases along the inward flow, without advecting simulated density.",
             );
             number(
                 ui,
-                "泡沫宽度（米）",
+                "Foam width (m)",
                 &mut config.foam_width,
                 0.1..=10.0,
-                "到岸边／露水岩石的网状泡沫带宽，0.1～10 米；实时生效、不重置，随波高轻微变化。",
+                "Width of the net-like foam band along shores and exposed rocks, 0.1–10 m; takes effect immediately without resetting and varies slightly with wave height.",
             );
             number(
                 ui,
-                "网孔尺寸（米）",
+                "Mesh cell size (m)",
                 &mut config.foam_size,
                 0.1..=5.0,
-                "胞状网纹的基础尺寸，0.1～5 米；实时生效、不重置。越大则孔洞越大，动画随湖泊暂停。",
+                "Base size of the cellular mesh pattern, 0.1–5 m; takes effect immediately without resetting. Larger values produce larger holes; animation pauses with the lake.",
             );
             number(
                 ui,
-                "向心流速（米/秒）",
+                "Inward flow speed (m/s)",
                 &mut config.foam_flow_speed,
                 0.0..=2.0,
-                "泡沫 UV 从湖边向湖心流动，0～2 米/模拟秒；湖心平滑减速。0 关闭 UV 流动；实时生效、不重置，编辑可能改变当前图案，不是物理流速。",
+                "Foam UVs flow from shore toward the lake center at 0–2 m per simulation second, slowing smoothly at the center. 0 disables UV flow; takes effect immediately without resetting. Edits may change the current pattern; this is not a physical flow speed.",
             );
             number(
                 ui,
-                "流场扭曲",
+                "Flow field distortion",
                 &mut config.foam_flow_distortion,
                 0.0..=1.0,
-                "近岸速度梯度强度，无量纲 0～1，默认 1；越强则贴岸更慢、离岸更快，材质坐标沿简化向心场积分产生拉伸与剪切。0 恢复近似匀速流，仍有向心运动。实时生效、不重置，编辑会改变当前图案；不修改波高、泡沫密度或方向遮罩。",
+                "Nearshore velocity gradient strength, dimensionless 0–1, default 1. Higher values slow flow near shore and accelerate it offshore; integrating texture coordinates along a simplified inward field produces stretching and shear. 0 restores approximately uniform flow, still inward. Takes effect immediately without resetting; edits change the current pattern but not wave height, foam density, or the direction mask.",
             );
             number(
                 ui,
-                "扭曲周期（秒）",
+                "Distortion period (s)",
                 &mut config.foam_flow_period,
                 1.0..=20.0,
-                "双 UV 每套的循环周期，1～20 模拟秒，错开半周期并用平滑三角波交叉淡化；周期越长，最大位移越大。实时生效、不重置，编辑会重新映射相位；暂停冻结动画。",
+                "Cycle period for each of the two UV sets, 1–20 simulation seconds, offset by half a cycle and crossfaded with a smooth triangle wave. Longer periods increase maximum displacement. Takes effect immediately without resetting; edits remap the phase, and pausing freezes animation.",
             );
         });
-        if ui.add(PanelButton::new("打开动画 SDF 波纹")).clicked() {
+        if ui
+            .add(PanelButton::new("Open Animated SDF Ripples"))
+            .clicked()
+        {
             panel.open_ripples = true;
         }
     }
@@ -201,17 +207,17 @@ impl LakePanel {
         self.sync_draft(config);
         let panel = self;
         let d = &mut panel.draft;
-        group(ui, "传播场（应用后重置）", |ui| {
+        group(ui, "Propagation field (reset on apply)", |ui| {
             parameter(
                 ui,
-                "传播场",
-                "深度为归一化水深；SDF 为到外岸及露水岩石边界的归一化欧氏距离。不是绕射或传播时间求解器。应用后清空波纹。",
+                "Propagation field",
+                "Depth is normalized water depth; SDF is the normalized Euclidean distance to the outer shore and exposed rock boundaries. This is not a diffraction or travel-time solver. Applying clears ripples.",
                 |ui| {
                     segmented_control(
                         ui,
                         &mut d.mode,
                         &[
-                            (PropagationMode::Depth, "深度"),
+                            (PropagationMode::Depth, "Depth"),
                             (PropagationMode::Sdf, "SDF"),
                         ],
                     )
@@ -219,13 +225,13 @@ impl LakePanel {
             );
             parameter(
                 ui,
-                "波纹随机种子",
-                "与地形种子独立；应用后重新开始波序列。",
+                "Ripple random seed",
+                "Independent of the terrain seed; applying restarts the wave sequence.",
                 |ui| ui.add(ParameterSlider::new(&mut d.wave_seed, 0..=100000)),
             );
         });
         if ui
-            .add(PanelButton::new("应用传播场 / 种子并重置"))
+            .add(PanelButton::new("Apply propagation field / seed and reset"))
             .clicked()
         {
             let mut next = *config;
@@ -236,143 +242,150 @@ impl LakePanel {
         if let Some(e) = &panel.error {
             ui.colored_label(egui::Color32::LIGHT_RED, e);
         }
-        group(ui, "波纹发射（影响新波）", |ui| {
+        group(ui, "Ripple emission (affects new waves)", |ui| {
             parameter(
                 ui,
-                "自动发射",
-                "按模拟时间发射，暂停时停止；启停不清空已有波。",
-                |ui| ui.checkbox(&mut config.automatic, "启用"),
+                "Automatic emission",
+                "Emits in simulation time and stops when paused; enabling or disabling does not clear existing waves.",
+                |ui| ui.checkbox(&mut config.automatic, "Enabled"),
             );
             number(
                 ui,
-                "发射间隔（秒）",
+                "Emission interval (s)",
                 &mut config.interval,
                 0.1..=30.0,
-                "模拟秒 0.1～30；编辑后从当前时刻重新安排下一次发射，不补旧波。",
+                "0.1–30 simulation seconds; editing reschedules the next emission from the current time without making up missed waves.",
             );
             number(
                 ui,
-                "世界方向角（度）",
+                "World direction angle (degrees)",
                 &mut config.direction_deg,
                 -180.0..=180.0,
-                "0° 朝世界 +X、90° 朝 +Z；标记湖心扇区，反射不翻转扇区；只影响新波。",
+                "0° points toward world +X, 90° toward +Z; marks a sector centered on the lake. Reflection does not flip the sector; affects new waves only.",
             );
             number(
                 ui,
-                "角度半宽（度）",
+                "Angular half-width (degrees)",
                 &mut config.spread_deg,
                 5.0..=150.0,
-                "湖心扇区基础半宽 5～150°，不是固定世界长度；叠加扇区宽度随机比例后限制在同范围。新波中间粗、两端细。",
+                "Base half-width of the lake-centered sector, 5–150°, not a fixed world-space length. Clamped to the same range after sector width randomization. New waves are thick in the middle and thin at the ends.",
             );
             number(
                 ui,
-                "方向随机偏差（度）",
+                "Direction random deviation (degrees)",
                 &mut config.jitter_deg,
                 0.0..=180.0,
-                "新波方向的正负随机角度范围 0～180°；0 关闭，固定种子可重现。只影响新波。",
+                "Positive and negative random angular range for new wave directions, 0–180°; 0 disables it. Reproducible with a fixed seed; affects new waves only.",
             );
             number(
                 ui,
-                "扇区宽度随机比例",
+                "Sector width randomness",
                 &mut config.spread_jitter,
                 0.0..=1.0,
-                "角度半宽的正负随机比例，无量纲 0～1，默认 0.35；0 关闭。独立采样并限制最终半宽为 5～150°；只影响新波。",
+                "Positive and negative random ratio for angular half-width, dimensionless 0–1, default 0.35; 0 disables it. Independently sampled and clamped to a final half-width of 5–150°; affects new waves only.",
             );
             number(
                 ui,
-                "粗细随机比例",
+                "Width randomness",
                 &mut config.width_jitter,
                 0.0..=1.0,
-                "传播坐标宽度的正负随机比例，无量纲 0～1，默认 0.35；0 关闭。最终宽度限制在 0.005～0.15；只影响新波。",
+                "Positive and negative random ratio for propagation-coordinate width, dimensionless 0–1, default 0.35; 0 disables it. Final width is clamped to 0.005–0.15; affects new waves only.",
             );
             number(
                 ui,
-                "起点随机偏移",
+                "Start position random offset",
                 &mut config.position_jitter,
                 0.0..=0.3,
-                "近岸发射坐标的正负随机偏移，归一化坐标 0～0.3，默认 0.04；0 关闭。起点限制在 0.005～内侧折返坐标减 0.005，沿等深线／SDF 保形，不平移湖心；只影响新波。",
+                "Positive and negative random offset of the nearshore emission coordinate, normalized 0–0.3, default 0.04; 0 disables it. The start is clamped between 0.005 and the inner turnaround coordinate minus 0.005, conforming to depth contours or SDF without shifting the lake center; affects new waves only.",
             );
         });
-        group(ui, "波形与反射（影响新波及其后代）", |ui| {
-            let p = match config.mode {
-                PropagationMode::Depth => &mut config.depth_wave,
-                PropagationMode::Sdf => &mut config.sdf_wave,
-            };
-            number(
-                ui,
-                "内侧折返坐标",
-                &mut p.start,
-                0.1..=0.95,
-                "无量纲 0.1～0.95；0 靠边界、1 为场最大值；波从近岸向该坐标增大的方向传播，到达后可反射返回。必须大于近岸发射坐标；只影响新波，两模式独立保存。",
-            );
-            number(
-                ui,
-                "传播进度／秒",
-                &mut p.speed,
-                0.005..=0.5,
-                "无量纲坐标／模拟秒 0.005～0.5，并非恒定水平米／秒；只影响新波。",
-            );
-            number(
-                ui,
-                "传播坐标宽度",
-                &mut p.width,
-                0.005..=0.15,
-                "中央波纹基础粗细，归一化场坐标 0.005～0.15，不是米；叠加粗细随机比例并限制在同范围，只影响新波。",
-            );
-            number(
-                ui,
-                "近岸发射坐标",
-                &mut p.reflection,
-                0.005..=0.3,
-                "无量纲 0.005～0.3；波从此处附近随机出生并向湖内传播。必须小于内侧折返坐标；反射波返回本次实际起点。只影响新波。",
-            );
-            number(
-                ui,
-                "波高（米）",
-                &mut config.amplitude,
-                0.0..=0.5,
-                "波峰振幅 0～0.5 米；边界和过浅处限制最终位移，非守恒动画。只影响新波。",
-            );
-            number(
-                ui,
-                "两端宽度比例",
-                &mut config.tip_ratio,
-                0.05..=1.0,
-                "端部／中央宽度比 0.05～1；高度在角包络两端平滑为零。只影响新波。",
-            );
-            parameter(
-                ui,
-                "波纹折返",
-                "每道入射波最多生成一次反向波；反射不是 SSR。只影响新波，已有后代参数冻结。",
-                |ui| ui.checkbox(&mut config.reflect, "启用"),
-            );
-            if config.reflect {
+        group(
+            ui,
+            "Waveform and reflection (affects new waves and their descendants)",
+            |ui| {
+                let p = match config.mode {
+                    PropagationMode::Depth => &mut config.depth_wave,
+                    PropagationMode::Sdf => &mut config.sdf_wave,
+                };
                 number(
                     ui,
-                    "反射振幅比例",
-                    &mut config.reflectivity,
-                    0.0..=0.95,
-                    "反射／入射振幅 0～0.95；反射逐渐衰减，不再反射。",
+                    "Inner turnaround coordinate",
+                    &mut p.start,
+                    0.1..=0.95,
+                    "Dimensionless 0.1–0.95; 0 is near the boundary and 1 is the field maximum. Waves propagate from shore toward increasing coordinates and can reflect back upon arrival. Must exceed the nearshore emission coordinate; affects new waves only, saved independently for each mode.",
                 );
                 number(
                     ui,
-                    "反射半衰期（秒）",
-                    &mut config.reflected_half_life,
-                    0.1..=30.0,
-                    "振幅减半所需模拟秒，0.1～30；只影响新波的反射后代。",
+                    "Propagation progress / second",
+                    &mut p.speed,
+                    0.005..=0.5,
+                    "Dimensionless coordinates per simulation second, 0.005–0.5, not constant horizontal meters per second; affects new waves only.",
                 );
-            }
-            number(
-                ui,
-                "交接时间（秒）",
-                &mut config.transition,
-                0.05..=2.0,
-                "入射淡出／反射淡入的模拟时间 0.05～2 秒，避免突然变弱；新波出生也淡入。",
-            );
-        });
+                number(
+                    ui,
+                    "Propagation coordinate width",
+                    &mut p.width,
+                    0.005..=0.15,
+                    "Base thickness of the central ripple in normalized field coordinates, 0.005–0.15, not meters. Width randomness is applied and clamped to the same range; affects new waves only.",
+                );
+                number(
+                    ui,
+                    "Nearshore emission coordinate",
+                    &mut p.reflection,
+                    0.005..=0.3,
+                    "Dimensionless 0.005–0.3; waves spawn randomly near this coordinate and propagate into the lake. Must be less than the inner turnaround coordinate; reflected waves return to their actual starting point. Affects new waves only.",
+                );
+                number(
+                    ui,
+                    "Wave height (m)",
+                    &mut config.amplitude,
+                    0.0..=0.5,
+                    "Crest amplitude 0–0.5 m; boundaries and shallow areas limit final displacement. This is non-conservative animation; affects new waves only.",
+                );
+                number(
+                    ui,
+                    "Tip width ratio",
+                    &mut config.tip_ratio,
+                    0.05..=1.0,
+                    "Tip-to-center width ratio 0.05–1; height smoothly reaches zero at both ends of the angular envelope. Affects new waves only.",
+                );
+                parameter(
+                    ui,
+                    "Ripple reflection",
+                    "Each incident wave generates at most one reverse wave; reflection is not SSR. Affects new waves only; existing descendant parameters are frozen.",
+                    |ui| ui.checkbox(&mut config.reflect, "Enabled"),
+                );
+                if config.reflect {
+                    number(
+                        ui,
+                        "Reflection amplitude ratio",
+                        &mut config.reflectivity,
+                        0.0..=0.95,
+                        "Reflected-to-incident amplitude ratio 0–0.95; reflections gradually decay and do not reflect again.",
+                    );
+                    number(
+                        ui,
+                        "Reflection half-life (s)",
+                        &mut config.reflected_half_life,
+                        0.1..=30.0,
+                        "Simulation seconds for amplitude to halve, 0.1–30; affects only reflected descendants of new waves.",
+                    );
+                }
+                number(
+                    ui,
+                    "Transition time (s)",
+                    &mut config.transition,
+                    0.05..=2.0,
+                    "Simulation time for incident fade-out and reflection fade-in, 0.05–2 seconds, avoiding sudden weakening; new waves also fade in.",
+                );
+            },
+        );
         let [emit, clear] = action_row(
             ui,
-            [PanelButton::new("发射一道"), PanelButton::new("清空波纹")],
+            [
+                PanelButton::new("Emit one"),
+                PanelButton::new("Clear ripples"),
+            ],
         );
         if emit.clicked() {
             if let Err(e) = config.validate() {
@@ -382,19 +395,21 @@ impl LakePanel {
             }
         }
         panel.clear |= clear.clicked();
-        group(ui, "诊断", |ui| {
+        group(ui, "Diagnostics", |ui| {
             parameter(
                 ui,
-                "显示",
-                "实时切换；深度、带符号 SDF（米）、传播等值线或波高；不重置波纹。",
+                "Display",
+                "Switch immediately between depth, signed SDF (m), propagation contours, or wave height; does not reset ripples.",
                 |ui| {
                     egui::ComboBox::from_id_salt("lake view")
                         .selected_text(
-                            ["正常", "深度", "SDF", "等值线", "波高"][config.view as usize],
+                            ["Normal", "Depth", "SDF", "Contours", "Wave height"]
+                                [config.view as usize],
                         )
                         .show_ui(ui, |ui| {
-                            for (v, label) in
-                                ["正常", "深度", "SDF", "等值线", "波高"].iter().enumerate()
+                            for (v, label) in ["Normal", "Depth", "SDF", "Contours", "Wave height"]
+                                .iter()
+                                .enumerate()
                             {
                                 ui.selectable_value(&mut config.view, v as u32, *label);
                             }
@@ -403,11 +418,11 @@ impl LakePanel {
             );
             parameter(
                 ui,
-                "当前状态",
-                "活动波上限 128，入射预留反射容量；池满拒绝新增，不覆盖可见波。配置不保存播放进度。",
+                "Current status",
+                "Up to 128 active waves; incident waves reserve capacity for reflections. New waves are rejected when the pool is full rather than overwriting visible waves. Configurations do not save playback progress.",
                 |ui| {
                     ui.label(format!(
-                        "{} 波 / 丢弃 {} / {} 岩石",
+                        "{} waves / {} dropped / {} rocks",
                         panel.status.0, panel.status.1, panel.status.2
                     ))
                 },
@@ -486,7 +501,7 @@ mod tests {
             .shapes
             .iter()
             .rev()
-            .find_map(|s| locate(&s.shape, "应用传播场 / 种子并重置"))
+            .find_map(|s| locate(&s.shape, "Apply propagation field / seed and reset"))
             .unwrap();
         for pressed in [true, false] {
             let _ = context.run_ui(

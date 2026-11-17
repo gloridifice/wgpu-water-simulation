@@ -3,30 +3,30 @@ use crate::ocean::parameters::optics::OpticsConfig;
 pub const RESOLUTION: u32 = 256;
 pub const RESOLUTIONS: [u32; 5] = [64, 128, 256, 512, 1024];
 pub const FOAM_TEXTURE_NAMES: [&str; 4] = [
-    "原灰度效果",
+    "Original Grayscale",
     "Shorewaves NSH",
     "Crest Foam NSH",
     "Crest Foam2 NSH",
 ];
 pub const FOAM_MATERIAL_VIEWS: [&str; 6] = [
-    "正常着色",
-    "Soft 图案",
-    "Height 图案",
-    "泡沫法线",
-    "不透明度（黑透／白实）",
-    "输运坐标网格",
+    "Normal Shading",
+    "Soft Pattern",
+    "Height Pattern",
+    "Foam Normals",
+    "Opacity (Black: Clear / White: Opaque)",
+    "Transport Coordinate Grid",
 ];
 pub const VIEWS: [(u32, &str); 10] = [
-    (0, "正常着色"),
-    (1, "水深"),
-    (2, "水流方向"),
-    (3, "近岸泡沫"),
-    (4, "沙地湿度"),
-    (6, "泡沫密度（低绿／高红）"),
-    (7, "前沿实际生成率（最近子步）"),
-    (8, "压缩脊线发射权重"),
-    (9, "新鲜白沫 N 密度"),
-    (10, "水面残余 R 密度"),
+    (0, "Normal Shading"),
+    (1, "Water Depth"),
+    (2, "Flow Direction"),
+    (3, "Nearshore Foam"),
+    (4, "Sand Wetness"),
+    (6, "Foam Density (Low: Green / High: Red)"),
+    (7, "Actual Front Source Rate (Last Substep)"),
+    (8, "Compression Ridge Emission Weight"),
+    (9, "Fresh Foam N Density"),
+    (10, "Surface Residual R Density"),
 ];
 
 fn deserialize_view<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {

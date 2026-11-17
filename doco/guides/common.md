@@ -1,26 +1,26 @@
-# 公共桌面框架
+# Common Desktop Framework
 
-## 所有权
+## Ownership
 
-`crates/common/` 是 workspace 内的库，供 GPU 桌面程序复用；不依赖 `water-simulation`，不持有 FFT、SWE、泡沫或场景业务参数。根包在 `ocean` feature 下使用它，CPU 包不依赖它，`tall-cell-fluid` 继续保持独立 workspace。
+`crates/common/` is a workspace library shared by GPU desktop programs. It does not depend on `water-simulation` or own FFT, SWE, foam, or scene parameters. The root package uses it under the `ocean` feature; the CPU package does not depend on it, and `tall-cell-fluid` remains a separate workspace.
 
-- `app::run` 接受窗口属性、可选呈现帧数及初始化闭包；应用实现 `WindowScene`。应用拥有输入消费策略和计算／绘制顺序，公共循环不强制模拟节拍，不用墙钟代替实际模拟时间。可选 `poll_commands` 在事件循环等待阶段运行，窗口不可呈现时仍能处理外部命令。
-- `app::Desktop` 建立窗口 Surface 与 GPU；`app::acquire` 统一处理超时、遮挡、丢失和失效。零窗口尺寸不绘制，不计入有限呈现帧数。
-- `gpu::Gpu` 提供窗口／离屏共用设备上下文；显式阻塞回读只供验证和离屏导出。`gpu::timer` 是至多一次在途的真实 timestamp 异步采样，不支持时返回 None；应用自己附加阶段、阶数或模拟步长元数据。
-- `ui::Egui` 管输入平台状态、默认主题与 GPU 绘制；宿主安装字体和图片加载器。`ui::Viewport` 管可调整尺寸的原生 egui 纹理及颜色视图，不掌管相机输入。
-- `ui::layout::{Layout,Workspace}` 以应用的 `PanelId` 参数化，保留规范布局中的临时隐藏面板，区别于主动关闭。应用提供面板、可用条件、默认布局和旧版本迁移；新程序不必复制海洋的分类注册表。
-- `settings::SettingsStore<T>` 使用应用自己的 serde 类型与 `Settings::validate`。保存工作状态与命名库，保留只读默认快照；编辑不写盘，只有显式保存才持久化。`load_config` 严格只读，不替换坏文件。
-- `settings::sidecar::Sidecar<T>` 与会话保存独立，负责布局读取上限、节流与失败反馈；损坏文件只有显式修复才可替换。应用仅在可写模式下创建该对象。
-- `camera::Orbit` 只计算三维目标、眼点、投影及平移。角色运动、相机碰撞、海浪显示开关等由应用负责。
-- 可选 `mcp` feature 提供 `control` 的 MCP stdio 适配与有界命令队列；应用自行持有场景、校验字段、实现操作和确定执行时序。当前 Ocean 的 `--headless` 和 `--no-ui` 纯场景窗口接入该适配；原有 Dock 桌面窗口尚未接入。参见 [Ocean 无窗口调试](ocean.md#无窗口-mcp-调试)。
+- `app::run` accepts window attributes, an optional presentation frame limit, and an initialization closure; applications implement `WindowScene`. The application controls input consumption and compute/draw order. The common loop does not impose a simulation cadence or substitute wall time for actual simulation time. Optional `poll_commands` runs during event-loop waits, even when the window cannot present.
+- `app::Desktop` creates the window Surface and GPU; `app::acquire` handles timeouts, occlusion, loss, and invalidation. Zero-size windows do not draw or count toward the presentation limit.
+- `gpu::Gpu` provides a device context for windowed and offscreen use; explicit blocking readback is reserved for verification and offscreen export. `gpu::timer` asynchronously samples real timestamps with at most one request in flight and returns None when unsupported. Applications attach their own phase, order, or simulation-step metadata.
+- `ui::Egui` manages platform input state, the default theme, and GPU drawing; the host installs fonts and image loaders. `ui::Viewport` manages a resizable native egui texture and color view, not camera input.
+- `ui::layout::{Layout,Workspace}` is parameterized by the application's `PanelId` and retains temporarily hidden panels separately from explicitly closed ones. Applications provide panels, availability conditions, default layouts, and migrations; new programs need not copy Ocean's category registry.
+- `settings::SettingsStore<T>` uses the application's serde type and `Settings::validate`. It saves working state and named libraries and retains a read-only default snapshot. Edits are persisted only on explicit save. `load_config` is strictly read-only and does not replace corrupt files.
+- `settings::sidecar::Sidecar<T>` is independent of session saving and handles layout read limits, throttling, and failure reporting. Corrupt files can only be replaced after explicit repair. Applications create it only in writable mode.
+- `camera::Orbit` computes only the 3D target, eye, projection, and pan. Character motion, camera collisions, and wave display switches belong to the application.
+- The optional `mcp` feature provides the `control` MCP stdio adapter and bounded command queue. Applications own their scenes, validate fields, implement actions, and determine execution order. Ocean's `--headless` and `--no-ui` scene window use this adapter; the original Dock desktop window does not. See [Ocean headless debugging](ocean.md#headless-mcp-debugging).
 
-## Ocean 兼容性
+## Ocean Compatibility
 
-原 `water_simulation::ocean` 公开入口保留；GPU 设备为重导出，计时和相机有海洋适配。海洋 JSON 顶层字段、默认路径、命名配置、手动保存／自动布局边界及布局 v1/v2/v3 兼容保持原语义。海洋模拟、渲染 WGSL、参数默认值、FFT→SWE 顺序和离屏暖机未改变。独立实验窗口目前仍保留自己的应用适配，不宣称所有窗口都已共用公共循环。
+The original `water_simulation::ocean` public entry points remain available. The GPU device is re-exported, and timing and camera have Ocean adapters. Ocean JSON top-level fields, default paths, named configurations, manual-save/automatic-layout boundaries, and v1/v2/v3 layout compatibility retain their semantics. Ocean simulation, rendering WGSL, parameter defaults, FFT→SWE order, and offscreen warmup are unchanged. Independent lab windows still have their own application adapters; not all windows are claimed to share the common loop.
 
-## 验证
+## Verification
 
-在仓库根目录执行：
+Run from the repository root:
 
 ```powershell
 cargo fmt --all --check
@@ -32,6 +32,6 @@ cargo build --release --bin ocean
 .\target\release\ocean.exe --beach --no-settings --frames 600
 ```
 
-框架提取阶段实际运行了以上检查；Ocean 68 项库测试和 CPU 包 33 项测试通过，完整 GPU 检查和 600 帧窗口运行返回成功。截图检查显示海滩、水面、五分类导航、Dock 与常驻工具栏正常显示。固定个人配置／相机／1 秒模拟时间的离屏前后图像仅 411 像素有单色阶差异（最大 1/255），并非逐字节一致。
+These checks were run during framework extraction: 68 Ocean library tests and 33 CPU package tests passed, and full GPU verification and a 600-frame window run succeeded. Screenshot inspection showed the beach, water, five-category navigation, Dock, and persistent toolbar. Offscreen before/after images with fixed personal configuration, camera, and one simulated second differed at only 411 pixels by at most one color level (1/255); they were not byte-identical.
 
-日志和图片位于 Git 忽略的 `target/migration-check/`，不作为源码资产。验证使用只读配置或 `--no-settings`，未写个人会话。截图只证明该视角的显示，不能替代其他平台的 Surface 故障检查或所有真实 Dock 操作。
+Logs and images reside in Git-ignored `target/migration-check/` and are not source assets. Verification used read-only configuration or `--no-settings` and did not write personal sessions. Screenshots establish only the display from that viewpoint, not Surface failure handling on other platforms or all real Dock interactions.

@@ -1,42 +1,42 @@
-# yummy_egui 接入与默认主题
+# yummy_egui Integration and Default Theme
 
-通用控件使用 crates.io 的 [`yummy_egui`](https://crates.io/crates/yummy_egui) 0.1 系列，最低版本 0.1.2。本仓库不再维护组件库源码、主题 TOML 或外部主题加载／保存入口。
+Common controls use the crates.io [`yummy_egui`](https://crates.io/crates/yummy_egui) 0.1 series, minimum version 0.1.2. This repository no longer maintains component library source, theme TOML, or external theme loading/saving entry points.
 
-## 依赖与边界
+## Dependencies and Boundaries
 
-- `yummy_egui` 0.1.2 使用 egui 0.34.3、可选 egui_dock 0.19.1，需要 Rust 1.92 或更新版本。
-- 宿主同步使用 egui／egui_extras／egui-winit／egui-wgpu 0.34.3、egui_dock 0.19.1 和 wgpu 29，避免不同版本的 UI 或 GPU 类型混用。
-- 根包只在 `ocean` feature 下启用 `yummy_egui`，并开启库的 `dock` feature。独立 `crates/tall-cell-fluid` workspace 仅在 `demo` feature 下启用该 UI 依赖。
-- CPU 包 `tui-2d-prototype` 不依赖 egui、yummy_egui 或 GPU；根 workspace 包含根包、公共库 `common` 和 CPU 包。
-- 配置选中状态、载入失败回滚、模拟参数保存及 Dock 布局均归宿主，不由组件库管理。
+- `yummy_egui` 0.1.2 uses egui 0.34.3 and optional egui_dock 0.19.1, and requires Rust 1.92 or newer.
+- Hosts use egui/egui_extras/egui-winit/egui-wgpu 0.34.3, egui_dock 0.19.1, and wgpu 29 to avoid mixing UI or GPU types from different versions.
+- The root package enables `yummy_egui` only with the `ocean` feature and enables the library's `dock` feature. The independent `crates/tall-cell-fluid` workspace enables this UI dependency only under `demo`.
+- The CPU package `tui-2d-prototype` does not depend on egui, yummy_egui, or GPU; the root workspace contains the root package, `common` library, and CPU package.
+- Configuration selection, load-failure rollback, simulation parameter saving, and Dock layout belong to the host, not the component library.
 
-## 默认主题
+## Default Theme
 
-Ocean、slider-lab、foam-weight-lab 和 tall-cell-fluid demo 直接应用库默认主题：
+Ocean, slider-lab, foam-weight-lab, and the tall-cell-fluid demo apply the library's default theme directly:
 
 ```rust
 let theme = yummy_egui::Theme::default();
 theme.apply(&context);
-// 由宿主安装字体；theme.apply 不会替换字体。
+// The host installs fonts; theme.apply does not replace them.
 let dock_style = theme.dock_style().clone();
-// 创建 DockArea 时传入 .style(dock_style.clone())。
+// Pass .style(dock_style.clone()) when creating DockArea.
 ```
 
-主题资源随 crates.io 依赖提供，无需从本仓库或运行目录读取文件。不复制库内主题，也不保存主题配置。Ocean 仍由 `src/ocean/ui/fonts.rs` 安装 MiSans，液体 demo 独立安装同一字体。
+Theme assets ship with the crates.io dependency; no files need to be read from this repository or the working directory. The library theme is not copied, and theme configuration is not saved. Ocean still installs MiSans through `src/ocean/ui/fonts.rs`; the fluid demo installs the same font independently.
 
-“不保存主题”不影响现有模拟会话、命名配置和 `.workspaces.json` 布局 sidecar。Dock 边距调试及 slider-lab 外观调整仅保留在运行内存中，退出即丢弃，不会写回库默认主题。
+Not saving the theme does not affect simulation sessions, named configurations, or the `.workspaces.json` layout sidecar. Dock margin debugging and slider-lab appearance adjustments remain in memory and are discarded on exit, never written back to the library default theme.
 
-## 控件与文档
+## Controls and Documentation
 
-业务面板直接调用 `yummy_egui::ParameterSlider`、`ParameterList`、`SelectionList`、`PanelButton`、`group`、`parameter`、`choices` 和 h1／h2／h3。逻辑参数组共用两列网格，保留 42%／58% 列宽和名称 hover 提示；选择列表只返回交互响应，业务状态仍由调用方提交。
+Business panels call `yummy_egui::ParameterSlider`, `ParameterList`, `SelectionList`, `PanelButton`, `group`, `parameter`, `choices`, and h1/h2/h3 directly. Logical parameter groups share a two-column grid with 42%/58% widths and name hover tooltips; selection lists return interaction responses only, with business state committed by the caller.
 
-Ocean 的浮点参数统一使用 `ParameterSlider`，沿用现有合法范围并保留右侧精确输入；跨度大的非负参数可使用对数刻度，有符号坐标和角度使用线性刻度。新替换的输入仅在编辑时约束范围，不因显示改写已载入值，也不改变默认值、显式应用、重置或手动保存语义。Ocean 顶部时间倍率滑块限制宽度，避免占满工具栏。
+Ocean uses `ParameterSlider` for floating-point parameters, retaining valid ranges and precise entry on the right. Wide-range nonnegative parameters can use logarithmic scales; signed coordinates and angles use linear scales. Newly replaced inputs constrain values only while editing, without rewriting loaded values merely for display or changing defaults, explicit apply, reset, or manual-save semantics. The Ocean toolbar time multiplier slider has a limited width to avoid occupying the entire toolbar.
 
-Ocean 左侧导航使用 `IconSegmentedControl::vertical()`，五个 SVG 图标组成连续分段栏；工作区选择仍由宿主保存，分段中文 hover 由宿主补充，不改变模拟或 Dock 布局语义。
+Ocean's left navigation uses `IconSegmentedControl::vertical()` with five SVG icons in a continuous segmented bar; the host saves workspace selection and supplies hover text, without changing simulation or Dock layout semantics.
 
-库 API 与主题实现见 [docs.rs](https://docs.rs/yummy_egui) 和[上游仓库](https://github.com/gloridifice/yummy-egui)，不在本项目维护第二份接口手册。
+See [docs.rs](https://docs.rs/yummy_egui) and the [upstream repository](https://github.com/gloridifice/yummy-egui) for the library API and theme implementation; this project does not maintain a second API manual.
 
-## 验证
+## Verification
 
 ```powershell
 cargo test --features ocean --lib
@@ -45,8 +45,8 @@ cargo test -p tui-2d-prototype
 cargo check --manifest-path crates/tall-cell-fluid/Cargo.toml --features demo --all-targets
 ```
 
-组件自身测试由上游库维护；宿主保留配置业务、Dock 布局与相机交互测试。升级 GPU 后端时还需构建并运行 `ocean --verify`，真实界面通过有限帧窗口检查，不能用不含 UI 的海洋快照替代。
+The upstream library maintains component tests; the host retains configuration business logic, Dock layout, and camera interaction tests. After GPU backend upgrades, also build and run `ocean --verify` and inspect the real UI with a limited-frame window; an Ocean snapshot without UI cannot substitute for this.
 
-若已有 Windows 锁文件将 `gpu-allocator` 的宽版本依赖解析到旧 `windows`，而 wgpu 29 使用 `windows` 0.62，可能出现 Direct3D12 类型不匹配。应在受影响的 workspace 中更新旧版本，例如 `cargo update -p windows@0.58.0 --precise 0.62.2`；不要修改 Cargo 缓存中的第三方源码或关闭图形后端来绕过。
+If an existing Windows lockfile resolves `gpu-allocator`'s broad dependency to an old `windows` version while wgpu 29 uses `windows` 0.62, Direct3D12 types may mismatch. Update the old version in the affected workspace, for example `cargo update -p windows@0.58.0 --precise 0.62.2`; do not modify third-party source in the Cargo cache or disable the graphics backend as a workaround.
 
-`yummy_egui` 的 MIT 许可证与主题来源声明由上游包维护；它不改变本项目或其他随附资源的许可。
+The MIT license and theme attribution for `yummy_egui` are maintained by the upstream package; they do not change the licenses of this project or other bundled assets.

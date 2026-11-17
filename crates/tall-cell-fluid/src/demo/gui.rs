@@ -1,4 +1,4 @@
-//! 独立 demo 的停靠面板；只读性能快照，操作通过动作返回给窗口线程。
+//! Dock panels for the standalone demo; performance snapshots are read-only and actions return to the window thread.
 
 use super::render::ViewMode;
 use super::worker::{Frame, Scene};
@@ -72,7 +72,7 @@ impl Gui {
         let theme = yummy_egui::Theme::default();
         theme.apply(&context);
         let mut fonts = egui::FontDefinitions::default();
-        // 复用仓库内现有字体，不依赖启动目录或 Ocean 模块。
+        // Reuse the repository font without depending on the working directory or Ocean module.
         fonts.font_data.insert(
             "MiSans".into(),
             egui::FontData::from_static(include_bytes!(
@@ -97,7 +97,7 @@ impl Gui {
         let mut renderer = egui_wgpu::Renderer::new(device, format, Default::default());
         let viewport_texture = view_texture(device, format, [1, 1]);
         let viewport_view = viewport_texture.create_view(&Default::default());
-        // egui 按 gamma 编码颜色采样；sRGB 目标使用非 sRGB 采样 view。
+        // egui samples gamma-encoded colors; use a non-sRGB sampling view for sRGB targets.
         let sampled_view = viewport_texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(format.remove_srgb_suffix()),
             ..Default::default()
@@ -136,8 +136,8 @@ impl Gui {
             egui::Panel::top("demo toolbar").show_inside(root_ui, |ui| {
                 ui.horizontal(|ui| {
                     yummy_egui::h3(ui, "Tall Cell Fluid");
-                    ui.label("独立液体实验");
-                    if ui.button("恢复布局").clicked() {
+                    ui.label("Standalone Fluid Lab");
+                    if ui.button("Reset Layout").clicked() {
                         self.dock = default_dock();
                     }
                 });
@@ -265,8 +265,8 @@ impl egui_dock::TabViewer for Viewer<'_, '_> {
 
     fn title(&mut self, tab: &mut Panel) -> egui::WidgetText {
         match tab {
-            Panel::View => "液体视图",
-            Panel::Performance => "耗时与控制",
+            Panel::View => "Fluid View",
+            Panel::Performance => "Timing and Controls",
         }
         .into()
     }
@@ -313,7 +313,7 @@ impl egui_dock::TabViewer for Viewer<'_, '_> {
     }
 }
 
-/// 每个分组共享一张两列表；裁切子控件，防止长选项撑大 42% / 58% 列宽。
+/// Each group shares a two-column table; clip controls to preserve the 42% / 58% widths.
 fn table(ui: &mut egui::Ui, id: &str, rows: impl FnOnce(&mut egui::Ui, [f32; 2])) {
     let available = (ui.available_width() - 8.0).max(0.0);
     let widths = [available * 0.42, available * 0.58];
@@ -361,96 +361,97 @@ fn performance_panel(
     actions: &mut Vec<GuiAction>,
 ) {
     let frame = data.frame.filter(|_| !data.resetting);
-    let metric =
-        |value: Option<f64>| value.map_or_else(|| "等待样本".into(), |v| format!("{v:.2}"));
-    yummy_egui::h3(ui, "模拟耗时");
+    let metric = |value: Option<f64>| {
+        value.map_or_else(|| "Waiting for sample".into(), |v| format!("{v:.2}"))
+    };
+    yummy_egui::h3(ui, "Simulation Timing");
     table(ui, "simulation timing", |ui, widths| {
         value_row(
             ui,
             widths,
-            "墙钟（ms/步）",
-            "最近成功子步：CFL 步长选择、CPU 拓扑、GPU 求解及同步回读等待。不是 GPU timestamp；初始化不计入，暂停保留最后样本。",
+            "Wall clock (ms/step)",
+            "Latest successful substep: CFL step selection, CPU topology, GPU solving and synchronous readback wait. Not a GPU timestamp; excludes initialization and retains the last sample while paused.",
             metric(frame.and_then(|f| f.simulation_ms)),
         );
     });
     ui.separator();
-    yummy_egui::h3(ui, "Mesh 耗时");
+    yummy_egui::h3(ui, "Mesh Timing");
     table(ui, "mesh timing", |ui, widths| {
         value_row(
             ui,
             widths,
-            "墙钟（ms/次）",
-            "最近一次表面更新：边界 halo、GPU 三角形/法线提取、结果回读和 CPU 整理。不含向窗口渲染设备上传网格；初始化也会生成 Mesh。",
+            "Wall clock (ms/update)",
+            "Latest surface update: boundary halo, GPU triangle/normal extraction, readback and CPU processing. Excludes mesh upload to the window rendering device; initialization also generates a mesh.",
             metric(frame.map(|f| f.mesh_ms)),
         );
     });
     ui.separator();
-    yummy_egui::h3(ui, "着色耗时");
+    yummy_egui::h3(ui, "Rendering Timing");
     table(ui, "shading timing", |ui, widths| {
         let text = if !timing.supported {
-            "设备不支持".into()
+            "Device unsupported".into()
         } else if timing.failed {
-            "计时读取失败".into()
+            "Timing readback failed".into()
         } else {
             metric(timing.latest_ms)
         };
         value_row(
             ui,
             widths,
-            "GPU（ms/帧）",
-            "真实 GPU timestamp：水面、地面和槽框的完整场景 render pass，包含顶点处理、光栅化及片元着色，不是单独片元着色时间。排除 Mesh 上传、egui 和呈现等待。异步读取最近可用样本，不阻塞窗口。三块频率不同，不能相加当帧耗时。",
+            "GPU (ms/frame)",
+            "Actual GPU timestamp for the complete scene render pass (water, ground and tank frame), including vertex processing, rasterization and fragment shading, not fragment shading alone. Excludes mesh upload, egui and presentation wait. The latest available sample is read asynchronously without blocking the window. The three timings have different sampling rates and cannot be added to obtain frame time.",
             text,
         );
     });
     ui.separator();
-    yummy_egui::h3(ui, "运行状态");
+    yummy_egui::h3(ui, "Status");
     table(ui, "demo status", |ui, widths| {
         let state = if data.error.is_some() {
-            "计算失败"
+            "Computation failed"
         } else if data.resetting {
-            "重置中"
+            "Resetting"
         } else if frame.is_none() {
-            "初始化中"
+            "Initializing"
         } else if data.paused && frame.is_some_and(|f| !f.paused) {
-            "等待暂停"
+            "Waiting to pause"
         } else if data.paused {
-            "已暂停"
+            "Paused"
         } else {
-            "运行中"
+            "Running"
         };
         value_row(
             ui,
             widths,
-            "状态",
-            "模拟在后台推进；暂停或重置会等待当前子步结束。",
+            "Status",
+            "Simulation runs in the background; pause and reset wait for the current substep to finish.",
             state,
         );
         value_row(
             ui,
             widths,
-            "模拟时间（s）",
-            "已完成的物理模拟时间，不等于现实时间。",
+            "Simulation time (s)",
+            "Completed physical simulation time, not wall-clock time.",
             frame.map_or_else(|| "—".into(), |f| format!("{:.3}", f.time)),
         );
         value_row(
             ui,
             widths,
-            "已完成子步",
-            "最近显示的成功子步编号。",
+            "Completed substeps",
+            "Latest displayed successful substep number.",
             frame.map_or_else(|| "—".into(), |f| f.steps.to_string()),
         );
         value_row(
             ui,
             widths,
-            "三角形数量",
-            "当前真实 GPU 提取的表面三角形总数。",
+            "Triangles",
+            "Total surface triangles currently extracted by the GPU.",
             frame.map_or_else(|| "—".into(), |f| (f.mesh.indices.len() / 3).to_string()),
         );
         value_row(
             ui,
             widths,
-            "背景网格",
-            "每轴单元数；由启动参数 --resolution 指定。",
+            "Background grid",
+            "Cells per axis, specified by the --resolution startup option.",
             format!("{}³", data.resolution),
         );
     });
@@ -458,21 +459,21 @@ fn performance_panel(
         ui.colored_label(egui::Color32::LIGHT_RED, error);
     }
     ui.separator();
-    yummy_egui::h3(ui, "演示控制");
+    yummy_egui::h3(ui, "Demo Controls");
     table(ui, "demo controls", |ui, widths| {
         row(
             ui,
             widths,
-            "场景",
-            "选择后重置液体、时间和耗时样本。",
+            "Scene",
+            "Selecting a scene resets the fluid, time and timing samples.",
             |ui| {
                 let mut scene = data.scene;
                 egui::ComboBox::from_id_salt("scene")
                     .width(ui.available_width())
                     .selected_text(scene_name(scene))
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut scene, Scene::Drop, "液滴落水");
-                        ui.selectable_value(&mut scene, Scene::Dam, "水柱溃坝");
+                        ui.selectable_value(&mut scene, Scene::Drop, "Droplet");
+                        ui.selectable_value(&mut scene, Scene::Dam, "Dam Break");
                     });
                 if scene != data.scene {
                     actions.push(GuiAction::Reset(scene));
@@ -482,17 +483,17 @@ fn performance_panel(
         row(
             ui,
             widths,
-            "显示方式",
-            "仅改变预览材质，立即生效，不重置模拟。",
+            "View mode",
+            "Changes only the preview material, immediately and without resetting the simulation.",
             |ui| {
                 let mut view = data.view;
                 egui::ComboBox::from_id_salt("view")
                     .width(ui.available_width())
                     .selected_text(view_name(view))
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut view, ViewMode::Water, "水面材质");
-                        ui.selectable_value(&mut view, ViewMode::Mesh, "三角网格");
-                        ui.selectable_value(&mut view, ViewMode::Normals, "法线");
+                        ui.selectable_value(&mut view, ViewMode::Water, "Water");
+                        ui.selectable_value(&mut view, ViewMode::Mesh, "Mesh");
+                        ui.selectable_value(&mut view, ViewMode::Normals, "Normals");
                     });
                 if view != data.view {
                     actions.push(GuiAction::View(view));
@@ -504,9 +505,9 @@ fn performance_panel(
         if ui
             .add_enabled(
                 !data.finite_steps,
-                egui::Button::new(if data.paused { "播放" } else { "暂停" }),
+                egui::Button::new(if data.paused { "Play" } else { "Pause" }),
             )
-            .on_hover_text("空格；有限子步运行时禁用播放切换。")
+            .on_hover_text("Space; playback toggling is disabled for finite-step runs.")
             .clicked()
         {
             actions.push(GuiAction::SetPaused(!data.paused));
@@ -514,23 +515,25 @@ fn performance_panel(
         if ui
             .add_enabled(
                 data.paused && !data.resetting && data.error.is_none() && frame.is_some(),
-                egui::Button::new("单步"),
+                egui::Button::new("Step"),
             )
-            .on_hover_text("N；推进一个满足 CFL 的子步。")
+            .on_hover_text("N; advance one CFL-compliant substep.")
             .clicked()
         {
             actions.push(GuiAction::Step);
         }
         if ui
-            .button("重置")
-            .on_hover_text("R；重新初始化当前场景。")
+            .button("Reset")
+            .on_hover_text("R; reinitialize the current scene.")
             .clicked()
         {
             actions.push(GuiAction::Reset(data.scene));
         }
         if ui
-            .button("恢复相机")
-            .on_hover_text("Home；视图内左键拖动旋转，滚轮缩放。")
+            .button("Reset Camera")
+            .on_hover_text(
+                "Home; drag with the left mouse button in the view to rotate, scroll to zoom.",
+            )
             .clicked()
         {
             actions.push(GuiAction::ResetCamera);
@@ -540,15 +543,15 @@ fn performance_panel(
 
 fn scene_name(scene: Scene) -> &'static str {
     match scene {
-        Scene::Drop => "液滴落水",
-        Scene::Dam => "水柱溃坝",
+        Scene::Drop => "Droplet",
+        Scene::Dam => "Dam Break",
     }
 }
 
 fn view_name(view: ViewMode) -> &'static str {
     match view {
-        ViewMode::Water => "水面材质",
-        ViewMode::Mesh => "三角网格",
-        ViewMode::Normals => "法线",
+        ViewMode::Water => "Water",
+        ViewMode::Mesh => "Mesh",
+        ViewMode::Normals => "Normals",
     }
 }

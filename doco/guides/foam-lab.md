@@ -1,136 +1,136 @@
-# 泡沫形态输送对照
+# Foam Shape Transport Comparison
 
-`foam-lab` 是独立的离线 GPU 对照工具，默认用解析流场区分“流场没有产生形变”和“形变被数值输送抹掉”；`--benchmark` 另提供完整 SWE 内核的固定输入性能对照。不读取或写入个人配置，不启动窗口。
+`foam-lab` is an independent offline GPU comparison tool. By default, analytical flow fields distinguish “the flow did not deform the shape” from “numerical transport erased the deformation”; `--benchmark` separately compares performance of the full SWE kernel with fixed inputs. It neither reads nor writes personal configuration and does not open a window.
 
-## 运行
+## Running
 
 ```powershell
-# 默认三个场景 × 三种精度 × 两种空间阶数，固定 RK2，截取 0、2、4、8 模拟秒。
+# Default: three scenarios × three resolutions × two spatial orders, fixed RK2, snapshots at 0, 2, 4 and 8 simulation seconds.
 cargo run --release --features ocean --bin foam-lab -- --output target/foam-lab
 
-# 单独查看旋流；输出目录必须不存在，避免覆盖上一次结果。
+# Inspect vortex alone; the output directory must not exist, avoiding overwriting previous results.
 cargo run --release --features ocean --bin foam-lab -- --scenario vortex --resolutions 256,512 --orders 2 --space-orders 1,2 --times 0,1,2,4,8 --output target/foam-lab-vortex
 ```
 
-完成后打开输出目录中的 `index.html`，并结合 `metrics.csv` 查看数值。运行参数、显卡及生产着色器内容指纹保存在 `manifest.json`。详细参数见 `--help`。
+Open `index.html` in the output directory and consult `metrics.csv` for numerical results. Run arguments, GPU and production shader content fingerprints are stored in `manifest.json`. See `--help` for details.
 
-快照按**模拟时间**产生，不是启动后等待若干现实秒。每个区间根据稳定步长拆分，再读回 GPU 状态；CSV 同时记录请求时间、实际累计时间、该区间步数和步长。支持 GPU timestamp 的设备还会输出区间 GPU 毫秒数和每子步平均 GPU 毫秒数；不支持时留空。计时累加每批最多 64 子步的真实 GPU 时间，包含诊断入口的输送、源项和纹理运动，排除批间提交空闲、读回和图片导出；不是完整海洋帧耗时。首次区间可能受预热影响，性能比较应重复运行并观察后续区间。步长不是计算耗时。
+Snapshots are taken at **simulation times**, not after waiting wall-clock seconds. Each interval is split according to the stable timestep, then GPU state is read back; CSV records requested time, actual accumulated time, interval step count and timestep. Devices supporting GPU timestamps also report interval GPU milliseconds and average GPU milliseconds per substep; otherwise those fields are empty. Timings accumulate real GPU time for batches of up to 64 substeps, including transport, sources and texture motion in the diagnostic entry point, but excluding idle time between submissions, readback and image export. This is not full Ocean frame time. The first interval may include warmup effects; repeat performance comparisons and inspect later intervals. Timestep is not compute time.
 
-## 完整 SWE 内核性能基准
+## Full SWE Kernel Performance Benchmark
 
 ```powershell
 cargo run --release --features ocean --bin foam-lab -- --benchmark --resolutions 256,512 --output target/foam-perf
 ```
 
-此模式与保形实验分开，只使用 `--resolutions` 和 `--output`；场景、阶数、步长和重复次数固定，不使用 `--scenario`、`--orders`、`--space-orders`、`--times`。调用 `Shore::solver_pipeline` 的生产 `main` 入口，比较三个组合：一阶水体＋一阶泡沫、二阶水体＋一阶泡沫、二阶水体＋MUSCL 泡沫。**没有关闭泡沫输送的“纯水体”方案**；单浓度场景中，后两个组合用于比较泡沫空间阶数的成本。双浓度场景不使用这一空间阶数选项，后两个组合仅检查不同专用管线下的同一双浓度算法，不是两种输送方法。
+This mode is separate from the shape-preservation experiment and uses only `--resolutions` and `--output`; scenarios, orders, timestep and repetition counts are fixed, and `--scenario`, `--orders`, `--space-orders` and `--times` are not used. It calls the production `main` entry point of `Shore::solver_pipeline` and compares three combinations: first-order water plus first-order foam, second-order water plus first-order foam, and second-order water plus MUSCL foam. **There is no “water only” case with foam transport disabled.** In single-concentration scenarios the latter two combinations compare foam spatial-order cost. Dual-concentration scenarios do not use this spatial-order option: the latter two combinations check the same dual-concentration algorithm under different specialized pipelines, not two transport methods.
 
-| 固定场景 | 内容 |
+| Fixed scenario | Content |
 | --- | --- |
-| `beach-sparse` | 倾斜床面，仅中心半径 4 米内有泡沫 |
-| `beach-dense` | 同一床面，湿格铺满连续变化的泡沫密度 |
-| `model-dense` | 上传合成高度场，包含干湿交界；不是导入海岸资产的实景基准 |
-| `obstacles-dense` | 倾斜床面＋8 个静态障碍物＋密集泡沫 |
-| `model-dual-inlet` | 同一合成模型，开启双浓度、前沿／背景发射及四边松弛带；给定两个相位的非零入射水位和匹配动量 |
+| `beach-sparse` | Sloping bed, foam only within 4 m of the center |
+| `beach-dense` | Same bed, continuously varying foam density across wet cells |
+| `model-dense` | Uploaded synthetic height field with wet/dry boundary; not a real-scene benchmark of imported coastal assets |
+| `obstacles-dense` | Sloping bed, eight static obstacles and dense foam |
+| `model-dual-inlet` | Same synthetic model, dual concentrations, front/background emission and relaxation zones on all four sides; nonzero incident water levels and matching momentum for both phases |
 
-同场景、同分辨率的三个组合共用初始状态、地形和固定步长。前四场景 FFT 输入为零、关闭造泡，保留惯性、拖曳和衰减；新增场景使用双浓度寿命，初始 R 占总量的 40%，FFT 两阶段分别取前后场的 0.25／0.75 插值，一阶取 0.75。它不是个人模型资产或包含浪花源的实景基准。每个组合先预热 8 子步，再采样 7 轮，每轮重复 32 子步，轮间交替执行顺序。每次重复都从同一初始状态出发，RK2 每次重新计算预测阶段；不是让泡沫逐渐耗散后再计时。
+The three combinations for each scenario and resolution share initial state, terrain and fixed timestep. The first four scenarios use zero FFT input and disable foam generation while retaining inertia, drag and decay. The added scenario uses dual-concentration lifetimes, initial R at 40% of total, FFT interpolation at 0.25/0.75 between previous and next fields in the two stages, and 0.75 for first order. It is not a real-scene benchmark with personal model assets or spray sources. Each combination warms up for eight substeps, then samples seven rounds of 32 repeated substeps, alternating execution order between rounds. Each repetition starts from the same initial state and recomputes the RK2 predictor; timing does not wait for foam to dissipate gradually.
 
-输出 `benchmark.json`，包括每轮 GPU 毫秒/子步、中位数、步长、输入／地形／输出、每阶段完整参数、FFT 前后场的内容指纹和设备信息。不支持 timestamp 时耗时为 `null`。每个方案另输出一个 `.bin`，保存**单个固定子步**后的完整五块 `vec4<f32>` 状态，便于跨版本比较密度、动量和纹理状态；不等于 224 步后的演化结果。文件按每格 80 字节保存，512² 的 15 个方案共约 300 MiB。`fixture_version=2` 增加双浓度入射波场景和参数／FFT 指纹；原四场景的输入与步长不变。
+`benchmark.json` records GPU milliseconds/substep per round, medians, timestep, inputs/terrain/outputs, complete parameters per stage, FFT previous/next field fingerprints and device details. Times are `null` without timestamp support. Each case also writes a `.bin` containing the complete five-block `vec4<f32>` state after **one fixed substep**, for comparing density, momentum and texture state across versions; it is not the state after 224 evolving steps. Files contain 80 bytes per cell; the 15 cases at 512² total approximately 300 MiB. `fixture_version=2` adds the dual-concentration incident-wave scenario and parameter/FFT fingerprints; inputs and timesteps of the original four scenarios are unchanged.
 
-计时覆盖生产 SWE 内核及 RK2 两阶段，不包含参数上传、正常帧中的帧末状态同步、FFT、浪花、绘制、读回或首次管线编译。它用于比较固定工作量，不是界面帧率，也不能直接替代面板的完整 SWE 时间戳。比较每模拟秒成本时用毫秒/子步除以 `dt_s`，但仍须注明这是重复固定输入的等效成本，不是连续推进一秒的实景测量。跨版本先检查场景、步长、输入／地形、参数及 FFT 指纹相同，再比较五块输出的误差与重复运行的中位数；不要把保形实验的稀疏流场计时作为密集海岸的成本结论。
+Timing covers the production SWE kernel and both RK2 stages, excluding parameter uploads, end-of-frame state synchronization in normal frames, FFT, spray, drawing, readback and first pipeline compilation. It compares fixed work, not UI frame rate, and cannot directly replace the panel's complete SWE timestamp. To compare cost per simulation second, divide milliseconds/substep by `dt_s`, but identify it as equivalent cost for repeated fixed inputs, not a real scene advanced continuously for one second. Across versions, first verify matching scenario, timestep, input/terrain, parameters and FFT fingerprints, then compare errors in all five output blocks and medians from repeated runs. Do not use shape-experiment sparse-flow timings to draw conclusions about dense coastal cost.
 
-## 生产路径离屏剖析
+## Production-Path Offscreen Profiling
 
 ```powershell
 cargo run --release --features ocean --bin ocean-profile -- --config configs/ocean-settings.json --output target/ocean-profile
-# 同进程、同一模拟状态交错测量光学开关组合。
+# Interleave optical switch combinations in the same process and simulation state.
 cargo run --release --features ocean --bin ocean-profile -- --config configs/experiments/reef-front-ridge.json --output target/optics-ab --optics-ab
 cargo run --release --features ocean --bin ocean-profile -- --config configs/experiments/reef-front-ridge.json --output target/screen-optics-ab --screen-optics-ab
-# 冻结已生效参数复测，避免个人配置在两次运行之间改变。
+# Freeze effective parameters for a repeat run so personal configuration cannot change between runs.
 cargo run --release --features ocean --bin ocean-profile -- --config target/ocean-profile/effective.json --resolution 512 --output target/ocean-profile-512
 ```
 
-`--screen-optics-ab` 在模型场景的正常着色下，逐帧轮换基线、仅物理折射、仅 SSR、两者同时开启四组。各组固定焦散及模拟参数，保留天空反射和太阳高光。用 `screen_depth_pyramid` 读深度金字塔耗时，用各组与同帧基线的 `water_shading` 差值估算光学开关的增量。输出中的常规渲染统计对应基线，四组的原始计时见 `samples[].optics_ab_gpu_ms`。
+`--screen-optics-ab` rotates four variants each frame under normal model-scene shading: baseline, physical refraction only, SSR only, and both enabled. Caustics and simulation parameters remain fixed, while sky reflection and sun highlights remain enabled. Use `screen_depth_pyramid` for depth pyramid cost and each variant's `water_shading` difference from the same-frame baseline to estimate incremental optical cost. Ordinary render statistics in the output describe the baseline; raw timing for all four variants is in `samples[].optics_ab_gpu_ms`.
 
-`ocean-profile` 严格只读加载显式配置，使用实际模型资产和生产模拟／绘制调用；不覆盖个人设置。默认先运行 30 个预热帧，再采样 120 帧；`--frames` 可设为 1～1000。固定每帧推进 1/60 模拟秒、画面 1280×800，不使用保存的暂停状态或播放速度，不包含窗口、GUI、垂直同步和呈现。`--resolution` 只覆盖 SWE 精度，`--no-spray` 关闭浪花供同状态 A/B，不关闭水面泡沫。
+`ocean-profile` loads the explicit configuration strictly read-only and uses actual model assets and production simulation/drawing calls; it does not overwrite personal settings. By default it runs 30 warmup frames and samples 120 frames; `--frames` accepts 1–1000. Every frame advances exactly 1/60 simulated second at 1280×800, ignoring saved pause state and playback speed, without window, GUI, vertical sync or presentation. `--resolution` overrides only SWE resolution; `--no-spray` disables spray for same-state A/B without disabling surface foam.
 
-输出目录必须不存在且父目录已存在。输出包括：
+The output directory must not exist and its parent must exist. Outputs include:
 
-- `effective.json`：实际使用的配置副本。
-- `profile.json`：设备、逐帧实际子步数／推进量、五段 GPU 毫秒及各段中位数。顺序为 FFT、远海泡沫、完整 SWE、浪花粒子、绘制。完整 SWE 包含子步参数复制、浪花源、帧末状态同步和 FFT 历史复制；绘制包含场景及浪花叠加。支持 encoder／pass 内时间戳的设备还输出 `render_components`、`render_median_gpu_ms` 及逐帧 `render_gpu_ms`，细分天空 LUT、高度场层级更新、焦散追踪、焦散光栅化、不透明预绘制、屏幕深度层级、天空／不透明最终绘制、水面着色、线框／浪花叠加；不支持时保留原五段统计。初始化帧另外存入 `initial_frame_gpu_ms`／`initial_frame_render_gpu_ms`，不混入预热后的中位数。静态高度场层级普通帧复用，重建成本查看初始化帧。
-- `final-state.bin`：最后完整五块 SWE 状态，小端 f32，每格 80 字节。
-- `final.rgba`：最后画面的原始 RGBA8 sRGB 像素，1280×800，无文件头和行填充；不是 PNG。
+- `effective.json`: a copy of the effective configuration.
+- `profile.json`: device, actual substep count and advancement per frame, GPU milliseconds for five phases and their medians. The order is FFT, offshore foam, full SWE, spray particles and drawing. Full SWE includes substep parameter copies, spray sources, end-of-frame synchronization and FFT history copies; drawing includes scene and spray overlay. Devices supporting encoder/pass timestamps also report `render_components`, `render_median_gpu_ms` and per-frame `render_gpu_ms`, separating sky LUT, height-field hierarchy update, caustic tracing, caustic rasterization, opaque prepass, screen-depth hierarchy, sky/opaque final drawing, water shading and wireframe/spray overlay; unsupported devices retain the five-phase statistics. Initialization is separately stored in `initial_frame_gpu_ms`/`initial_frame_render_gpu_ms` and excluded from warmed-up medians. The static height-field hierarchy is reused on ordinary frames; inspect initialization for its rebuild cost.
+- `final-state.bin`: final complete five-block SWE state, little-endian f32, 80 bytes per cell.
+- `final.rgba`: final raw RGBA8 sRGB pixels, 1280×800, without header or row padding; not PNG.
 
-工具要求设备支持 GPU timestamp，大段边界使用空 compute pass；详细绘制计时直接写时间戳，不拆分生产 render pass，因此仍有少量测量开销。按设备 query 数量上限分批存储，支持 1～1000 个采样帧；只在全部帧提交后回读。水面着色包含折射追踪、光学积分和泡沫材质，使用相同配置的折射开／关对照估计折射增量，不把整段水面着色都归为折射。其干块统计仅检查末帧 16×16 块及两格邻域是否全干，不证明该块在两个 RK 阶段或之后可以安全停算。泡沫密度为零也不等于水动力不活跃。
+The tool requires GPU timestamps and uses empty compute passes for coarse phase boundaries. Detailed drawing timings write timestamps directly without splitting production render passes, though measurement has a small cost. Queries are batched according to device limits for 1–1000 sample frames; readback happens only after all frames are submitted. Water shading includes refraction tracing, optical integration and foam material; compare refraction on/off with the same configuration to estimate incremental refraction, rather than attributing all water shading to it. Dry-block statistics only check whether each 16×16 block and its two-cell neighborhood are entirely dry in the last frame; they do not prove it is safe to skip that block in both RK stages or later. Zero foam density does not imply inactive hydrodynamics.
 
-A/B 先核对生效配置、实际子步数与推进量，再比较状态和计时。带浪花的图像可能受 GPU 原子粒子压紧顺序影响，在透明重叠处存在少量像素差异；验证水面绘制时另用 `--no-spray` 固定对照。后台 GPU 负载会影响时间戳区间，需交错复测，不将受干扰的首次结果当作收益。
+For A/B, first compare effective configuration, actual substep counts and advancement, then compare state and timing. Images with spray can differ by a few pixels at transparent overlaps due to GPU atomic particle-compaction order; use `--no-spray` for a fixed water-rendering comparison. Background GPU load affects timestamp intervals; repeat with interleaving and do not treat a disturbed first result as a speedup.
 
-`--optics-methods` 使用同一交错计时流程，对照“全关、物理焦散搭配快速折射、物理焦散搭配物理折射、配置原值”，输出顺序见 `optics_ab_variants`；`gpu_ms` 中的 render 项对应配置原值。可用于比较快速／物理模式，也可在原配置中选择混合模式作第四组对照。未启用的 pass 只剩时间戳边界开销，不应解读为实际求交耗时。
+`--optics-methods` uses the same interleaved timing procedure to compare “all off, physical caustics with fast refraction, physical caustics with physical refraction, original configuration”; see `optics_ab_variants` for output order. The render entry in `gpu_ms` corresponds to the original configuration. This compares fast/physical modes, or uses a mixed original configuration as the fourth variant. Disabled passes incur only timestamp-boundary overhead, which should not be interpreted as actual intersection cost.
 
-`--optics-ab` 要求设备支持 encoder／pass 内时间戳。每个模拟帧只推进一次物理，然后在相同状态上交错绘制“全关、仅焦散、仅折射、全开”，逐帧轮换绘制顺序以减少缓存／频率偏差。`optics_ab_median_gpu_ms` 与 `optics_ab_render_median_ms` 分别记录四组分项及绘制总计中位数；`samples[].optics_ab_gpu_ms` 保留配对样本，`initial_frame_optics_ab_gpu_ms` 保留首次运行四组的明细（高度场第一次构建发生在首先启用焦散的组合）。五段 `gpu_ms` 中的 render 项选用配置指定的那组，不是四次绘制合计，因此这组数据不能直接当成实际窗口帧率。最后图像所属组合见 `final_image_variant`（0～3 顺序同上）。A/B 不保存参数、不推进额外物理步；与普通模式的同一末帧状态可逐字节比较。
+`--optics-ab` requires encoder/pass timestamps. Each simulation frame advances physics once, then interleaves drawing of “all off, caustics only, refraction only, all on” at the same state, rotating order each frame to reduce cache/frequency bias. `optics_ab_median_gpu_ms` and `optics_ab_render_median_ms` record component and total drawing medians for all four; `samples[].optics_ab_gpu_ms` retains paired samples, while `initial_frame_optics_ab_gpu_ms` records first-run details (the height-field hierarchy is first built in the first combination enabling caustics). The render entry among the five `gpu_ms` phases is the variant selected by configuration, not all four draws added together, so this is not actual window frame rate. `final_image_variant` identifies the final image variant (0–3 in the order above). A/B does not save parameters or advance extra physics steps; its final state can be compared byte-for-byte with the same frame in ordinary mode.
 
-面板 SWE 计时止于最后求解／浪花源 pass，不包含帧末同步；此工具的 SWE 段覆盖整个 `Shore::encode`，两者不能直接当作同一指标。固定输入 `foam-lab --benchmark` 不运行生产调度，不能用于衡量帧末复制优化。
+Panel SWE timing ends at the last solver/spray-source pass and excludes end-of-frame synchronization; this tool's SWE phase covers all of `Shore::encode`, so the two are not directly equivalent. Fixed-input `foam-lab --benchmark` does not run production scheduling and cannot measure end-of-frame copy optimizations.
 
-## 场景与控制变量
+## Scenarios and Controlled Variables
 
-模拟范围固定为 X/Z 各 −16～16 米，水深 2 米。初始泡沫密度为 0 或 1，边界穿过格子时以 8×8 子采样求面积平均。三种速度场均连续不可压缩，连续方程的解不会自行衰减密度。
+The simulation domain is fixed at −16 to 16 m in X and Z, with 2 m water depth. Initial foam density is 0 or 1, area-averaged using 8×8 subsampling where boundaries cross cells. All three velocity fields are continuously incompressible; their continuous solutions do not spontaneously lose density.
 
-| 场景 | 初始泡沫 | 规定水流 |
+| Scenario | Initial foam | Prescribed flow |
 | --- | --- | --- |
-| `translation` 平移 | 中心 (−5,0) 米，宽 0.5 米、长 8 米的条带 | X 速度 0.75 m/s，Z 速度 0.25 m/s |
-| `shear` 剪切 | 原点圆环，外半径 2.5 米、内半径 1.5 米 | X 速度 = 0.5 /s × Z 坐标，Z 速度为零 |
-| `vortex` 差速旋流 | 中心 (3,0) 米的偏心圆环，外半径 1.75 米、内半径 1 米 | 绕原点旋转；角速度 = 0.8 × exp(−半径平方 / 25 m²) rad/s |
+| `translation` | Strip centered at (−5,0) m, 0.5 m wide and 8 m long | X velocity 0.75 m/s, Z velocity 0.25 m/s |
+| `shear` | Annulus at origin, outer radius 2.5 m, inner radius 1.5 m | X velocity = 0.5 /s × Z coordinate, zero Z velocity |
+| `vortex` | Eccentric annulus centered at (3,0) m, outer radius 1.75 m, inner radius 1 m | Rotation around origin; angular velocity = 0.8 × exp(−radius squared / 25 m²) rad/s |
 
-共同设置：
+Common settings:
 
-- 生成、衰减均为零；拖曳开启、跟随倍率 1、响应时间 0，使泡沫立即服从规定速度，排除惯性响应差异。
-- 默认精度 128²、256²、512²，对应 0.25、0.125、0.0625 米／格；支持 64～1024 的既有档位。
-- `--orders` 选择 **时间推进**：1 为 Euler，2 为 RK2，默认仅 2。`--space-orders` 选择 **空间输送**：1 为原一阶 Rusanov，2 为受限 MUSCL，默认 1,2。默认比较只改变空间方法；实验工具也允许 Euler + MUSCL，此时整体时间精度仍为一阶。
-- 两种空间方法统一使用二维平流 CFL 上限 **0.2**，不包含 SWE 波速限制；同精度、同流场使用相同步长。旧版 CFL=0.4 的结果不是新方案的严格 A/B 基线，应重新运行一阶对照。
-- 时间从 0 开始，严格递增且不超过 8 秒；解析结构在此范围内远离封闭边界。没有随机种子或随机扰动。
+- Generation and decay are zero; drag is enabled, following multiplier 1, response time 0, so foam immediately follows prescribed velocity, excluding differences in inertial response.
+- Default resolutions are 128², 256² and 512², corresponding to 0.25, 0.125 and 0.0625 m/cell; existing levels from 64 to 1024 are supported.
+- `--orders` selects **time integration**: 1 is Euler, 2 is RK2, default 2 only. `--space-orders` selects **spatial transport**: 1 is the original first-order Rusanov, 2 is limited MUSCL, default 1,2. The default comparison changes only the spatial method. The tool also allows Euler + MUSCL, whose overall temporal accuracy remains first order.
+- Both spatial methods use the same two-dimensional advection CFL limit of **0.2**, without the SWE wave-speed limit; the same resolution and flow use the same timestep. Older CFL=0.4 results are not a strict A/B baseline for the new scheme; rerun the first-order comparison.
+- Times start at 0, strictly increase and do not exceed 8 seconds; analytical structures remain far from closed boundaries in this range. There are no random seeds or perturbations.
 
-## 使用的实际代码
+## Production Code Used
 
-`src/bin/foam_lab.rs` 将 `src/ocean/simulation/nearshore/shaders/shore.wgsl`、同目录的 `shore_compute.wgsl` 与诊断入口 `src/bin/foam_lab/shaders/transport.wgsl` 按原有顺序拼接，通过 `include_str!` 编译期嵌入；生产着色器的内容指纹同样读取新路径。
+`src/bin/foam_lab.rs` concatenates `src/ocean/simulation/nearshore/shaders/shore.wgsl`, `shore_compute.wgsl` in the same directory, and the diagnostic entry `src/bin/foam_lab/shaders/transport.wgsl` in their original order, embedded at compile time with `include_str!`. Production shader fingerprints also read the new paths.
 
-诊断入口调用生产的 `transport_foam`、`foam_sources` 和 `advance_foam_motion`；密度与动量使用生产通量，纹理位移也随模拟推进。RK2 的预测／校正由诊断入口组织。水深和水流保持规定值，**不执行完整 SWE、FFT 输入或近岸造泡**。没有复制另一套 CPU 输送算法。空间阶数使用与正常海洋相同的 uniform 控制；正常海洋中二阶泡沫输送需搭配二阶 SWE，默认仍为一阶。
+The diagnostic entry calls production `transport_foam`, `foam_sources` and `advance_foam_motion`; density and momentum use production fluxes, and texture displacement advances with simulation. The diagnostic entry orchestrates RK2 prediction/correction. Depth and flow remain prescribed; **full SWE, FFT input and nearshore foam generation are not executed**. No separate CPU transport algorithm is copied. Spatial order uses the same uniform control as normal Ocean; second-order foam transport in normal Ocean requires second-order SWE and defaults to first order.
 
-解析参考独立使用精确流线反向映射：平移减去速度乘时间，剪切减去对应横向位移，旋流按当前位置半径反向旋转。参考图和误差比较采用面积子采样，不依赖数值模拟结果。
+The independent analytical reference uses exact reverse streamline mapping: translation subtracts velocity times time, shear subtracts the corresponding lateral displacement, and vortex rotates backward by the radius at the current position. Reference images and error comparisons use area subsampling and do not depend on numerical simulation results.
 
-## 图片与指标
+## Images and Metrics
 
-所有图片使用固定 32×32 米俯视范围，+X 向右、+Z 向上。黑色为密度 0，白色为密度 1，**不逐图增强对比度**。PNG 是 GPU 密度数据的快照，不是普通海洋材质或窗口截图：不经过 NSH、透明度曲线、光照或两秒纹理更新。
+All images use a fixed 32×32 m top-down view, +X right and +Z up. Black is density 0, white is density 1, with **no per-image contrast enhancement**. PNGs are GPU density snapshots, not ordinary Ocean material or window screenshots: they do not pass through NSH, opacity curves, lighting or two-second texture updates.
 
-- 第一行：解析参考。
-- 后续行：各精度、时间阶数和空间阶数的 GPU 密度；文件名 `-o2-s1-` 表示 RK2 时间推进、一阶空间输送。
-- 红色图：与同分辨率解析参考的绝对误差，固定 0～1 色标。
-- 点击图片查看 512×512 原图；低分辨率按格子放大，高分辨率缩小时取区域平均。图片显示会截断到 0～1，但 CSV 指标使用未截断的浮点密度。
+- First row: analytical reference.
+- Subsequent rows: GPU density at each resolution, time order and spatial order; `-o2-s1-` in a filename means RK2 time integration and first-order spatial transport.
+- Red images: absolute error against the analytical reference at the same resolution, with a fixed 0–1 scale.
+- Click an image for its original 512×512 view; low resolutions are enlarged by cell, and higher resolutions are downsampled by area averaging. Image display clips to 0–1, but CSV metrics use unclipped floating-point density.
 
-| CSV 指标 | 解释 |
+| CSV metric | Meaning |
 | --- | --- |
-| `time_order` / `space_order` | 时间／空间方法独立记录，避免混淆 |
-| `gpu_ms` / `gpu_ms_per_step` | 本区间真实 GPU 毫秒数／每子步平均值，不支持 timestamp 时留空 |
-| `relative_mass_error` | 相对初始泡沫总量的变化；不是峰值变化 |
-| `relative_l1` | 总绝对密度误差除以解析参考总量；可超过 1，不代表丢失了超过 100% 的泡沫 |
-| `peak` | 当前最高密度，初始为 1 |
-| `area_density_ge_half_m2` | 密度至少为 0.5 的面积；用于观察浓密结构是否还存在，不参与模拟 |
-| `centroid_error_m` | 相对解析参考的密度质心偏差 |
-| `x_sigma_m` | 密度沿 X 的标准差；在平移场景中可以衡量数值扩散，其他场景还包含真实形变 |
+| `time_order` / `space_order` | Time and space methods recorded independently to avoid confusion |
+| `gpu_ms` / `gpu_ms_per_step` | Real GPU milliseconds for this interval / average per substep; empty without timestamp support |
+| `relative_mass_error` | Change relative to initial total foam, not peak change |
+| `relative_l1` | Total absolute density error divided by total analytical reference; can exceed 1 and does not mean more than 100% of foam was lost |
+| `peak` | Current maximum density, initially 1 |
+| `area_density_ge_half_m2` | Area with density at least 0.5; indicates whether dense structures remain, not used in simulation |
+| `centroid_error_m` | Density centroid deviation from the analytical reference |
+| `x_sigma_m` | Density standard deviation along X; measures numerical diffusion in translation, but also includes real deformation in other scenarios |
 
-运行时检查有限数、非负密度、总量误差不超过 0.1%，以及累计模拟时间误差不超过 10 微秒。形状误差、峰值不设通过阈值，避免把待测问题“调到通过”。
+Runtime checks require finite values, nonnegative density, total error at most 0.1%, and accumulated simulation-time error at most 10 microseconds. Shape error and peak have no pass thresholds, avoiding tuning the problem under examination merely to pass.
 
-## 怎样解释结果
+## Interpreting Results
 
-先比较平移：连续解不应改变条带宽度和峰值。若总量守恒、质心正确，但条带变宽且峰值下降，就有明确的数值扩散证据。
+Compare translation first: the continuous solution should not change strip width or peak. If mass is conserved and the centroid correct, but the strip widens and its peak falls, that is clear evidence of numerical diffusion.
 
-再看剪切和旋流：解析参考展示该速度场本来可以产生的形状。如果参考形成清晰细丝、数值结果却成为模糊带，说明不能只把问题归因于“缺少复杂流动”。比较精度变化可以判断加密的收益；比较时间阶数可以判断 RK2 是否足以解决。
+Then inspect shear and vortex: the analytical reference shows the shapes the prescribed flow can produce. If the reference forms clear filaments but the numerical result becomes a blurred band, the issue cannot be attributed solely to “lack of complex flow.” Compare resolutions to assess refinement and time orders to see whether RK2 is sufficient.
 
-该实验不能量化真实海岸场景中水流分辨率、生成分布、惯性、衰减和材质各占多少影响，也不验证真实泡沫的内聚／破裂物理。它仅隔离现有输送的形状保持能力。MUSCL 用于减轻空间扩散，不会凭空增加湍流或新孔洞，也不能永久保持格子以下的细丝。真实海岸仍需同时间、同相机对照。
+This experiment cannot quantify the individual effects of flow resolution, generation distribution, inertia, decay and material in a real coastal scene, nor does it validate real foam cohesion/breakup physics. It isolates the shape-preservation capability of existing transport. MUSCL reduces spatial diffusion; it does not create turbulence or new holes, and cannot preserve sub-grid filaments forever. Real coasts still require comparisons at the same time and camera.
 
-## 自动保形验证
+## Automated Shape-Preservation Verification
 
 ```powershell
-# GPU 测试显式运行，普通库单测不要求显卡。
+# GPU tests are run explicitly; ordinary library unit tests do not require a GPU.
 cargo test --release --features ocean --bin foam-lab -- --ignored
 ```
 
-以 256²、RK2、8 模拟秒对照三种解析流场，要求二阶的相对 L1 误差至少降低 20%，总量误差小于 0.01%，且这些不可压缩场景不出现明显密度过冲。非负和有限数检查复用工具读回路径。真实海岸中压缩可使密度超过 1，不能将这里的上界套用到生产求解器。动量、近真空、障碍物、干湿边界及完整海岸推进另由 `ocean --verify` 覆盖。
+Compare the three analytical flows at 256², RK2 and 8 simulation seconds. Second order must reduce relative L1 error by at least 20%, total error must be less than 0.01%, and these incompressible scenarios must not exhibit significant density overshoot. Nonnegative and finite checks reuse the tool's readback path. Compression in real coasts can raise density above 1; do not apply this upper bound to the production solver. Momentum, near-vacuum, obstacles, wet/dry boundaries and full coastal evolution are separately covered by `ocean --verify`.

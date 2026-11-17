@@ -1,7 +1,8 @@
-//! 三维不可压缩液体的独立参考实现。
+//! Independent reference implementation of three-dimensional incompressible liquid.
 //!
-//! MAC 速度、液体 level set、四叉树/纵长单元、光学层、压力投影和表面提取
-//! 通过显式数据结构连接，不依赖主项目的窗口或海洋模块。
+//! Explicit data structures connect MAC velocities, the liquid level set,
+//! quadtree/tall cells, optical layers, pressure projection, and surface extraction.
+//! This library does not depend on the main project's window or ocean modules.
 //!
 //! ```
 //! use tall_cell_fluid::{Domain, Grid, Simulation, SimulationConfig};

@@ -1,4 +1,4 @@
-//! GPU 海洋：按应用、模拟、场景、渲染与界面组织；旧公开路径保留重导出。
+//! GPU ocean organized by application, simulation, scene, rendering and UI; legacy public paths remain re-exported.
 pub type Error = Box<dyn std::error::Error>;
 
 pub mod app;

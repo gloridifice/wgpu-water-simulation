@@ -2,7 +2,7 @@ use std::f32::consts::TAU;
 
 pub use crate::ocean::parameters::ocean::OceanConfig;
 
-/// GPU 布局：h0 的复数实部、虚部，以及波向量 kx、kz。
+/// GPU layout: real and imaginary parts of h0, followed by wave vector components kx and kz.
 pub fn initial_spectrum(config: OceanConfig) -> Vec<[f32; 4]> {
     let n = config.resolution as usize;
     let mut random = Gaussian::new(config.seed);
@@ -23,7 +23,7 @@ pub fn initial_spectrum(config: OceanConfig) -> Vec<[f32; 4]> {
             let kz = frequency(z);
             let k2 = kx * kx + kz * kz;
             modes[z * n + x] = [0.0, 0.0, kx, kz];
-            // 清除 DC 和 Nyquist 行列；避免偶数网格自共轭频率的方向歧义。
+            // Clear DC and Nyquist rows/columns to avoid directional ambiguity at self-conjugate frequencies on even grids.
             if k2 == 0.0 || x == n / 2 || z == n / 2 {
                 continue;
             }
@@ -41,8 +41,8 @@ pub fn initial_spectrum(config: OceanConfig) -> Vec<[f32; 4]> {
             modes[z * n + x][1] = im;
         }
     }
-    // 连续二维谱离散化：sqrt(dkx*dkz)=2pi/length。
-    // IFFT 两轴除以 N，因此乘 N²；不再归一化波高，否则 A 会被抵消。
+    // Discretize the continuous 2D spectrum: sqrt(dkx*dkz)=2pi/length.
+    // Each IFFT axis divides by N, so multiply by N²; normalizing wave height again would cancel A.
     let scale = (n * n) as f32 * TAU / config.length;
     for mode in &mut modes {
         mode[0] *= scale;
@@ -59,7 +59,7 @@ impl Gaussian {
     }
 
     fn uniform(&mut self) -> f32 {
-        // SplitMix64：固定种子便于复现；不会每帧重新生成噪声。
+        // SplitMix64: a fixed seed ensures reproducibility; noise is not regenerated each frame.
         self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);

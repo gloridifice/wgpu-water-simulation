@@ -1,8 +1,10 @@
-//! 供渲染器或 CPU 验证使用的水体光学数学。
+//! Water optics mathematics for renderers and CPU verification.
 //!
-//! 实现无偏振介电质 Fresnel、Snell 折射和均匀介质 Beer–Lambert 吸收。
-//! 光程由调用者根据场景求交提供，单位为米，不能用模拟的光学层厚度代替。
-//! 所有颜色均为线性 RGB 辐亮度；这里不做光线追踪、体散射、色调映射或伽马编码。
+//! Implements unpolarized dielectric Fresnel, Snell refraction, and homogeneous
+//! Beer–Lambert absorption. The caller supplies the optical path length in meters
+//! from scene intersections; simulated optical layer thickness is not a substitute.
+//! Colors are linear RGB radiance. No ray tracing, volume scattering, tone mapping,
+//! or gamma encoding is performed here.
 
 use std::error::Error;
 use std::fmt;
@@ -24,14 +26,22 @@ pub enum OpticsError {
 impl fmt::Display for OpticsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
-            Self::InvalidRefractiveIndex => "折射率必须是有限正数",
-            Self::InvalidCosine => "入射余弦必须是 0 到 1 的有限数",
-            Self::InvalidDirection => "光线和法线必须是有限非零向量",
-            Self::NormalFacesAway => "法线必须朝向入射介质，与入射方向相对",
-            Self::InvalidAbsorption => "吸收系数必须是有限非负数，单位为每米",
-            Self::InvalidDistance => "光程必须是有限非负数，单位为米",
-            Self::InvalidRadiance => "线性 RGB 辐亮度必须是有限非负数",
-            Self::InvalidWeight => "透射率和反射率必须是 0 到 1 的有限数",
+            Self::InvalidRefractiveIndex => "refractive indices must be finite and positive",
+            Self::InvalidCosine => "incident cosine must be finite and between 0 and 1",
+            Self::InvalidDirection => "ray and normal must be finite nonzero vectors",
+            Self::NormalFacesAway => {
+                "normal must face the incident medium, opposite the incident direction"
+            }
+            Self::InvalidAbsorption => {
+                "absorption coefficients must be finite and nonnegative, in inverse meters"
+            }
+            Self::InvalidDistance => {
+                "optical path length must be finite and nonnegative, in meters"
+            }
+            Self::InvalidRadiance => "linear RGB radiance must be finite and nonnegative",
+            Self::InvalidWeight => {
+                "transmittance and reflectance must be finite and between 0 and 1"
+            }
         };
         f.write_str(message)
     }
@@ -39,11 +49,12 @@ impl fmt::Display for OpticsError {
 
 impl Error for OpticsError {}
 
-/// 计算无偏振光的精确 Fresnel 能量反射率。
+/// Calculate the exact Fresnel energy reflectance for unpolarized light.
 ///
-/// `cos_incident` 是入射方向与朝向入射侧法线之间夹角的绝对余弦。
-/// `eta_incident`、`eta_transmitted` 分别为光线进入界面前后的折射率。
-/// 全反射返回 `1`；两侧折射率相同时返回 `0`。
+/// `cos_incident` is the absolute cosine of the angle between the incident
+/// direction and the normal facing the incident side. `eta_incident` and
+/// `eta_transmitted` are the refractive indices before and after the interface.
+/// Total internal reflection returns `1`; equal indices return `0`.
 pub fn fresnel_dielectric(
     cos_incident: f64,
     eta_incident: f64,
@@ -65,7 +76,7 @@ pub fn fresnel_dielectric(
         return Ok(1.0);
     }
     let cos_transmitted = (1.0 - sin_transmitted * sin_transmitted).sqrt();
-    // 同比例缩放折射率不会改变 Fresnel，且可避免 n*cos 项溢出。
+    // Uniformly scaling the indices preserves Fresnel and avoids n*cos overflow.
     let scale = eta_incident.max(eta_transmitted);
     let ni = eta_incident / scale;
     let nt = eta_transmitted / scale;
@@ -76,9 +87,9 @@ pub fn fresnel_dielectric(
     Ok((0.5 * (perpendicular * perpendicular + parallel * parallel)).clamp(0.0, 1.0))
 }
 
-/// 返回镜面反射方向。输入可不归一化，输出为单位向量。
+/// Return the specular reflection direction as a unit vector; inputs need not be normalized.
 ///
-/// `incident` 沿光传播方向指向表面，`normal` 是表面法线。
+/// `incident` points toward the surface along light propagation; `normal` is the surface normal.
 pub fn reflect(incident: Vec3, normal: Vec3) -> Result<Vec3, OpticsError> {
     let incident = unit(incident)?;
     let normal = unit(normal)?;
@@ -88,10 +99,12 @@ pub fn reflect(incident: Vec3, normal: Vec3) -> Result<Vec3, OpticsError> {
     }))
 }
 
-/// 返回 Snell 定律给出的透射单位方向；全反射或临界掠射返回 `None`。
+/// Return the unit transmission direction from Snell's law, or `None` for
+/// total internal reflection or critical grazing incidence.
 ///
-/// 入射方向沿光传播方向指向表面，法线必须朝向入射介质。离开水时调用者
-/// 要翻转水体外法线，并交换两侧折射率。方向向量可以不预先归一化。
+/// The incident direction points toward the surface along light propagation;
+/// the normal must face the incident medium. When leaving water, the caller
+/// must flip the outward normal and swap the indices. Inputs need not be normalized.
 pub fn refract(
     incident: Vec3,
     normal: Vec3,
@@ -127,10 +140,11 @@ pub fn refract(
     Ok(Some(unit(transmitted)?))
 }
 
-/// 均匀介质沿给定光程的 RGB 吸收透射率 `exp(-sigma_a * length)`。
+/// RGB absorption transmittance `exp(-sigma_a * length)` along a path in a homogeneous medium.
 ///
-/// `absorption_per_meter` 为每米吸收系数，`path_length_meters` 为水中光程。
-/// 本函数不包含散射；吸收系数为零的通道始终返回 `1`。
+/// `absorption_per_meter` is the absorption coefficient per meter, and
+/// `path_length_meters` is the optical path in water. Scattering is excluded;
+/// channels with zero absorption always return `1`.
 pub fn beer_lambert(
     absorption_per_meter: Vec3,
     path_length_meters: f64,
@@ -147,11 +161,13 @@ pub fn beer_lambert(
     Ok(absorption_per_meter.map(|sigma| (-sigma * path_length_meters).exp()))
 }
 
-/// 混合已采样的反射、折射光：`F*reflection + (1-F)*T*transmission`。
+/// Mix sampled reflected and refracted light: `F*reflection + (1-F)*T*transmission`.
 ///
-/// 这是供实时着色器验证的单界面吸收混合，不是完整的光传输积分器；
-/// 不含介质散射、多次反射及跨介质辐亮度的折射率平方换算。调用者负责
-/// 沿反射/折射方向取得相应辐亮度，并求出真实水中光程。输入允许 HDR。
+/// This single-interface absorption blend supports real-time shader validation;
+/// it is not a full light transport integrator. It excludes medium scattering,
+/// multiple reflections, and refractive-index-squared radiance conversion across
+/// media. The caller supplies radiance along both directions and the actual path
+/// length in water. HDR inputs are allowed.
 pub fn mix_interface_radiance(
     reflected_radiance: Vec3,
     transmitted_radiance: Vec3,
@@ -189,10 +205,10 @@ fn check_indices(incident: f64, transmitted: f64) -> Result<(), OpticsError> {
 
 fn transmitted_sine(sin_incident: f64, ni: f64, nt: f64) -> f64 {
     if sin_incident == 0.0 {
-        // 避免极大折射率比值乘零形成 NaN。
+        // Avoid NaN from multiplying an extreme index ratio by zero.
         0.0
     } else if ni > nt {
-        // 先乘不大于 1 的正弦，防止比值先溢出后丢掉可表示的结果。
+        // Multiply by the sine first to avoid overflowing the ratio before a representable result.
         (ni * sin_incident) / nt
     } else {
         (ni / nt) * sin_incident

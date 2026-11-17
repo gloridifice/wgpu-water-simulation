@@ -5,10 +5,10 @@ use yummy_egui::group;
 impl Gui {
     pub(in crate::ocean::ui) fn surface_panel(&mut self, ui: &mut egui::Ui) {
         if self.optics.swe_enabled() {
-            group(ui, "小波法线", |ui| {
+            group(ui, "Ripple Normals", |ui| {
                 number(
                     ui,
-                    "法线细节强度",
+                    "Normal Detail Strength",
                     &mut self.optics.shore.normal_strength,
                     0.0..=3.0,
                     false,
@@ -16,28 +16,28 @@ impl Gui {
             });
         }
         if self.optics.beach {
-            group(ui, "沙地材质", |ui| {
+            group(ui, "Sand Material", |ui| {
                 number(
                     ui,
-                    "沙地纹理尺寸（米）",
+                    "Sand Texture Size (m)",
                     &mut self.optics.sand_tile_size,
                     0.25..=128.0,
                     true,
                 );
                 number(
                     ui,
-                    "沙地纹理旋转（度）",
+                    "Sand Texture Rotation (degrees)",
                     &mut self.optics.sand_rotation_deg,
                     -180.0..=180.0,
                     false,
                 );
             });
         } else {
-            group(ui, "海底标定材质", |ui| {
-                toggle(ui, "海底 RGB 测试色带", &mut self.optics.color_bands);
+            group(ui, "Seabed Calibration Material", |ui| {
+                toggle(ui, "Seabed RGB Test Bands", &mut self.optics.color_bands);
                 number(
                     ui,
-                    "棋盘格尺寸（米）",
+                    "Checker Size (m)",
                     &mut self.optics.checker_size,
                     0.5..=20.0,
                     false,

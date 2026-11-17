@@ -1,4 +1,4 @@
-// 独立体积归约核，避免与输送核的逐单元提前退出/分支混用 barrier。
+// Separate volume reduction kernel avoids mixing barriers with transport's per-cell early exits and branches.
 struct Params {
     dims: vec4<u32>, offsets: vec4<u32>, metric: vec4<f32>,
     gravity: vec4<f32>, control: vec4<u32>,
@@ -15,7 +15,7 @@ fn main(@builtin(global_invocation_id) id:vec3<u32>,
     let n=id.x;
     var v=0.0;
     if params.control.x==7u {
-        // 最后一组也执行所有 lane；夹紧读下标后用有效位屏蔽。
+        // All lanes run in the last group too; clamp read indices and mask invalid lanes.
         let cell=min(n,params.dims.w-1u);
         let fraction=clamp(0.5-(state[cell]+statistics[0])/params.metric.x,0.0,1.0);
         v=select(0.0,fraction,n<params.dims.w && state[params.dims.w+cell]>=0.0);

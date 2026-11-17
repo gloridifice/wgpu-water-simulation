@@ -29,7 +29,7 @@ pub(super) fn list(ui: &mut egui::Ui, name: &str, value: &mut u32, options: &[(u
                 options
                     .iter()
                     .find(|(v, _)| v == value)
-                    .map_or("未知", |(_, label)| *label),
+                    .map_or("Unknown", |(_, label)| *label),
             )
             .show_ui(ui, |ui| {
                 for (v, label) in options {

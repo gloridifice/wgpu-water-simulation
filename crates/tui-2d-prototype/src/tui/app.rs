@@ -17,7 +17,7 @@ pub struct App {
 impl App {
     pub fn new(config: Config, paused: bool, waves: bool, pulse: bool) -> Result<Self, String> {
         let mut sim = Simulation::new(config)?;
-        // 从静水位置和一个已知的外部动量脉冲开始，随后不修改粒子形状。
+        // Start from still water with a known external momentum impulse; do not alter the particle shape afterward.
         if pulse {
             sim.wave_pulse();
         }
@@ -39,7 +39,7 @@ impl App {
         if !self.paused {
             self.accumulated_time =
                 (self.accumulated_time + elapsed.as_secs_f64().min(0.1) * self.speed).min(0.25);
-            // 限制一次 UI 迭代的物理工作量；高负载时降低实际播放速度而不堵塞按键。
+            // Limit physics work per UI iteration; under load, slow playback rather than blocking input.
             for _ in 0..8 {
                 let dt = self.sim.stable_dt();
                 if self.accumulated_time + 1e-12 < dt {

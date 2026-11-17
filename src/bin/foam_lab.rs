@@ -52,11 +52,13 @@ impl Scene {
     fn description(self) -> &'static str {
         match self {
             Self::Translation => {
-                "平移：中心 (−5,0) 米，0.5 米宽、8 米长的条带；速度 (0.75, 0.25) 米/秒。"
+                "Translation: a strip centered at (−5,0) m, 0.5 m wide and 8 m long; velocity (0.75, 0.25) m/s."
             }
-            Self::Shear => "剪切：外半径 2.5 米、内半径 1.5 米的圆环；X 速度 = 0.5/秒 × Z。",
+            Self::Shear => {
+                "Shear: an annulus with outer radius 2.5 m and inner radius 1.5 m; X velocity = 0.5/s × Z."
+            }
             Self::Vortex => {
-                "差速旋流：中心 (3,0) 米、外半径 1.75 米、内半径 1 米的偏心圆环；角速度 = 0.8 × exp(−半径²/25) 弧度/秒。"
+                "Differential vortex: an off-center annulus centered at (3,0) m, with outer radius 1.75 m and inner radius 1 m; angular velocity = 0.8 × exp(−radius²/25) rad/s."
             }
         }
     }
@@ -560,17 +562,17 @@ async fn run(c: Config) -> Result<(), Error> {
         "scenario,resolution,time_order,space_order,requested_time_s,actual_time_s,steps,dt_s,cell_m,mass,relative_mass_error,relative_l1,peak,area_density_ge_half_m2,centroid_error_m,x_sigma_m,gpu_ms,gpu_ms_per_step"
     )?;
     let mut html = String::from(
-        "<!doctype html><meta charset='utf-8'><title>泡沫输送对照</title><style>body{background:#17212b;color:#eef;font:16px sans-serif;padding:20px}table{border-collapse:collapse}td,th{border:1px solid #567;padding:8px}img{width:240px;image-rendering:pixelated}a{color:#9cf}th{max-width:180px}p{max-width:1000px;line-height:1.6}</style><h1>泡沫输送形态对照</h1><p>固定 32×32 米俯视范围，+X 向右、+Z 向上。黑色密度 0、白色密度 1，所有图统一线性色标，不自动拉伸对比度。这里只隔离生产泡沫输送，不运行 SWE／FFT，不使用 NSH。解析参考为精确流线回溯后的单元面积近似平均。默认固定 RK2 时间推进，对比一阶空间通量与受限二阶 MUSCL；共同 CFL=0.2。生成、衰减关闭，泡沫立即随规定流场。<a href='metrics.csv'>原始指标 CSV</a> · <a href='manifest.json'>运行参数</a></p>",
+        "<!doctype html><meta charset='utf-8'><title>Foam Transport Comparison</title><style>body{background:#17212b;color:#eef;font:16px sans-serif;padding:20px}table{border-collapse:collapse}td,th{border:1px solid #567;padding:8px}img{width:240px;image-rendering:pixelated}a{color:#9cf}th{max-width:180px}p{max-width:1000px;line-height:1.6}</style><h1>Foam Transport Shape Comparison</h1><p>Fixed 32×32 m top-down extent, with +X to the right and +Z upward. Black is density 0 and white is density 1; all images use the same linear scale without automatic contrast stretching. This isolates production foam transport, without SWE/FFT evolution or NSH shading. The analytic reference approximates cell-area averages by exact characteristic backtracing. By default, RK2 time integration is fixed while first-order spatial flux is compared with limited second-order MUSCL; both use CFL=0.2. Generation and decay are disabled, and foam follows the prescribed flow immediately. <a href='metrics.csv'>Raw metrics CSV</a> · <a href='manifest.json'>Run parameters</a></p>",
     );
     for scene in &c.scenes {
         write!(
             html,
-            "<h2>{}</h2><p>{}</p><table><tr><th>场景／时间</th>",
+            "<h2>{}</h2><p>{}</p><table><tr><th>Scene / Time</th>",
             scene.name(),
             scene.description()
         )?;
         for time in &c.times {
-            write!(html, "<th>{time} 模拟秒</th>")?;
+            write!(html, "<th>{time} simulation s</th>")?;
         }
         html.push_str("</tr>");
         let mut reference_names = Vec::new();
@@ -584,7 +586,7 @@ async fn run(c: Config) -> Result<(), Error> {
             )?;
             reference_names.push(name);
         }
-        gallery_row(&mut html, "解析参考", &reference_names);
+        gallery_row(&mut html, "Analytic Reference", &reference_names);
         for &n in &c.resolutions {
             for (&order, &space_order) in c
                 .orders
@@ -653,19 +655,19 @@ async fn run(c: Config) -> Result<(), Error> {
                 gallery_row(
                     &mut html,
                     &format!(
-                        "{n}² / {} / 空间 {space_order} 阶<br>{:.4} 米/格",
+                        "{n}² / {} / Spatial Order {space_order}<br>{:.4} m/cell",
                         if order == 1 { "Euler" } else { "RK2" },
                         SIDE / n as f64
                     ),
                     &names,
                 );
-                gallery_row(&mut html, "绝对密度误差<br>红色 0～1", &errors);
+                gallery_row(&mut html, "Absolute Density Error<br>Red: 0–1", &errors);
                 csv.flush()?;
             }
         }
         html.push_str("</table>");
     }
-    html.push_str("<p>相对 L1 = 总绝对密度误差 / 解析参考总量；不是丢失质量的比例。峰值与 ≥0.5 面积衡量可见浓密结构的保留。质心误差单位米；X 标准差在平移场景中反映条带横向扩散，在剪切／旋流中也包含真实形变。边界关闭，初始结构与解析轨迹远离边界；没有人为泡沫扩散项。</p>");
+    html.push_str("<p>Relative L1 = total absolute density error / total analytic reference amount; it is not the fraction of mass lost. Peak density and area at density ≥0.5 measure retention of visibly dense structures. Centroid error is in meters; X standard deviation measures lateral strip diffusion in translation, but also includes real deformation in shear/vortex flows. Boundaries are closed, and initial structures and analytic trajectories stay away from them; there is no artificial foam diffusion term.</p>");
     fs::write(c.output.join("index.html"), html)?;
     println!("Saved {}", c.output.join("index.html").display());
     Ok(())

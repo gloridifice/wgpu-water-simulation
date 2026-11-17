@@ -1,8 +1,8 @@
 use super::{CellType, Grid};
 
-/// 解 A p = -h/dt * (uR-uL+vT-vB)，再做 u -= dt * grad(p)。
-/// 密度约去为 1。空气 p=0；固体面已给定法向速度，不进入梯度修正。
-/// Jacobi 预条件共轭梯度，矩阵只通过四邻接作用计算，不存稠密矩阵。
+/// Solve A p = -h/dt * (uR-uL+vT-vB), then apply u -= dt * grad(p).
+/// Density is normalized to 1. Air has p=0; solid faces have prescribed normal velocity and are excluded from the gradient correction.
+/// Jacobi-preconditioned conjugate gradients apply the matrix through four neighbors without storing a dense matrix.
 pub(crate) fn project(grid: &mut Grid, dt: f64, limit: usize) -> usize {
     let size = grid.kind.len();
     let mut diagonal = vec![0.0; size];

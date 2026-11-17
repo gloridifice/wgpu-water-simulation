@@ -1,22 +1,22 @@
 <!-- doco:lifecycle v=1 created-at=2026-10-28T10:33:00Z completed-at=2026-10-29T06:25:42Z archived-at=2026-10-29T06:25:51Z -->
-# 按职责重组 GPU Ocean 模块
+# Reorganize GPU Ocean Modules by Responsibility
 
 ## Purpose
 
-基线的海洋目录同层包含 44 个 Rust 文件，混放设备封装、FFT、近岸求解、渲染、界面与验证。`gpu.rs` 同时定义 Gpu、Ocean、Renderer；配置引用窗口内的 Camera，天空计算内含 GUI 图表。按已确认的审计建议建立职责目录，降低定位和维护成本，不改变功能。
+The baseline ocean directory contained 44 Rust files at one level, mixing device wrappers, FFT, nearshore solving, rendering, UI and verification. `gpu.rs` defined Gpu, Ocean and Renderer together; configuration referenced the window's Camera, and sky calculations contained GUI charts. Organize directories by responsibility according to the approved audit recommendations to make the code easier to navigate and maintain without changing functionality.
 
 ## Scope and acceptance
 
-- 按 app、gpu、parameters、simulation、scene、render、ui、settings、labs 组织 ocean；公共相机独立。src/bin 保留五个现有入口，不改变 workspace 或 feature。
-- 拆开设备、FFT、Renderer；提取相机、快照、参数定义、界面面板及近岸验证。WGSL 跟随实际所有者，跨模块引用唯一原件。
-- 保留原公开模块路径，通过重导出兼容原有调用；不增加 trait/mock 框架，不为目录迁移扩大内部字段可见性。
-- 类型名称、序列化字段、默认值、校验范围、CLI 优先级、工作区标识、保存路径和行为不变；会话、命名库、布局仍相互独立。
-- GPU uniform/storage ABI、着色器字节及拼接顺序、物理算法、调用顺序、资源所有权、重置条件和计时范围不变。保留窗口与快照各自原有调度，不在本次统一它们。
-- 验收：格式、Clippy、全 target 编译与现有库测试通过；真实 GPU --verify 通过；固定输入的可重复渲染快照逐像素相同，窗口布局冒烟检查通过。浪花透明叠加沿用原本不排序的并行绘制，以同版本重复运行差异和生产 GPU 行为验证核对，不新增排序来强求位级确定性。CPU 包仍可独立测试且不引入 GPU 依赖。
-- 同步当前架构、路径说明和相关浪花规范。完成验证后仅提交本变更并推送现有分支。
+- Organize ocean into app, gpu, parameters, simulation, scene, render, ui, settings and labs; separate the shared camera. Retain the five existing src/bin entry points and do not change the workspace or features.
+- Separate device, FFT and Renderer; extract camera, snapshots, parameter definitions, UI panels and nearshore verification. WGSL follows its actual owner, with cross-module references to the single original.
+- Preserve original public module paths through compatibility re-exports; do not add a trait/mock framework or widen internal field visibility for the migration.
+- Keep type names, serialized fields, defaults, validation ranges, CLI precedence, workspace identifiers, save paths and behavior unchanged; sessions, named libraries and layouts remain independent.
+- Keep GPU uniform/storage ABI, shader bytes and concatenation order, physical algorithms, call order, resource ownership, reset conditions and timing scopes unchanged. Retain separate window and snapshot scheduling rather than unifying them here.
+- Acceptance: formatting, Clippy, all-target compilation and existing library tests pass; real GPU --verify passes; repeatable fixed-input render snapshots match pixel for pixel and the window layout smoke check passes. Spray transparency retains the original unsorted parallel drawing; compare repeated runs of the same version and production GPU behavior rather than adding sorting to force bitwise determinism. The CPU package remains independently testable without GPU dependencies.
+- Update current architecture, path documentation and relevant spray specification. After verification, commit only this change and push the existing branch.
 
-非目标：求解/材质优化、新参数、配置迁移、UI 布局改版、拆 crate、清理其他活动变更或删除现有测试。
+Non-goals: solver or material optimization, new parameters, configuration migration, UI layout redesign, splitting crates, cleaning up other active changes or deleting existing tests.
 
 ## Result
 
-已实现、验证，并通过提交 85de9dc 推送至 origin/master。海洋同层 Rust 文件从 44 减至 3，旧公开路径保持兼容。现有库、工具、CPU 测试及真实 GPU 验证通过；21 份 WGSL 字节未变，五组可重复场景和浪花源调试快照与基线一致。粒子透明叠加保留同版重复运行也存在的极小非确定性，未为截图改动算法。默认窗口布局已实际检查，未逐一手工验证所有页签交互。
+Implemented, verified and pushed to origin/master in commit 85de9dc. Rust files at the ocean directory's top level fell from 44 to 3; old public paths remain compatible. Existing library, tool and CPU tests and real GPU verification passed; 21 WGSL files were byte-identical, and five repeatable scenarios and spray-source debug snapshots matched the baseline. Particle transparency retains the very small nondeterminism present in repeated runs of the same version; the algorithm was not changed for screenshots. The default window layout was inspected, but not every tab interaction was manually verified.

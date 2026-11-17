@@ -1,426 +1,425 @@
-# 三维 FFT 海洋（wgpu + egui）
+# 3D FFT Ocean (wgpu + egui)
 
-在独立窗口里运行的海面演示。CPU 初始化 Phillips 波谱，GPU 执行频谱演化、二维逆 FFT 和水面绘制。默认 128×128 个频率、128 米周期块，渲染 3×3 个重复块。`cargo run` 默认启动此程序；CPU PIC / 浅水 TUI 位于独立 workspace 成员 `crates/tui-2d-prototype`，二进制仍名为 `water-simulation`。
+An ocean surface demonstration running in a standalone window. The CPU initializes the Phillips spectrum; the GPU performs spectral evolution, a two-dimensional inverse FFT, and surface rendering. By default it uses 128×128 frequencies and a 128-meter periodic patch, rendered as 3×3 repeated patches. `cargo run` starts this program by default; the CPU PIC / shallow-water TUI is in the separate workspace member `crates/tui-2d-prototype`, whose binary is still named `water-simulation`.
 
-## 运行
+## Running
 
 ```powershell
 Set-Location G:\MyProjects\Rust\water-simulation
 cargo run
 
-# 优化构建，用于视觉和性能对比。
+# Optimized build for visual and performance comparisons.
 cargo run --release
 
-# 改变频谱分辨率、风速与随机种子。
+# Change the spectral resolution, wind speed, and random seed.
 cargo run --release --features ocean --bin ocean -- --resolution 256 --wind 18 --seed 7
 ```
 
-需要支持计算着色器和顶点阶段存储缓冲区的图形设备；通过 wgpu 使用本机后端，素材随仓库提供。首次构建会下载图形相关依赖。`ocean` feature 默认启用；使用 `cargo run -p tui-2d-prototype` 可启动 CPU TUI 并避免编译图形依赖，再加 `-- --shallow` 启动一维浅水模式。
+A graphics device supporting compute shaders and vertex-stage storage buffers is required. wgpu uses a native backend, and assets are supplied with the repository. The first build downloads graphics dependencies. The `ocean` feature is enabled by default; use `cargo run -p tui-2d-prototype` to start the CPU TUI without compiling graphics dependencies, or add `-- --shallow` for the one-dimensional shallow-water mode.
 
-| 操作 | 效果 |
+| Action | Effect |
 | --- | --- |
-| 鼠标左键拖动 | 围绕当前观察目标旋转相机 |
-| 鼠标中键拖动 | 在水平面平移相机与观察目标，画面跟随拖动 |
-| 滚轮 | 拉近 / 拉远 |
-| W / S | 按当前朝向在水平面上前进 / 后退 |
-| A / D | 按当前朝向在水平面上向左 / 向右平移 |
-| Space | 暂停 / 继续 |
-| C | 开关水平位移，比较圆润与尖锐浪峰 |
-| F | 开关 Jacobian 泡沫显示 |
-| ↑ / ↓ | 增减位移幅度，0.1×～2× |
-| R | 相机、位移幅度、泡沫显示和时间重置；保留暂停状态 |
-| Ctrl+S | 保存当前工作状态和配置库（不覆盖命名配置快照） |
-| Q | 退出（Esc 不退出程序） |
+| Drag with the left mouse button | Rotate the camera around the current target |
+| Drag with the middle mouse button | Pan the camera and target horizontally; the image follows the drag |
+| Mouse wheel | Zoom in / out |
+| W / S | Move forward / backward horizontally relative to the current orientation |
+| A / D | Pan left / right horizontally relative to the current orientation |
+| Space | Pause / resume |
+| C | Toggle horizontal displacement to compare rounded and sharp crests |
+| F | Toggle Jacobian foam display |
+| ↑ / ↓ | Decrease / increase displacement amplitude, 0.1×–2× |
+| R | Reset the camera, displacement amplitude, foam display, and time; preserve the pause state |
+| Ctrl+S | Save the current working state and configuration library (without overwriting named snapshots) |
+| Q | Quit (Esc does not quit) |
 
-中键平移须从渲染视图内开始拖动；从参数面板拖入视图不会移动相机。按住后移出视图仍可继续平移，松开即停止。相机高度、朝向和观察距离不变；平移量随拖动距离、观察距离与视图尺寸换算，不受暂停和播放倍率影响。平移位置沿用相机的手动保存规则。
+Middle-button panning must start inside the Render View; dragging into the view from a parameter panel does not move the camera. Once started, panning continues outside the view until the button is released. Camera height, orientation, and viewing distance remain unchanged; pan distance is derived from drag distance, viewing distance, and view size, independently of pause and playback speed. The pan position follows the camera's manual save rules.
 
-WASD 在鼠标位于渲染视图内、窗口有焦点且未编辑参数时生效。按住连续移动，相机和观察目标一起平移，高度和俯仰角不变；斜向移动不加速。移动速度为当前相机到观察目标距离的 0.5 倍／秒，使用现实时间，不受暂停和播放倍率影响。平移位置随相机保存，旧配置从原点开始；R、重置相机和沙滩相机预设均恢复对应的初始位置。
+WASD works when the pointer is inside the Render View, the window has focus, and no parameter is being edited. Holding a key moves continuously, translating the camera and target together without changing height or pitch; diagonal movement is not faster. Movement speed is 0.5 times the current camera-to-target distance per second of real time, independent of pause and playback speed. The pan position is saved with the camera; old configurations start at the origin. R, Reset Camera, and the beach camera preset each restore their respective initial positions.
 
-标题栏显示帧率、时间、暂停状态和幅度。没有把 PIC 的点击扰动接入 FFT；这里的鼠标用于相机。
+The title bar shows frame rate, time, pause state, and amplitude. PIC click disturbances are not connected to the FFT; here the mouse controls the camera.
 
-## 无窗口 MCP 调试
+## Headless MCP Debugging
 
-`--headless` 只启动一个持久 Ocean 场景，不创建窗口、Surface、egui 或 Dock；进程通过 **MCP stdio** 与启动它的客户端通信，场景不按墙钟自动播放。`--no-ui` 则保留单个场景窗口和 MCP stdio，但不创建 egui 或 Dock；窗口按墙钟推进，仍可在窗口尺寸为零或 Surface 暂不可用时处理 MCP 命令。两种模式均只控制自己的场景实例。stdout 专用于协议消息，GPU 日志写 stderr。建议自动化始终用 `--config` 指定只读配置，或不指定配置从默认值启动；不会隐式读取／覆盖个人会话：
+`--headless` starts one persistent Ocean scene without creating a window, Surface, egui, or Dock. The process communicates with its launching client over **MCP stdio**; the scene does not automatically advance with wall-clock time. `--no-ui` retains a single scene window and MCP stdio, but creates neither egui nor Dock. The window advances with wall-clock time and can still process MCP commands when its size is zero or the Surface is temporarily unavailable. Each mode controls only its own scene instance. stdout is reserved for protocol messages; GPU logs go to stderr. For automation, either specify a read-only configuration with `--config` or start from defaults without specifying a configuration; personal sessions are not implicitly read or overwritten:
 
 ```powershell
-# 在 MCP 客户端中配置命令和参数；不要把此进程当普通交互命令输入 JSON。
+# Configure the command and arguments in an MCP client; do not enter JSON as if this were an ordinary interactive command.
 command: target\debug\ocean.exe
 args: ["--headless", "--lake", "--no-settings"]
-# 也可 args: ["--headless", "--config", "configs/example.json"]
-# 需要显示纯场景窗口时：args: ["--no-ui", "--beach", "--no-settings"]
+# Alternatively: args: ["--headless", "--config", "configs/example.json"]
+# To display a scene-only window: args: ["--no-ui", "--beach", "--no-settings"]
 ```
 
-客户端通过 `tools/list` 发现 `scene_describe`、`parameters_get`、`parameters_patch`、`action_call`、`simulation_step`、`frame_capture`。例如 `parameters_patch` 输入 `{"changes":{"optics.lake.automatic":false,"camera.gain":1.5}}`；字段路径来自 `parameters_get` 返回的 `settings` 对象。仅支持写已存在的标量字段，数组元素用数字索引（如 `camera.target.0`），不整体覆盖对象或数组；未知字段、越界值、无效类型和非法整份配置都会报错，不提交任何更改。`draft.*` 为远海草稿，修改后调用 `action_call({"id":"ocean.apply_draft"})`；写 `ocean.*` 则直接应用。湖泊 `optics.lake.*` 在无面板模式下直接应用，地形、传播模式或种子变化会重置湖泊，不提供 UI 中的湖泊草稿。`speed` 和 `paused` 可读取／编辑，但此离屏模式只按显式步进，忽略墙钟和倍率；一次 `simulation_step({"frames":60})` 前进 1 个模拟秒（最多 600 帧）。步进可能耗时；MCP 回复在 GPU 提交后，**不代表 GPU 执行完毕**。`frame_capture` 使用当前实例的场景纹理，写入不存在的 PNG 路径并等待回读完成；不会重新初始化另一个场景，也不包含面板。`--no-ui` 的自动播放受暂停和时间倍率控制，显式 `simulation_step` 仍固定每步 1/60 模拟秒，不受两者控制；截图尺寸跟随窗口。
+Clients discover `scene_describe`, `parameters_get`, `parameters_patch`, `action_call`, `simulation_step`, and `frame_capture` through `tools/list`. For example, `parameters_patch` accepts `{"changes":{"optics.lake.automatic":false,"camera.gain":1.5}}`; field paths come from the `settings` object returned by `parameters_get`. Only existing scalar fields can be written, with numeric indices for array elements (such as `camera.target.0`); whole objects and arrays cannot be replaced. Unknown fields, out-of-range values, invalid types, or an invalid resulting configuration cause an error and no changes are committed. `draft.*` is the offshore draft; after editing it, call `action_call({"id":"ocean.apply_draft"})`. Writes to `ocean.*` apply directly. Lake `optics.lake.*` settings apply directly in panel-free modes; changing terrain, propagation mode, or seed resets the lake, and the UI's lake drafts are not available. `speed` and `paused` can be read and edited, but the headless mode advances only by explicit steps and ignores wall-clock time and speed; one `simulation_step({"frames":60})` advances 1 simulated second (at most 600 frames). Stepping can take time; an MCP response follows GPU submission and **does not mean GPU execution has completed**. `frame_capture` uses the current instance's scene texture, writes to a PNG path that does not exist, and waits for readback; it neither initializes another scene nor includes panels. In `--no-ui`, automatic playback obeys pause and time speed, but explicit `simulation_step` remains fixed at 1/60 simulated second per step, independent of both; capture dimensions follow the window.
 
-`action_call` 当前支持 `ocean.apply_draft`、`simulation.reset`、`camera.reset`、湖泊模式的 `lake.emit`／`lake.clear` 和 `configuration.save`。未列出的 UI 按钮没有通用“模拟点击”能力；`scene_describe` 返回动作 ID。默认及 `--config`／`--no-settings` 模式下保存会报只读错误。只有显式 `--settings PATH` 并调用 `configuration.save` 才保存工作状态和原配置库；不会覆盖命名快照，也不写 Dock 布局。请为自动化使用独立路径，勿指向个人会话文件。当前仅本地 stdio，不开放 HTTP，也不支持从外部附加到以普通 `cargo run` 启动的参数面板窗口。Pi 使用时，仓库根目录的 `.pi/mcp.json` 已配置名为 `ocean-scene` 的默认无窗口服务，可按需加载 `.agents/skills/ocean-scene-mcp/SKILL.md`；首次连接前运行 `cargo build --features ocean --bin ocean`；配置直接启动现有 debug 可执行文件，避免运行中的 Windows 可执行文件锁与重编译冲突。源码改动后先关闭该 MCP 子进程，再手动重建、重连。须信任本项目，若其它全局 MCP 失败不影响此服务。
+`action_call` currently supports `ocean.apply_draft`, `simulation.reset`, `camera.reset`, lake-mode `lake.emit` / `lake.clear`, and `configuration.save`. There is no general simulated-click capability for unlisted UI buttons; `scene_describe` returns action IDs. Saving in the default, `--config`, or `--no-settings` modes returns a read-only error. Only an explicit `--settings PATH` followed by `configuration.save` saves the working state and original configuration library; it does not overwrite named snapshots or write the Dock layout. Use a separate path for automation, not a personal session file. Only local stdio is currently supported: there is no HTTP endpoint or external attachment to a parameter-panel window started with ordinary `cargo run`. For Pi, `.pi/mcp.json` at the repository root configures a default headless service named `ocean-scene`; load `.agents/skills/ocean-scene-mcp/SKILL.md` as needed. Run `cargo build --features ocean --bin ocean` before the first connection. The configuration starts the existing debug executable directly, avoiding conflicts between Windows executable locks and rebuilding. After source changes, close the MCP subprocess before manually rebuilding and reconnecting. The project must be trusted; failures of other global MCP services do not affect this service.
 
-## egui 参数面板
+## egui Parameter Panel
 
-通用控件、列表及 egui／Dock 主题使用 crates.io 的 `yummy_egui` 0.1 系列（最低 0.1.2），搭配 egui 0.34、egui_dock 0.19 与 wgpu 29。Ocean 直接应用库的默认主题，本仓库不再保留控件库源码或主题配置，也不读取、监听或保存外部主题。MiSans 保留在 `assets/fonts/MiSans-Normal.ttf`，由 `ui/fonts.rs` 显式安装，主题不替换字体。模拟配置、命名配置及 Dock 布局仍按原有规则保存，不受主题迁移影响。详见 [yummy_egui 接入说明](yummy-egui.md)。
+Shared controls, lists, and the egui / Dock theme use the `yummy_egui` 0.1 series from crates.io (minimum 0.1.2), together with egui 0.34, egui_dock 0.19, and wgpu 29. Ocean directly applies the library's default theme; this repository no longer retains the control library source or theme configuration, nor does it read, watch, or save external themes. MiSans remains in `assets/fonts/MiSans-Normal.ttf` and is explicitly installed by `ui/fonts.rs`; the theme does not replace fonts. Simulation configurations, named configurations, and Dock layouts are still saved under the existing rules and are unaffected by the theme migration. See [yummy_egui integration](yummy-egui.md).
 
-所有 Dock 面板（包括渲染视图）的内容四边默认留白 **10 pt**；整个 Dock 区域外围顶部不留白，左、右、底部各 **4 pt**。通过顶部 **面板 → Dock 边距调试** 可打开默认收起的浮动窗口，两个滑块分别调整面板内容四边留白、Dock 区域左／右／底部留白（顶部固定为 0），范围均为 0～32 逻辑点（pt），拖动或编辑数值实时预览，不重置模拟。100% 缩放时 1 pt = 1 px；高 DPI 下随界面缩放。初始值来自内嵌主题，调试调整仅本次运行有效，不写入会话、命名配置或布局文件。
+The contents of all Dock panels, including the Render View, have **10 pt** of padding on all four sides by default; the outer Dock area has no top margin and **4 pt** on the left, right, and bottom. Use **Panels → Dock Margin Debug** in the top bar to open a floating window that is collapsed by default. Its two sliders adjust panel content padding on all four sides and Dock area margins on the left / right / bottom (the top is fixed at 0), each over 0–32 logical points (pt). Dragging or editing values previews changes live without resetting the simulation. At 100% scaling, 1 pt = 1 px; on high-DPI displays it follows UI scaling. Initial values come from the embedded theme; debug adjustments last only for the current run and are not written to sessions, named configurations, or layout files.
 
-参数面板的操作按钮填满所属内容区：单按钮独占整行，多按钮扣除主题间距后等宽排列；若均分并扣除按钮外边距后每个按钮不足 96 pt，则整组改为纵向排列。长文字允许换行，并在扣除内边距后的文字内容区水平、垂直居中。参数表格中的操作按钮仅填满右侧控件单元格，不跨越名称列。顶部工具栏、菜单、选择按钮以及种子输入框旁的“更换”等内联按钮保持原布局；点击、禁用和悬停提示沿用原语义。
+Parameter-panel action buttons fill their content area: a single button occupies a full row, while multiple buttons share the width equally after theme spacing is deducted. If each button would be less than 96 pt after equal division and deduction of button margins, the entire group is arranged vertically. Long text may wrap and is centered horizontally and vertically in the text content area after padding is deducted. Action buttons in parameter tables fill only the right-hand control cell, not the name column. The top toolbar, menus, selection buttons, and inline buttons such as “New” next to the seed input retain their existing layout; click, disabled, and hover-tooltip semantics are unchanged.
 
-面板操作按钮的 Padding（内边距）沿用主题（左右 4 pt、上下 1 pt）；Margin（外边距）在内嵌组件主题中默认为上下各 **4 pt**、左右 **0**。外边距不响应点击，并与主题控件间距叠加。
+Panel action button padding follows the theme (4 pt left and right, 1 pt top and bottom); margin defaults to **4 pt** above and below and **0** on the left and right in the embedded component theme. Margins do not respond to clicks and are added to theme control spacing.
 
-参数滑块使用 **圆角底色 + 细竖条**，右侧保留数值编辑。滑块内数值框与独立数值框共用主题的最小交互高度 **22 pt** 和按钮内边距，背景匹配数值框实际高度；宽度仍预留 64 pt。主题最小高度也应用于其他遵循该主题尺寸的控件，字体或内边距需要更多空间时允许增高；圆角沿用主题（当前 2 pt）。常态竖条宽 2 pt、上下各内缩 4.1 pt；悬浮／拖动宽 4.8 pt、上下各外延 0.5 pt，过渡 57 ms，不显示描边。左右各留 2 pt 内间距（按最宽竖条外缘计算），无进度填充；原有线性／对数、整数／步长及数值编辑语义不变。外观实验窗口与正式面板共用控件，见 [滑块外观实验](slider-lab.md)。
+Parameter sliders use a **rounded background + thin vertical bar**, with numeric editing retained on the right. Slider value fields and standalone numeric fields share the theme's **22 pt** minimum interaction height and button padding; the background matches the actual value-field height, while 64 pt remains reserved for width. The theme minimum height also applies to other controls that follow theme sizing, and controls may grow when fonts or padding need more space; corner rounding follows the theme (currently 2 pt). The normal bar is 2 pt wide and inset 4.1 pt at the top and bottom; on hover / drag it is 4.8 pt wide and extends 0.5 pt at the top and bottom, with a 57 ms transition and no outline. Each side has 2 pt internal spacing, measured from the outer edge of the widest bar; there is no progress fill. Existing linear / logarithmic, integer / step, and numeric-editing semantics remain unchanged. The appearance experiment window and production panels share controls; see [slider appearance experiment](slider-lab.md).
 
-面板可拖动 Dock 标签重新安排；小窗口内可以滚动。修改频谱、尺寸或种子后点击 **应用更改**；播放和外观参数即时生效。**恢复默认**只恢复待应用的波谱参数，再点击应用后生效。
+Panels can be rearranged by dragging Dock tabs; small windows can scroll. After changing the spectrum, dimensions, or seed, click **Apply Changes**; playback and appearance parameters take effect immediately. **Restore Defaults** restores only the pending spectrum parameters, which take effect after applying.
 
-| 控件 | 含义 |
+| Control | Meaning |
 | --- | --- |
-| A (power) | Phillips 频谱的功率系数，默认 0.002；设为 0 得到平面，乘 4 则波幅乘 2 |
-| L (m) | Phillips 大波尺度，默认约 19.98 m，独立于海面块尺寸；显示等效风速 sqrt(gL) |
-| Wind angle (deg) | 公式中 omega-hat 的单位风向，由角度得到 (cos θ, sin θ)；不是时间角频率 |
-| Patch side (m) | 正方形周期海面块的边长；场景绘制 3×3 块 |
-| FFT spectrum | 频域数组的 N×N 分辨率，8～512 的 2 次幂 |
-| 远海网格密度 | 8～512，默认 128；方格模式为每轴格数，近正三角形模式为相近三角形数量的密度预算，可与 FFT 分辨率不同 |
-| 近正三角形网格 | 默认关闭；立即切换远海绘制拓扑，暂停时可 A/B，不应用其他波谱草稿，不清空模拟历史 |
-| Seed / New | 固定随机种子 / 换一个随机海面 |
-| Paused / Restart time / Time speed | 暂停、时间归零、播放倍率 |
-| 波高增益 / Horizontal choppiness / Show foam | 渲染位移倍率、水平位移开关、泡沫显示 |
+| A (power) | Phillips spectrum power coefficient, default 0.002; 0 produces a flat surface, while multiplying it by 4 doubles wave amplitude |
+| L (m) | Phillips large-wave scale, approximately 19.98 m by default, independent of patch size; displays equivalent wind speed sqrt(gL) |
+| Wind angle (deg) | Unit wind direction omega-hat in the formula, derived from the angle as (cos θ, sin θ); not temporal angular frequency |
+| Patch side (m) | Side length of the square periodic ocean patch; the scene draws 3×3 patches |
+| FFT spectrum | N×N resolution of the frequency-domain array, a power of 2 from 8 to 512 |
+| Offshore mesh density | 8–512, default 128; cells per axis in square mode, or a density budget for a similar triangle count in near-equilateral triangle mode; may differ from FFT resolution |
+| Near-equilateral triangle mesh | Off by default; immediately switches offshore drawing topology, allowing A/B comparison while paused without applying other spectrum drafts or clearing simulation history |
+| Seed / New | Fixed random seed / choose another random ocean |
+| Paused / Restart time / Time speed | Pause, reset time to zero, playback multiplier |
+| Wave height gain / Horizontal choppiness / Show foam | Render displacement multiplier, horizontal displacement toggle, foam display |
 
-网格通过周期双线性插值读取 FFT 高度与位移；增加网格密度不会凭空增加频谱中的波。网格比 FFT 粗时可能漏掉短波形状。仅修改远海网格密度时，点击应用只重建绘制网格，不重置 FFT、SWE、泡沫或浪花；波谱／尺寸／种子变化仍重建计算缓冲区与网格绑定；海洋保留当前时间及暂停状态，尺寸改变时按比例调整相机距离；程序水重建并重新计时，保留暂停与相机。面板输入优先，不会同时旋转相机或触发海面快捷键。
+The mesh reads FFT height and displacement using periodic bilinear interpolation; increasing mesh density does not invent waves absent from the spectrum. A mesh coarser than the FFT may miss short-wave shapes. If only offshore mesh density changes, applying rebuilds only the drawing mesh and does not reset FFT, SWE, foam, or spray; spectrum / size / seed changes still rebuild compute buffers and mesh bindings. Ocean retains current time and pause state, adjusting camera distance proportionally when dimensions change; procedural water rebuilds and restarts its clock while preserving pause and camera. Panel input takes precedence, so it does not simultaneously rotate the camera or trigger ocean shortcuts.
 
-**远海 → 波谱与波形 → 波形 → 近正三角形网格** 是即时开关，旧配置缺少 `ocean.triangular_mesh` 字段时仍为方格。新模式隔行错开半格，并交替三角形对角线；使用偶数行保证上下周期一致，左右锯齿状边界在相邻区块共用，不额外插入狭长边界三角形。密度 128 时采用 119×138 个单元、每块 32,844 个三角形，相对方格的 32,768 个只增加约 0.23%；8～512 密度范围内数量偏差小于 2.5%。FFT 存储／采样、位移、法线算法和局部 SWE 水面网格保持不变；该选项用于比较网格方向性，不保证消除高光走样。随当前会话／命名配置手动保存。
+**Offshore → Spectrum and Waveform → Waveform → Near-equilateral Triangle Mesh** is an immediate toggle; old configurations without `ocean.triangular_mesh` still use squares. The new mode offsets alternate rows by half a cell and alternates triangle diagonals; an even number of rows ensures top-to-bottom periodicity. Zigzag left and right boundaries are shared by adjacent patches without inserting extra narrow boundary triangles. At density 128 it uses 119×138 cells and 32,844 triangles per patch, only about 0.23% more than the square mesh's 32,768; triangle count deviation is less than 2.5% over the 8–512 density range. FFT storage / sampling, displacement, the normal algorithm, and the local SWE water mesh remain unchanged; the option compares mesh directionality and does not guarantee elimination of specular aliasing. It is saved manually with the current session / named configuration.
 
-命令行也支持 `--amplitude 0.002 --phillips-length 20 --wind-angle 45 --mesh-resolution 192`，以及 `--triangular-mesh`／`--square-mesh` 显式覆盖远海绘制拓扑。旧的 `--wind 14` 仍可用，作用是设置 `L=U²/g`；若同时提供 `--phillips-length`，后出现的选项生效。
+The command line also supports `--amplitude 0.002 --phillips-length 20 --wind-angle 45 --mesh-resolution 192`, and `--triangular-mesh` / `--square-mesh` explicitly override offshore drawing topology. The old `--wind 14` remains available and sets `L=U²/g`; if `--phillips-length` is also supplied, the later option wins.
 
-## 程序化湖泊动画（无 SWE）
+## Procedural Lake Animation (No SWE)
 
 ```powershell
-# 不规则湖岸、程序化岩石及深度等值线波纹。
+# Irregular shoreline, procedural rocks, and depth-contour ripples.
 cargo run --release -- --lake --no-settings
-# 改用含露水岩石边界的二维欧氏距离场。
+# Use a two-dimensional Euclidean distance field with exposed-rock boundaries instead.
 cargo run --release -- --lake --lake-mode sdf --no-settings
-# 独立 GPU 计算、绘制、光学隔离和计时验证。
+# Independent GPU compute, rendering, optical isolation, and timing verification.
 target\release\ocean.exe --verify-lake
-# 固定种子、相机和模拟时间的离屏对照；目标文件必须不存在。
+# Offscreen comparison with fixed seed, camera, and simulation time; the destination must not exist.
 target\release\ocean.exe --lake --lake-mode sdf --no-settings --snapshot lake.png --time 7
 ```
 
-也可在 **场景与地形 → 湖泊场景** 进入。地形和 FFT 强度位于场景分类的 **湖泊地形** 面板；传播、发射、波形、反射与诊断移到侧边独立的 **动画 SDF 波纹** 图标入口（远海与着色之间），仍支持深度／SDF 两种模式。六个分类各自保留布局；旧布局不覆盖，新分类自动使用默认布局，也可从场景按钮或顶部面板菜单打开。切换分类不重置模拟、相机或草稿。海洋与程序水共用 FFT 波谱和水体着色；湖泊按需推进 FFT，但不推进 SWE／泡沫／浪花，仅绘制局部湖面。
+The scene is also available under **Scene and Terrain → Lake Scene**. Terrain and FFT strength are in the **Lake Terrain** panel in the Scene category; propagation, emission, waveform, reflection, and diagnostics have moved to the separate **Animated SDF Ripples** sidebar icon (between Offshore and Shading), still supporting both depth and SDF modes. Each of the six categories retains its own layout; old layouts are not overwritten, and the new category automatically uses its default layout. It can also be opened from the Scene button or the top Panels menu. Switching categories does not reset the simulation, camera, or drafts. Ocean and procedural water share the FFT spectrum and water shading; the lake advances FFT as needed but does not advance SWE / foam / spray, and draws only the local lake surface.
 
-湖岸由周期径向噪波生成，湖底与岩石共用单层高度场，无悬挑或洞穴。岩石放置会避开已有岩石，空间不足时跳过，面板显示实际数量；每第三个候选为水下岩石。场景种子与波纹种子分开。地形默认 256²，可选 128²／512²。
+The shoreline is generated from periodic radial noise, and the lakebed and rocks share a single-layer heightfield without overhangs or caves. Rock placement avoids existing rocks and skips candidates when space is insufficient; the panel shows the actual count. Every third candidate is an underwater rock. Scene and ripple seeds are separate. Terrain defaults to 256², with 128² / 512² available.
 
-- **深度**：传播坐标为静水深度除以场内最大水深，岩石改变等深线，水下岩石也有影响。
-- **SDF**：传播坐标为正岸距除以场内最大正岸距。岸距是到外岸或露水岩石水线的二维欧氏距离，水内正、陆地负；水下岩石不形成 SDF 障碍。
+- **Depth**: the propagation coordinate is still-water depth divided by the maximum water depth in the field. Rocks change depth contours, including underwater rocks.
+- **SDF**: the propagation coordinate is positive shore distance divided by the maximum positive shore distance in the field. Shore distance is the two-dimensional Euclidean distance to the outer shoreline or the waterline of exposed rocks, positive in water and negative on land; underwater rocks do not form SDF obstacles.
 
-两种模式的坐标均无量纲，0 靠边界、1 为最大值。入射波从近岸向湖内推进，坐标随时间增大；折返波减小。面板中的 **传播进度／秒** 不是水平米／秒，**传播坐标宽度** 不是世界米宽；两种模式分别保存内侧折返坐标、速度、宽度和近岸发射坐标。深度平台、SDF 中轴及等值线分裂会改变波纹形状，SDF 不是测地传播时间场，不提供真实绕射或障碍物后的能量输运。
+Both coordinates are dimensionless, with 0 at the boundary and 1 at the maximum. Incoming waves advance from near shore into the lake, increasing their coordinate over time; returning waves decrease it. **Propagation Progress / Second** in the panel is not horizontal meters / second, and **Propagation Coordinate Width** is not a width in world meters. The two modes save their inner turn coordinate, speed, width, and nearshore emission coordinate separately. Depth plateaus, the SDF medial axis, and contour splitting change ripple shapes; the SDF is not a geodesic travel-time field and does not provide real diffraction or energy transport behind obstacles.
 
-世界方向角 0° 指 +X、90° 指 +Z；角度半宽围绕湖心描述扇区，跨 ±180° 连续。波纹中央厚、两端细且淡出，推进时角范围不变。方向、扇区宽度、粗细和近岸起点各自独立随机，固定种子可重现；**扇区宽度随机比例**／**粗细随机比例** 为 0～1，默认 0.35，**起点随机偏移** 为 0～0.3 的归一化坐标，默认 0.04；各项设为 0 可关闭对应随机。方向、振幅、形状、速度与反射参数仅影响新入射波及其后代，不改变已有波的运动。
+A world direction angle of 0° points along +X and 90° along +Z; angular half-width describes a sector around the lake center and is continuous across ±180°. Ripples are thick in the center, taper and fade at both ends, and retain their angular range as they advance. Direction, sector width, thickness, and nearshore starting point are randomized independently and are reproducible with a fixed seed; **Sector Width Randomness** / **Thickness Randomness** range from 0–1, default 0.35, and **Start Random Offset** ranges from 0–0.3 in normalized coordinates, default 0.04. Setting each to 0 disables the corresponding randomness. Direction, amplitude, shape, speed, and reflection parameters affect only new incoming waves and their descendants, not the motion of existing waves.
 
-入射波从 **近岸发射坐标** 附近出生，到达 **内侧折返坐标** 时，停在该等值线上短暂淡出，并从精确抵达时刻生成一条更弱的反射波，保持原扇区和粗细、向本次实际近岸起点返回并按半衰期消散；不再产生第二次反射。它是程序化反向动画，不是局部法线上的镜面反射。清空、过期和池满不触发反射。总池容量 128 条，开启反射的入射波预留后代名额，满池拒绝新增而不覆盖可见波。
+An incoming wave is born near the **Nearshore Emission Coordinate**. On reaching the **Inner Turn Coordinate**, it briefly fades out while stationary on that contour and generates a weaker reflected wave at the exact arrival time. The reflection retains the original sector and thickness, returns toward that wave's actual nearshore starting point, and decays according to its half-life; it does not reflect a second time. This is procedural reverse animation, not specular reflection about a local normal. Clearing, expiration, and a full pool do not trigger reflection. The total pool holds 128 waves; incoming waves with reflection enabled reserve descendant slots, and a full pool rejects additions rather than overwriting visible waves.
 
-地形与传播设置分别编辑草稿：**湖泊地形 → 应用地形并重置** 只应用地形；**动画 SDF 波纹 → 应用传播场 / 种子并重置** 只应用深度／SDF 模式与波纹随机种子，不夹带另一面板的未应用草稿。两种应用均重置时钟与波序列，保留暂停和相机。发射参数编辑即时影响后续波；自动发射间隔改变后从当前时刻重新排程。**发射一道** 在暂停时也可建立记录，但出生淡入和移动需继续播放；**清空波纹** 同时取消待反射事件，不补发旧积压。诊断提供深度、带符号 SDF、传播等值线及波高。
+Terrain and propagation settings have separate drafts: **Lake Terrain → Apply Terrain and Reset** applies only terrain; **Animated SDF Ripples → Apply Propagation Field / Seed and Reset** applies only depth / SDF mode and the ripple random seed, without including unapplied drafts from the other panel. Both reset the clock and wave sequence while preserving pause and camera. Emission parameter edits immediately affect subsequent waves; changing the automatic emission interval reschedules from the current time. **Emit One** can create a record while paused, but birth fade-in and movement require playback to resume; **Clear Ripples** also cancels pending reflection events without emitting an old backlog. Diagnostics provide depth, signed SDF, propagation contours, and wave height.
 
-**共享 FFT 波浪**：新湖泊预设的 **FFT 叠加强度** 为 0.2，可在 **场景 → 湖泊地形** 或 **远海 → 波谱与波形** 中实时调为 0～1，0 关闭。波谱强度、尺度、风向、种子及 FFT 分辨率共用原 `ocean` 参数，编辑草稿后点 **应用更改**；不另存一份湖泊波谱。湖泊只叠加垂直波高，不使用水平挤浪。**FFT 岸边渐隐** 默认启用，在 0～0.5 米浅水和 0～1 米岸距内减弱波高；可实时关闭、不重置。无论开关状态，干地仍被屏蔽，最终高度仍受湖底限制，再计算一致法线。FFT 不按等深线／SDF 朝岸反射，那仍由原沿岸波动画负责。暂停冻结两者，**清空波纹** 只清沿岸波，FFT 保留；应用新波谱会重建并重新计时，保留相机和暂停。旧湖泊配置缺少 `fft_strength` 时默认 0，外观不自动改变。
+**Shared FFT Waves**: the **FFT Overlay Strength** of a new lake preset is 0.2 and can be adjusted live from 0–1 under **Scene → Lake Terrain** or **Offshore → Spectrum and Waveform**; 0 disables it. Spectrum strength, scale, wind direction, seed, and FFT resolution share the original `ocean` parameters; click **Apply Changes** after editing the draft. No separate lake spectrum is saved. The lake overlays vertical wave height only and does not use horizontal choppiness. **FFT Shore Fade** is enabled by default, reducing wave height in 0–0.5 meters of shallow water and within 0–1 meters of shore distance; it can be switched off live without a reset. Regardless of the toggle, dry land remains masked, final height remains constrained by the lakebed, and consistent normals are then calculated. FFT does not reflect toward shore along depth contours / SDF; that remains the responsibility of the existing shoreline wave animation. Pause freezes both; **Clear Ripples** clears only shoreline waves and retains FFT. Applying a new spectrum rebuilds and restarts the clock while preserving camera and pause. Old lake configurations without `fft_strength` default to 0, so their appearance does not change automatically.
 
-湖泊与海洋通过同一水体材质模块共用水体消光、散射、天空反射、高光、SSR、快速屏幕折射与 HDR/Bloom；水面位移和法线共用 GPU 波场。**物理焦散与物理折射暂不支持**，原设置保留但不编码，界面提示原因，不自动降级到快速折射。C／F／海洋波高增益等快捷设置不改变湖泊；湖泊的 FFT 叠加强度与沿岸波振幅独立设置。
+Lake and ocean share water extinction, scattering, sky reflection, highlights, SSR, fast screen refraction, and HDR/Bloom through the same water material module; water displacement and normals share GPU wave fields. **Physical caustics and physical refraction are not yet supported**; the original settings are retained but not encoded, and the UI explains why without automatically falling back to fast refraction. Shortcuts such as C / F / ocean wave height gain do not change the lake; lake FFT overlay strength and shoreline wave amplitude are set independently.
 
-湖泊参数和种子随现有会话／命名配置手动保存，活动波、播放时间和计数不保存；重新载入从初始状态开始。旧配置缺字段时仍为原海洋模式。`--lake` 是完整场景预设，会覆盖已保存场景参数；恢复个人设置时不要重复加预设。精确行为见 [湖泊动画规范](../specs/animated-lake.md)。
+Lake parameters and seeds are manually saved with existing sessions / named configurations; active waves, playback time, and counts are not saved, and reloading starts from the initial state. Old configurations missing these fields retain the original ocean mode. `--lake` is a complete scene preset and overrides saved scene parameters; do not repeat the preset when restoring personal settings. See the [animated lake specification](../specs/animated-lake.md) for exact behavior.
 
-## 扫描海岸模型与可调 SWE 区域
+## Scanned Coastal Model and Adjustable SWE Region
 
-新增 **模型与区域** Dock 页签。模型场景使用 `assets/models/challaborough_pillbox.glb` 显示岩岸，使用预烘焙的 `.sweh` 高度场驱动 SWE；保留原沙滩／平面场景，不改变默认启动场景。资源来源、CC BY 4.0 署名、裁切面清理和磁盘格式见 [`assets/models/README.md`](../../assets/models/README.md)。
+A **Model and Region** Dock tab has been added. The model scene uses `assets/models/challaborough_pillbox.glb` to display a rocky coast and a prebaked `.sweh` heightfield to drive SWE; the original beach / flat scenes remain available, and the default startup scene is unchanged. See [`assets/models/README.md`](../../assets/models/README.md) for asset origins, CC BY 4.0 attribution, cut-surface cleanup, and disk format.
 
 ```powershell
-# 首次生成磁盘高度场；已有输出不会被覆盖。此步骤不需要 GPU。
+# Generate the disk heightfield for the first time; existing output is not overwritten. No GPU is required.
 cargo run --release --bin terrain-bake
 
-# 启动模型预设，避免覆盖个人设置。
+# Start the model preset without overwriting personal settings.
 cargo run --release --bin ocean -- --model --no-settings
 
-# 设置包围盒中心、尺寸和网格精度；覆盖参数写在场景预设后面。
+# Set bounding-box center, size, and mesh resolution; place overrides after the scene preset.
 cargo run --release --bin ocean -- --model --no-settings --swe-center 0,4,0 --swe-size 128,64,128 --swe-resolution 512
 
-# 专项真实 GPU 验证，不依赖扫描资产，也不读写个人设置。
+# Dedicated real GPU verification, independent of scanned assets and without reading or writing personal settings.
 cargo run --release --bin ocean -- --verify-terrain
 ```
 
-模型预设会覆盖会话中的场景参数，类似 `--beach`。恢复自己的已保存模型摆放时只用 `cargo run`，不要重复加 `--model`。模型参数、已应用包围盒、开放边界和显示开关进入会话及命名配置；旧配置缺少模型字段时默认关闭，继续原有场景。待应用草稿不保存。命令行快照默认使用显式参数；可加 `--config PATH` 只读加载指定配置，包括相机与远海泡沫参数。
+The model preset overrides scene parameters in the session, like `--beach`. To restore your saved model placement, use only `cargo run` and do not repeat `--model`. Model parameters, the applied bounding box, open boundaries, and display toggles are included in sessions and named configurations; old configurations without model fields default to disabled and continue using the existing scene. Unapplied drafts are not saved. Command-line snapshots use explicit parameters by default; add `--config PATH` to load a specified configuration read-only, including camera and offshore foam parameters.
 
-### 离线资产与运行时重建
+### Offline Assets and Runtime Rebuilding
 
-离线工具以约 0.05 个模型单位的格距生成 984×890 单元中心高度及有效覆盖标记；初始化时从磁盘加载一次并核对源 GLB SHA-256。修改区域时不重新读 GLB、不逐三角形求交。目前在 CPU 对驻留源高度场做 O(N²) 重采样，再上传静态 GPU 床面缓冲；求解子步只读该缓冲。它不是 GPU 重烘焙，也不在每帧重采样。控制台的重建毫秒数是 CPU 重采样及上传调用耗时，不是 GPU timestamp。
+The offline tool generates 984×890 cell-center heights and valid-coverage flags at a spacing of approximately 0.05 model units; the result is loaded once from disk at initialization and checked against the source GLB SHA-256. Changing the region does not reread the GLB or intersect individual triangles. Currently the CPU performs O(N²) resampling of the resident source heightfield and uploads a static GPU bed buffer; solver substeps only read that buffer. This is not GPU rebaking and does not resample every frame. The rebuild time in milliseconds shown in the console is CPU resampling and upload-call time, not a GPU timestamp.
 
-有效扫描区域使用模型高度，不与原沙坡处处取最大值。扫描包围盒外沿最近边缘高度，在可调的**海床衔接宽度**内平滑过渡到水体光学面板设置的海底深度；无效内部采样使用该背景深度。补充海床不是当地实测水下地形，也不是自动修复扫描洞穴。俯视最高表面只构成单层地形代理，不能模拟悬挑下穿流、洞穴与屋顶同时有水或真实三维流体破碎；纹理浪花只做视觉补充。
+Valid scanned regions use model height rather than taking the maximum with the original sand slope everywhere. Outside the scanned bounding box, the nearest edge height transitions smoothly over the adjustable **Seabed Transition Width** to the seabed depth set in the water optics panel; invalid internal samples use that background depth. The supplemental seabed is not locally surveyed underwater terrain and does not automatically repair scanned caves. A top-down highest surface is only a single-layer terrain proxy; it cannot simulate flow under overhangs, water simultaneously in caves and on roofs, or real three-dimensional fluid breakup. Textured spray is only a visual supplement.
 
-### 参数与应用语义
+### Parameters and Application Semantics
 
-| 参数 | 含义与生效方式 |
+| Parameter | Meaning and application |
 | --- | --- |
-| 启用模型 | 应用后切换模型／原场景，重新初始化近岸历史 |
-| 模型位置 X/Y/Z（米）、统一比例、旋转 Y（度） | 调整摆放；统一比例是米／模型单位。应用后从源高度场重采样，不重新离线烘焙。俯仰／翻滚不支持，需要重新烘焙 |
-| 海平面高程（米） | 与模型位置 Y 使用同一高程基准；内部渲染和求解以该海平面为 Y=0。修改是静态场景编辑并重置，不是动态潮汐 |
-| 包围盒中心／尺寸 X/Y/Z（米） | XZ 决定实际二维计算域；Y 只用于线框和范围检查，不截平床面，不是三维网格，也不是封闭顶盖 |
-| 按模型范围自动覆盖 | 加载资产后，根据变换后的包围盒和松弛带自动计算近方形区域，留出绕流余量；先修改草稿，再点击应用 |
-| 每轴网格数 | 在 SWE 页签选择 64～1024；独立于离线高度场与 FFT。模型场景另绘制与 SWE 同密度的局部水面网格 |
-| 四边开放开关 | 顺序 −X、+X、−Z、+Z；开启是零梯度开放边界加 FFT 松弛输入，关闭为反射边界。开放边界允许泡沫与泡沫动量流出，不导入外部泡沫 |
-| 松弛带宽（米） | 每个开放边缘的过渡宽度，必须小于 X/Z 最小尺寸的一半。模型及主要交互区应避开该带；角点取最大权重，不重复叠加 |
-| 海床衔接宽度（米） | 默认 12 米，扫描外人为海床的过渡距离；应留在计算域及松弛带以内 |
-| 显示包围盒 | 橙色三维线框；仅外观 |
+| Enable Model | After applying, switches between the model and original scene and reinitializes nearshore history |
+| Model Position X/Y/Z (m), Uniform Scale, Rotation Y (deg) | Adjust placement; uniform scale is meters / model unit. Applying resamples the source heightfield without offline rebaking. Pitch / roll are unsupported and require rebaking |
+| Sea Level Elevation (m) | Uses the same elevation reference as model position Y; internal rendering and solving use this sea level as Y=0. Changes are static scene edits and reset the simulation, not dynamic tides |
+| Bounding Box Center / Size X/Y/Z (m) | XZ determine the actual two-dimensional computational domain; Y is only for wireframe and range checks, does not clip the bed, and is neither a three-dimensional grid nor a closed top |
+| Auto Fit to Model Bounds | After loading the asset, automatically calculates a near-square region from the transformed bounding box and sponge band, leaving room for flow around the model; first changes the draft, then requires Apply |
+| Grid Cells per Axis | Select 64–1024 in the SWE tab; independent of the offline heightfield and FFT. The model scene also draws a local water mesh at SWE density |
+| Four Open Edge Toggles | Ordered −X, +X, −Z, +Z; enabled means zero-gradient open boundary plus FFT relaxation input, disabled means reflective boundary. Open boundaries allow foam and foam momentum to exit without importing external foam |
+| Sponge Width (m) | Transition width at each open edge, which must be less than half the smaller X/Z dimension. The model and main interaction region should avoid this band; corners use the maximum weight without repeated accumulation |
+| Seabed Transition Width (m) | Default 12 meters, the transition distance for the artificial seabed outside the scan; it should remain within the computational domain and sponge band |
+| Show Bounding Box | Orange three-dimensional wireframe; appearance only |
 
-模型和范围控件先编辑草稿，点击 **应用模型与区域** 后才生效。XZ 范围、模型变换、水位、边界、补充海床或精度变化会重建／重新初始化近岸水体，清空近岸泡沫与湿润历史；FFT 时间和远海泡沫继续推进。仅改变 Y 显示范围和线框开关不重置。水体光学页的海底深度控件仍为即时生效，模型场景下修改会即时重建补充海床并重置。暂停时也能应用；尚未实现不同计算网格之间的守恒历史迁移。
+Model and region controls edit a draft and take effect only after clicking **Apply Model and Region**. Changes to XZ bounds, model transform, water level, boundaries, supplemental seabed, or resolution rebuild / reinitialize nearshore water and clear nearshore foam and wetness history; FFT time and offshore foam continue advancing. Changing only the Y display range and wireframe toggle does not reset. The seabed depth control on the water optics page still applies immediately; changing it in the model scene immediately rebuilds the supplemental seabed and resets. Applying is possible while paused; conservative history transfer between different computational grids has not yet been implemented.
 
-模型内部及主要交互区以 SWE 水面为主，外缘渐变回 FFT；耦合仍是 **FFT → SWE 单向**。保留原输入的水位／两个动量通道、共同增益与短波过滤。当前开放处理不是严格无反射特征边界；需要结合输入波长调整松弛带，尚未标定反射系数。提高网格精度也不会修复深水 FFT 与非色散 SWE 的相速差异。
+The SWE surface dominates inside the model and main interaction area, blending back to FFT at the outer edge; coupling remains **one-way FFT → SWE**. The original input's water level / two momentum channels, shared gain, and short-wave filtering are retained. The current open treatment is not a strictly nonreflecting characteristic boundary; sponge width must be adjusted to the input wavelength, and reflection coefficients have not yet been calibrated. Increasing mesh resolution also does not fix the phase-speed difference between deep-water FFT and nondispersive SWE.
 
-模型同时写入不透明颜色／深度预绘制和最终场景，水下部分参与现有光程积分。近岸水面插值忽略干地高度，泡沫输送在未淹没地形处阻挡；湿润和残留只投影到接近床面的模型表面，不涂满整个垂直岩壁。没有接入独立的岩壁水痕模型。
+The model is written both to the opaque color / depth prepass and the final scene; underwater portions participate in the existing optical path integration. Nearshore water interpolation ignores dry-land heights, and foam transport is blocked by terrain that is not submerged; wetness and residue project only onto model surfaces close to the bed instead of covering entire vertical rock walls. There is no separate rock-wall water-mark model.
 
-可用 `--model-position X,Y,Z`、`--model-scale N`、`--model-yaw DEG`、`--sea-level M`、`--swe-center X,Y,Z`、`--swe-size X,Y,Z`、`--swe-resolution N`、`--swe-sponge M`、`--swe-open-edges 1,1,1,1`、`--hide-swe-box` 设置初始参数。模型比例与默认水位仅供预览，未做现场测量校准。
+Use `--model-position X,Y,Z`, `--model-scale N`, `--model-yaw DEG`, `--sea-level M`, `--swe-center X,Y,Z`, `--swe-size X,Y,Z`, `--swe-resolution N`, `--swe-sponge M`, `--swe-open-edges 1,1,1,1`, and `--hide-swe-box` to set initial parameters. Model scale and default water level are for preview only and have not been calibrated against field measurements.
 
-`--verify-terrain` 使用生产 GPU 求解路径，覆盖一阶／二阶的解析斜床上传、干湿静水、运动水脉冲水量守恒、Y 范围／线框编辑不改变暂停状态、暂停时改域重采样，以及四个开放边缘的静水保持。CPU 库测试覆盖磁盘资产往返、源哈希不匹配／截断拒绝、旋转缩放后解析床面采样和无效覆盖。完整 `--verify` 也包含这些 GPU 检查。
+`--verify-terrain` uses the production GPU solver path and covers analytic sloped-bed upload for first / second order, wet/dry still water, mass conservation of a moving water pulse, Y-range / wireframe edits preserving pause state, domain-change resampling while paused, and still-water preservation at all four open edges. CPU library tests cover disk asset round trips, rejection of source hash mismatches / truncation, analytic bed sampling after rotation and scaling, and invalid coverage. The full `--verify` also includes these GPU checks.
 
-## 原型孔洞与持续形变（迁移第一阶段）
+## Prototype Holes and Continuous Deformation (Migration Phase One)
 
-“泡沫纹理与材质”新增 **原型孔洞外观** 和 **坐标重置周期（秒）**。旧配置仍默认原材质、2 秒周期。此阶段只迁移输运坐标上的多尺度噪声孔洞，不包含原型的细波传播或撞岩新源；不改生成、密度／动量通量、拖曳、衰减或水动力。
+**Prototype Hole Appearance** and **Coordinate Reset Period (seconds)** have been added to “Foam Texture and Material”. Old configurations still default to the original material and a 2-second period. This phase migrates only multiscale noise holes on transported coordinates, not the prototype's fine-wave propagation or new rock-impact source; it does not change generation, density / momentum flux, drag, decay, or hydrodynamics.
 
-- 原型外观在现有泡沫输运坐标上按 2.5、7、17 倍世界坐标采样 value noise，权重 0.55／0.30／0.15；沿用项目噪声函数，不保证与 HTML 的随机图案逐像素相同。子像素噪声淡至均值，抑制远处闪烁。零密度／干区严格不显泡沫。
-- 不透明度密度尺度在原型模式中控制 `1-exp(-密度/尺度)` 对孔洞阈值的响应，取 `1/6` 对应 HTML 的系数 6。它不同于 NSH 的“孔洞覆盖 × 连续不透明度”，不是把模拟密度限幅。原型固定噪声尺度，不使用 NSH 纹理尺寸、微法线和粗糙度；颜色及水面光学保留。
-- 坐标重置周期取 0 或 0.25～60 个模拟秒。默认 2；8 秒可观察较长的拉伸历史；0 持续输运、不重置，长期可能过度拉伸。仍跟随泡沫速度而非另用水流，密度与坐标不脱节。周期修改不清空泡沫，但可能改变相位混合；严格对照应重置模拟。
-- 材质调试 `--foam-material-view 4` 排除高光、显示最终覆盖；`5` 显示 0.5 米输运坐标网格（独立于泡沫密度）。原型模式的 Soft 为噪声，Height 为零。
+- The prototype appearance samples value noise at 2.5, 7, and 17 times world coordinates on existing foam transport coordinates, with weights 0.55 / 0.30 / 0.15. It uses the project's noise function and does not guarantee a pixel-identical random pattern to the HTML. Subpixel noise fades to its mean to suppress distant flicker. Zero-density / dry regions strictly show no foam.
+- In prototype mode, opacity density scale controls the response of the hole threshold to `1-exp(-density/scale)`; `1/6` corresponds to the HTML coefficient 6. This differs from NSH's “hole coverage × continuous opacity” and does not clamp simulation density. The prototype uses fixed noise scales, not NSH texture size, micro normals, or roughness; color and water optics are retained.
+- Coordinate reset period is 0 or 0.25–60 simulated seconds. The default is 2; 8 seconds reveals a longer stretching history; 0 transports continuously without resetting and may overstretch over time. Coordinates still follow foam velocity rather than a separate water flow, keeping density and coordinates aligned. Changing the period does not clear foam, but may change phase blending; reset the simulation for a strict comparison.
+- Material debug `--foam-material-view 4` excludes highlights and displays final coverage; `5` displays a 0.5-meter transport-coordinate grid, independent of foam density. In prototype mode, Soft is noise and Height is zero.
 
-只读预览，不改个人或仓库会话：
+Read-only preview without changing personal or repository sessions:
 
 ```powershell
 cargo run --release --bin ocean -- --config configs/experiments/reef-front-ridge.json --no-foam-ridges --foam-prototype --foam-texture-period 8
 ```
 
-固定上述配置、相机和 `--time 12`，交叉比较 `--foam-prototype`／`--no-foam-prototype` 与 `--foam-texture-period 2`／`8`，两边都保留 `--no-foam-ridges`，避免混入源项变化。可附加 `--snapshot target/自选名称.png --foam-material-view 4`，输出文件需不存在。密度调试仍用 `--shore-view 6`；旧材质／2 秒与原型／8 秒的密度截图已得到相同 SHA-256。覆盖图出现更多细条和破孔，但仍有连续白块，不能据此认为已复现原型或真实湍流。
+Fix the above configuration, camera, and `--time 12`, and cross-compare `--foam-prototype` / `--no-foam-prototype` with `--foam-texture-period 2` / `8`, retaining `--no-foam-ridges` on both sides to avoid mixing in source changes. Add `--snapshot target/custom-name.png --foam-material-view 4` if desired; the output file must not exist. Density debugging still uses `--shore-view 6`; density screenshots for the old material / 2 seconds and prototype / 8 seconds have the same SHA-256. Coverage images show more fine streaks and holes, but continuous white patches remain; this does not establish that the prototype or real turbulence has been reproduced.
 
-## 礁石压缩脊线实验
+## Reef Compression Ridge Experiment
 
-`configs/experiments/reef-front-ridge.json` 从原配置库中的“礁石”派生。使用 `--config` 只读预览，避免自动验证改写个人参数：
+`configs/experiments/reef-front-ridge.json` is derived from “Reef” in the original configuration library. Use `--config` for a read-only preview to avoid automated verification rewriting personal parameters:
 
 ```powershell
 cargo run --release --bin ocean -- --config configs/experiments/reef-front-ridge.json --frames 600
-# 同一配置改用旧前沿源作对照，两边背景倍率均为零。
+# Compare the same configuration with the old front source; background multipliers are zero in both.
 cargo run --release --bin ocean -- --config configs/experiments/reef-front-ridge.json --no-foam-ridges --frames 600
 ```
 
-**前沿泡沫 → 压缩脊线实验** 默认关闭，旧配置保持原行为。实验沿当前流向在同一 SWE 阶段读取五点速度，计算三个有符号压缩强度（每秒）；只保留超过速度阈值、相对凸起明显、局部拟合峰位仍在邻域内的窄带。它不沿切线寻找二维孤立极大值，也不使用 FFT/J、随机纹理或泡沫密度作为发射位置。邻域需在域内且湿润；源项沿用薄水抑制与边缘淡出。开启实验会强制关闭背景源，但不改写背景参数。
+**Front Foam → Compression Ridge Experiment** is off by default; old configurations retain their original behavior. The experiment reads five-point velocities along the current flow direction in the same SWE stage and calculates three signed compression strengths per second. It retains only narrow bands above the speed threshold that are distinctly prominent and whose locally fitted peak remains within the neighborhood. It does not search along the tangent for two-dimensional isolated maxima, or use FFT/J, random texture, or foam density as emission locations. The neighborhood must be inside the domain and wet; the source retains thin-water suppression and edge fade. Enabling the experiment forces the background source off without rewriting background parameters.
 
-**窄带宽度** 为 0.05～10 米，局部五点拟合将有效宽度限制在沿流向的一至两格；不能靠这个参数获得亚格细线，改变分辨率也会改变有效物理带宽。**峰值相对显著度** 为 0～1，默认 0.02，过滤平坦压缩区。旧的“前沿采样距离”仅用于旧源；速度阈值和过渡仍控制两种源的强度。参数实时生效，不重置模拟。
+**Narrow Band Width** is 0.05–10 meters; the local five-point fit limits effective width to one or two cells along the flow. This parameter cannot produce subcell thin lines, and changing resolution also changes the effective physical bandwidth. **Peak Relative Prominence** is 0–1, default 0.02, filtering flat compression regions. The old “Front Sampling Distance” applies only to the old source; velocity threshold and transition still control the strength of both sources. Parameters apply live without resetting the simulation.
 
-**启用泡沫发射** 可单独停发，已有密度／动量继续输送、拖曳、汇聚和衰减。新生量仍按生成率和实际模拟步长积分，二阶预测阶段不重复发射。未添加反向速度、黏性或凝聚力，也未改动材质、不透明度、纹理、输送默认阶数或密度上限。
+**Enable Foam Emission** can independently stop emission; existing density / momentum continue to be transported, dragged, converged, and decayed. New quantities are still integrated according to generation rate and actual simulation timestep, without duplicate emission in the second-order prediction stage. No reverse velocity, viscosity, or cohesion has been added, and material, opacity, texture, default transport order, and density limit remain unchanged.
 
-`--shore-view 7` 显示最近完成子步的实际源项（白色对应配置的前沿满生成率），`8` 显示发射权重，`6` 仍为输送后的密度。旧模式在选择 7／8 后需要推进一步才有诊断数据；暂停保留最后数据。实验支持 `--snapshot ... --foam-emission-window 8,9`，只在第 8～9 秒发射；按暖机帧切换，时间分辨率约 1/60 秒。
+`--shore-view 7` displays the actual source term of the most recently completed substep (white corresponds to the configured full front generation rate), `8` displays emission weight, and `6` remains the transported density. In the old mode, one step must advance after selecting 7 / 8 before diagnostic data is available; pausing retains the last data. The experiment supports `--snapshot ... --foam-emission-window 8,9`, emitting only from 8 to 9 seconds; switching is based on warm-up frames, with a time resolution of approximately 1/60 second.
 
-这是源项筛选实验，不是已验证的网状泡沫模型：流向不一定是波前法线，停驻压缩峰仍会持续发射，尚无波前追踪或时间滞回。礁石对照中生成区域收窄、停止发射后泡沫仍保留，但没有证明会自然形成连通网状。复现命令、固定配置和实测边界见 [configs/README.md](../../configs/README.md)。
+This is a source-selection experiment, not a validated reticulated foam model: flow direction is not necessarily the wavefront normal, stationary compression peaks continue to emit, and there is no wavefront tracking or temporal hysteresis yet. In the reef comparison, the generation region narrows and foam remains after emission stops, but this does not prove that a connected network forms naturally. See [configs/README.md](../../configs/README.md) for reproduction commands, fixed configuration, and measured limitations.
 
-## GPU 浪花粒子
+## GPU Spray Particles
 
-左下 Dock 的 **浪花粒子** 页签控制离开水面的碎浪／水滴，和水面泡沫分开。默认关闭，旧配置缺字段时也保持关闭。
+The **Spray Particles** tab in the lower-left Dock controls breaking spray / droplets leaving the water surface, separately from surface foam. It is off by default and remains off when old configurations lack the fields.
 
 ```powershell
-# 有界预览，不写个人配置；浪花选项放在场景预设后。
+# Bounded preview without writing personal configuration; put spray options after the scene preset.
 cargo run --release --bin ocean -- --beach --spray --no-settings --frames 600
-# 查看 GPU 发射强度（绿低红高），同时启用浪花。
+# Show GPU emission strength (green low, red high), also enabling spray.
 cargo run --release --bin ocean -- --beach --spray-debug --no-settings --frames 600
 ```
 
-恢复个人参数时用 `cargo run`，不要重复指定 `--beach`；单独加 `--spray` 只覆盖开关，不重置已保存的发射参数。调试视图显示最近一次实际模拟帧的源强，暂停时保留；关闭调试后恢复粒子绘制。
+Use `cargo run` to restore personal parameters, without repeating `--beach`; adding `--spray` alone overrides only the toggle and does not reset saved emission parameters. The debug view shows source strength from the most recent actual simulation frame and retains it while paused; disabling debug restores particle rendering.
 
-发射信号存储在 GPU storage buffer。每个完成的 SWE 子步计算水面坡度、正向上升和有效水深门控，再按单元面积、实际模拟时间积分；二阶预测阶段不重复生成。粒子 compute 读取信号并保留小数余量，GPU 更新粒子列表和间接绘制参数。运行时不回读信号、粒子或数量，不由 CPU 组装发射列表。发射不读取水面泡沫密度，浪花也不反向修改水体、泡沫或沙地状态。
+Emission signals are stored in a GPU storage buffer. Each completed SWE substep computes surface slope, positive rise, and effective water-depth gating, then integrates by cell area and actual simulation time; the second-order prediction stage does not generate again. Particle compute reads the signals and retains fractional remainders; the GPU updates the particle list and indirect draw arguments. Signals, particles, and counts are not read back at runtime, and the CPU does not assemble an emission list. Emission does not read surface foam density, and spray does not modify water, foam, or sand state in return.
 
-| 参数 | 默认值与范围 | 生效方式 |
+| Parameter | Default and range | Application |
 | --- | --- | --- |
-| 发射密度 | 150，0～2000 粒子/平方米/模拟秒 | 实时影响新增量，0 停止生成 |
-| 坡度阈值 | 0.03，0～2（无量纲），固定过渡宽度 0.1 | 水面高程梯度，不是水深梯度 |
-| 上升阈值 | 0.02，0～5 米/模拟秒，固定过渡宽度 0.2 | 只有上升且陡峭的水面发射 |
-| 最小水深 | 0.02，0.001～1 米 | 低于此值不发射，到两倍水深达到满权重 |
-| 向上／前向速度 | 2／0.5，各 0～10 米/模拟秒 | 新生粒子叠加水流水平速度及少量随机扰动 |
-| 最长寿命 | 1.2，0.05～5 模拟秒 | 新生粒子实际寿命为其 75%～100% |
-| 尺寸 | 0.2，0.01～2 米 | 基础四边形直径，最终直径 = 尺寸 × 随机尺寸倍率；仅影响新生粒子 |
-| 随机尺寸倍率下限／上限 | 0.65／1.35，各 0～2，无量纲 | GPU 在区间内均匀随机；下限不能超过上限，相等时固定倍率。实时影响新生粒子并保存，不重置模拟；旧配置缺字段时保持原有随机范围。尺寸 2 米、倍率 0.5～1 对应实际 1～2 米；最终直径可超过 2 米 |
-| 空气阻力 | 0.5，0～10/模拟秒 | 实时影响全部粒子；0 为重力弹道 |
-| 软交界距离 | 0.15，0.001～1 米 | 只影响与场景交界的深度淡出 |
+| Emission Density | 150, 0–2000 particles / square meter / simulated second | Live effect on new particles; 0 stops generation |
+| Slope Threshold | 0.03, 0–2 (dimensionless), fixed transition width 0.1 | Surface elevation gradient, not water-depth gradient |
+| Rise Threshold | 0.02, 0–5 meters / simulated second, fixed transition width 0.2 | Only rising and steep water emits |
+| Minimum Water Depth | 0.02, 0.001–1 meter | No emission below this value; reaches full weight at twice the depth |
+| Upward / Forward Speed | 2 / 0.5, each 0–10 meters / simulated second | New particles also inherit horizontal water velocity and a small random perturbation |
+| Maximum Lifetime | 1.2, 0.05–5 simulated seconds | Actual lifetime of new particles is 75%–100% of this |
+| Size | 0.2, 0.01–2 meters | Base quad diameter; final diameter = size × random size multiplier; affects only new particles |
+| Random Size Multiplier Minimum / Maximum | 0.65 / 1.35, each 0–2, dimensionless | Uniformly randomized by the GPU within the interval; minimum cannot exceed maximum, and equal values fix the multiplier. Affects new particles live and is saved without resetting; old configurations missing the fields retain the original random range. Size 2 meters with multiplier 0.5–1 gives an actual 1–2 meters; final diameter may exceed 2 meters |
+| Air Resistance | 0.5, 0–10 / simulated second | Affects all particles live; 0 gives gravity-only ballistics |
+| Soft Intersection Distance | 0.15, 0.001–1 meter | Affects only depth fading at scene intersections |
 
-参数随会话和命名配置保存，不保存运行中的粒子。暂停冻结运动、年龄和发射；关闭释放浪花资源；重置时间、重建波谱或改变近岸域会清空浪花（仅切换远海绘制拓扑／密度不清空），碰撞体编辑也清空旧粒子。粒子在落水、触地、寿命耗尽或离开有效近岸域时消失。水面泡沫的外观高度不改变粒子运动。
+Parameters are saved with sessions and named configurations; live particles are not saved. Pause freezes motion, age, and emission; disabling releases spray resources. Resetting time, rebuilding the spectrum, or changing the nearshore domain clears spray (switching only offshore drawing topology / density does not); collider edits also clear old particles. Particles disappear on entering water, touching ground, exhausting their lifetime, or leaving the valid nearshore domain. The apparent height of surface foam does not change particle motion.
 
-粒子池最多 65,536 个，先保留存活粒子，再填充空余槽；满池直接丢弃新增请求，不欠账、不覆盖存活粒子。信号和余量合计约每个 SWE 单元 40 字节，双粒子列表约 6 MiB，另有少量参数及纹理。设备限制或分配失败会禁用浪花并显示错误，不改用 CPU 粒子路径。
+The particle pool holds at most 65,536 particles, retaining survivors first and filling free slots afterward; a full pool drops new requests without accumulating debt or overwriting live particles. Signals and remainders together use approximately 40 bytes per SWE cell, the double particle lists approximately 6 MiB, plus a small amount for parameters and textures. Device limits or allocation failure disable spray and display an error rather than switching to a CPU particle path.
 
-首版只覆盖纯 SWE 区域（FFT 混合权重不大于约 0.001），不在远海或 FFT 混合带喷射。纹理采用 Effekseer 官方 Pierre 样例中的 CC0 `Splash.png`，按原图 Alpha 拆成四种随机水片／碎滴，使用独立透明边和完整 mip 链避免串图及远处闪烁；原图、作者、许可和离线烘焙说明见 [assets/spray/README.md](../../assets/spray/README.md)。绘制使用预乘透明度、已保存的场景深度和软交界；没有透明粒子排序、OIT、风场或独立水雾层。高度场碰撞不表示任意三维模型表面的精确碰撞，也不能生成真实翻卷浪。
+The first version covers only pure SWE regions (FFT blend weight at most approximately 0.001) and does not emit offshore or in the FFT blend band. The texture uses CC0 `Splash.png` from the official Effekseer Pierre sample, split by the original Alpha into four random water sheets / droplets, with separate transparent borders and a full mip chain to prevent atlas bleeding and distant flicker; see [assets/spray/README.md](../../assets/spray/README.md) for the original image, author, license, and offline baking. Rendering uses premultiplied alpha, saved scene depth, and soft intersections; there is no transparent particle sorting, OIT, wind field, or separate mist layer. Heightfield collision does not represent exact collisions with arbitrary three-dimensional model surfaces and cannot generate real curling waves.
 
-完整 `--verify` 包含发射门控、世界坐标/速度的 GPU 信号布局、面积/时间积分、小数发射、容量饱和与复用、暂停/重置、落水，以及两种尺寸下的真实粒子深度遮挡和淡出检查。一阶／二阶开启浪花后，既有水体与泡沫状态仍保持一致。仅验证程序允许末尾读回检查结果。
+The full `--verify` includes emission gating, GPU signal layout for world coordinates / velocity, area / time integration, fractional emission, capacity saturation and reuse, pause / reset, water entry, and real particle depth occlusion and fade checks at two sizes. Existing water and foam states remain consistent with spray enabled in first / second order. Only the verification program is permitted to read back results at the end.
 
-## 性能面板
+## Performance Panel
 
-左下 Dock 的 **性能** 标签页与 **远海泡沫**、**浪花粒子** 并列，使用两列表格显示指标和数值；原浅水面板中的 GPU 耗时行已移至此处。数据每 1 秒更新一次，CPU 指标为该窗口内每帧平均值，GPU 指标只统计新读回且匹配当前求解阶数的样本。
+The **Performance** tab in the lower-left Dock sits alongside **Offshore Foam** and **Spray Particles**, displaying metrics and values in a two-column table; the GPU timing row formerly in the shallow-water panel has moved here. Data updates once per second. CPU metrics are per-frame averages within that window; GPU metrics include only newly read-back samples matching the current solver order.
 
-| 指标 | 测量范围 |
+| Metric | Measurement scope |
 | --- | --- |
-| 帧率、端到端帧间隔 | 相邻绘制开始之间的现实时间，含垂直同步、GPU 背压与事件循环等待；不是输入到屏幕的延迟，不使用模拟步长的 0.1 秒截断 |
-| CPU 帧处理 | 绘制入口到提交、present 返回；含界面、配置处理、编码与阻塞等待，不代表 GPU 完成 |
-| 获取画面 | 获取交换链图像的 CPU 等待 |
-| 界面 CPU | egui 布局与交互，不含界面绘制编码 |
-| 模拟 CPU | FFT、远海泡沫、SWE 与浪花源/粒子的 CPU 指令编码及参数上传，不是 GPU 执行时间 |
-| 渲染编码 CPU | 场景及 egui 绘制指令编码 |
-| 提交与呈现 CPU | 命令缓冲完成、队列提交与 present 返回，不等待 GPU 完成或屏幕输出 |
-| SWE GPU、SWE GPU／子步 | 真实 GPU 时间戳；包含 SWE、近岸泡沫与中间子步复制，开启浪花时包含全部发射信号 pass；不含 FFT、远海泡沫、粒子更新/绘制和首尾复制 |
-| SWE 模拟推进、子步／帧、求解阶数、GPU 采样数 | GPU 样本对应的实际模拟时长和子步统计；模拟时长不是计算耗时 |
+| Frame Rate, End-to-End Frame Interval | Wall-clock time between starts of adjacent draws, including vertical sync, GPU backpressure, and event-loop waiting; not input-to-screen latency and not subject to the simulation timestep's 0.1-second cap |
+| CPU Frame Processing | From draw entry through submission and present return; includes UI, configuration handling, encoding, and blocking waits, and does not represent GPU completion |
+| Acquire Frame | CPU wait for a swapchain image |
+| UI CPU | egui layout and interaction, excluding UI draw encoding |
+| Simulation CPU | CPU command encoding and parameter uploads for FFT, offshore foam, SWE, and spray sources / particles, not GPU execution time |
+| Render Encoding CPU | Encoding scene and egui drawing commands |
+| Submission and Presentation CPU | Command buffer completion, queue submission, and present return, without waiting for GPU completion or screen output |
+| SWE GPU, SWE GPU / Substep | Real GPU timestamps; includes SWE, nearshore foam, and intermediate substep copies, plus all emission signal passes when spray is enabled; excludes FFT, offshore foam, particle update / draw, and initial and final copies |
+| SWE Simulation Advance, Substeps / Frame, Solver Order, GPU Sample Count | Actual simulated duration and substep statistics corresponding to GPU samples; simulated duration is not compute time |
 
-时间单位为毫秒；具体说明在行名 hover 中。GPU 时间戳异步读取，不为计时阻塞每帧；设备不支持、读取失败、暂停／时间倍率为零／关闭 SWE 和等待新求解器样本均有对应状态。切换阶数或进入空闲时，丢弃当前尚未发布的旧 GPU 样本；表格仍按每秒一次刷新。
+Time is measured in milliseconds; details appear in row-name hover tooltips. GPU timestamps are read asynchronously without blocking every frame for timing; corresponding states are shown for unsupported devices, read failures, pause / zero time speed / SWE disabled, and waiting for samples from a new solver. When switching order or entering idle, unpublished old GPU samples are discarded; the table still refreshes once per second.
 
-## 每帧的数据流
+## Per-Frame Data Flow
 
 ```text
-CPU，初始化一次：
-  A、L、风向、种子 → Phillips 波谱 → 随机复数系数 h0(k)
+CPU, once at initialization:
+  A, L, wind direction, seed → Phillips spectrum → random complex coefficients h0(k)
 
-GPU，每帧：
-  h0(k)、时间 t
+GPU, every frame:
+  h0(k), time t
       ↓ evolve.wgsl
-  高度频谱 H(k,t) 与水平位移频谱 Dx(k,t)、Dz(k,t)
-      ↓ ifft.wgsl，先逐行，再逐列
-  空间中的高度 h(x,z)、水平位移 dx(x,z)、dz(x,z)
-      ↓ foam.wgsl：Jacobian 压缩检测、泡沫生成与消散
-  累积泡沫覆盖 F 和当前 Jacobian J
+  Height spectrum H(k,t) and horizontal displacement spectra Dx(k,t), Dz(k,t)
+      ↓ ifft.wgsl, rows first, then columns
+  Spatial height h(x,z), horizontal displacements dx(x,z), dz(x,z)
+      ↓ foam.wgsl: Jacobian compression detection, foam generation and dissipation
+  Accumulated foam coverage F and current Jacobian J
       ↓ render.wgsl
-  海底 mesh → 线性场景颜色 / 深度预绘制
-  网格顶点位移 → 位移后的差分法线 → 水中光程与解析积分 → Fresnel / 阳光 / 泡沫
-  天空、场景、水面与浪花 → Rgba16Float 完整 HDR 画面
+  Seabed mesh → linear scene color / depth prepass
+  Mesh vertex displacement → displaced finite-difference normals → underwater optical path and analytic integration → Fresnel / sunlight / foam
+  Sky, scene, water surface, and spray → complete Rgba16Float HDR frame
       ↓ post_process.wgsl
-  可选曝光 / Bloom / 色调映射 → SDR sRGB 画面 → GUI
+  Optional exposure / Bloom / tone mapping → SDR sRGB frame → GUI
 ```
 
-### 频谱与时间
+### Spectrum and Time
 
-`src/ocean/simulation/spectral/spectrum.rs` 把数组索引转换为波向量 `k = 2π * frequency / patch_length`。数组采用未移位 FFT 顺序：`0,1,...,N/2-1,-N/2,...,-1`。
+`src/ocean/simulation/spectral/spectrum.rs` converts array indices into wave vectors `k = 2π * frequency / patch_length`. The array uses unshifted FFT order: `0,1,...,N/2-1,-N/2,...,-1`.
 
-Phillips 波谱控制不同波长和方向的能量；高斯随机数给出复数初始系数。初始化使用 `sqrt(P/2) * (ξr+iξi)`，再乘 `N² * Δk`，其中 `Δk=2π/patch_length`：N² 补偿归一化 IFFT，Δk 来自二维频率单元面积的平方根。取消旧版固定 RMS 波高归一化，避免抵消 A 的作用。A、L 均会真实改变海面。保留短波阻尼和逆风方向 0.07 的权重。零频率和 Nyquist 行列设为零。
+The Phillips spectrum controls energy at different wavelengths and directions; Gaussian random numbers provide complex initial coefficients. Initialization uses `sqrt(P/2) * (ξr+iξi)`, then multiplies by `N² * Δk`, where `Δk=2π/patch_length`: N² compensates for the normalized IFFT, and Δk comes from the square root of the two-dimensional frequency cell area. The old fixed RMS wave-height normalization is removed to avoid cancelling the effect of A. Both A and L genuinely change the ocean. Short-wave damping and the 0.07 weight for the upwind direction are retained. Zero frequency and Nyquist rows and columns are set to zero.
 
-`evolve.wgsl` 用深水重力波色散关系 `ω = sqrt(g * |k|)`，计算：
+`evolve.wgsl` uses the deep-water gravity-wave dispersion relation `ω = sqrt(g * |k|)` to compute:
 
 ```text
 H(k,t) = h0(k) * exp(iωt) + conjugate(h0(-k)) * exp(-iωt)
 ```
 
-这保证 `H(-k,t) = conjugate(H(k,t))`，所以逆变换的虚部应该接近零。`exp(iωt)` 表示复平面中的旋转，对应波的相位变化。初始化后不再每帧产生随机噪声，也不从上一帧累计更新波形。
+This guarantees `H(-k,t) = conjugate(H(k,t))`, so the imaginary component of the inverse transform should be close to zero. `exp(iωt)` represents rotation in the complex plane, corresponding to a wave phase change. After initialization, random noise is not generated every frame, and waveforms are not updated cumulatively from the previous frame.
 
-水平位移使用 `D(k,t) = -i * k/|k| * H(k,t)`。在本实现的逆变换符号约定下，渲染使用负的缩放系数 λ = -1.15，让顶点向浪峰聚拢而不是向浪谷聚拢；按 C 可以观察区别。
+Horizontal displacement uses `D(k,t) = -i * k/|k| * H(k,t)`. Under this implementation's inverse-transform sign convention, rendering uses a negative scaling coefficient λ = -1.15, bringing vertices together toward crests rather than troughs; press C to observe the difference.
 
-### GPU 逆 FFT
+### GPU Inverse FFT
 
-`ifft.wgsl` 使用 radix-2 DIT 蝶形：每个轴的第一级通过位反转读取输入，之后逐级把跨度从 2 扩大到 N。逆变换的旋转因子使用正号，每轴最后一级除以 N。
+`ifft.wgsl` uses radix-2 DIT butterflies: the first stage on each axis reads input using bit reversal, and subsequent stages expand the span from 2 to N. The inverse transform's twiddle factor uses a positive sign, and the final stage on each axis divides by N.
 
-`simulation/spectral/mod.rs` 用两个存储缓冲区交替读写。每一级单独提交一个 compute pass，由 wgpu 负责阶段间的资源同步。各级使用独立、不变的参数缓冲区，防止在一次提交前多次写同一个 uniform 导致所有阶段读到最后一组参数。
+`simulation/spectral/mod.rs` alternates reads and writes between two storage buffers. Each stage submits a separate compute pass, with wgpu responsible for resource synchronization between stages. Each stage uses a separate immutable parameter buffer, preventing multiple writes to the same uniform before a single submission from making all stages read the last set of parameters.
 
-128×128 网格每轴 7 级，共 14 个 FFT pass。高度、X/Z 位移和近岸输入的低通水位、X/Z 动量放在同一个缓冲区的六个通道中一起变换。总级数为偶数，最终结果回到初始输出缓冲区，直接供顶点着色器读取，不需要每帧下载到 CPU。
+A 128×128 grid has 7 stages per axis, or 14 FFT passes in total. Height, X/Z displacement, and the low-pass water level and X/Z momentum for nearshore input are transformed together in six channels of the same buffer. The total number of stages is even, so the final result returns to the initial output buffer and can be read directly by the vertex shader without downloading to the CPU every frame.
 
-### 绘制
+### Rendering
 
-网格顶点由 `vertex_index` 生成；索引缓冲区在初始化或 Apply 时创建。顶点位置为 `(x + dx, h, z + dz)`，法线根据位移后的相邻点计算。周期采样使各块接缝的高度、水平位移和法线一致。
+Mesh vertices are generated from `vertex_index`; the index buffer is created at initialization or Apply. Vertex positions are `(x + dx, h, z + dz)`, and normals are calculated from neighboring displaced points. Periodic sampling keeps height, horizontal displacement, and normals consistent at patch seams.
 
-天空使用程序化颜色，水面包含菲涅耳反射、微表面 BRDF 太阳高光和水体光学；不使用距离雾。白沫来自位移 Jacobian 及独立历史场，带周期程序化细节和远处细节过滤。它是视觉白浪模型，不是独立泡沫粒子或海流输运模型。
+The sky uses procedural colors; the water includes Fresnel reflection, microfacet BRDF sun highlights, and water optics, without distance fog. White foam comes from the displacement Jacobian and a separate history field, with periodic procedural detail and distant detail filtering. It is a visual whitecap model, not an independent foam particle or ocean-current transport model.
 
-## HDR 与 Bloom 后处理
+## HDR and Bloom Post-Processing
 
-入口：**着色 → 水体与天空 → HDR 与 Bloom → 启用 HDR 后处理**。总开关默认关闭；开启后有独立的 **AgX 色调映射** 和 **启用 Bloom** 开关。修改实时生效，不重置 FFT、SWE、泡沫或相机，沿用手动保存规则。旧配置缺少 `optics.post_process` 时总开关仍关闭；缺少新增的 `tonemapping_enabled`／`bloom_enabled` 时两项默认 true，保留既有曝光和泛光参数。旧配置原本启用后处理时自动使用修正后的 AgX，不再使用简化 ACES 曲线。
+Entry: **Shading → Water and Sky → HDR and Bloom → Enable HDR Post-Processing**. The master toggle is off by default; when enabled, separate **AgX Tone Mapping** and **Enable Bloom** toggles are available. Changes apply live without resetting FFT, SWE, foam, or camera, and follow the manual save rules. Old configurations lacking `optics.post_process` keep the master toggle off; when the new `tonemapping_enabled` / `bloom_enabled` fields are missing, both default to true while retaining existing exposure and bloom parameters. Old configurations that already enabled post-processing automatically use corrected AgX instead of the simplified ACES curve.
 
-场景光照在线性空间计算，窗口、快照和离屏剖析将天空、海底、模型、水面及浪花统一绘制到 `Rgba16Float`，保留大于 1 的高光。后处理先应用曝光；启用 Bloom 时提取高光，用最多六层降采样／帐篷滤波上采样扩散，再在线性空间合成；启用 AgX 时将结果映射为显示线性 RGB，最后由 sRGB 目标编码一次。输出仍是 **SDR**，不代表 HDR10／HDR 显示器或广色域输出；PNG 快照仍是 8 位。
+Scene lighting is calculated in linear space. Windows, snapshots, and offscreen profiling render sky, seabed, models, water, and spray together into `Rgba16Float`, retaining highlights greater than 1. Post-processing first applies exposure; when Bloom is enabled it extracts highlights, spreads them through up to six levels of downsampling / tent-filter upsampling, and composites in linear space. When AgX is enabled, it maps the result to display-linear RGB; finally the sRGB target encodes it once. Output remains **SDR**, not HDR10 / HDR display or wide-gamut output; PNG snapshots remain 8-bit.
 
-AgX 使用 [Godot 4.6 的 AgX/allenwp 近似](https://github.com/godotengine/godot/blob/4.6/servers/rendering/renderer_rd/shaders/effects/tonemap.glsl)：输入／输出颜色矩阵结合明暗分段曲线，保留 0.18 中灰，压缩高光并使极亮的有色光趋向白色，不对海水或特定颜色加补偿。固定采用其通用默认对比度 1.25、白点 16.29；不是完整 Blender OCIO 变换，不提供额外艺术调色。实现及 MIT 署名保存在 [`agx.wgsl`](../../src/ocean/render/shaders/agx.wgsl)，无运行时外部资源或 LUT。
+AgX uses [Godot 4.6's AgX/allenwp approximation](https://github.com/godotengine/godot/blob/4.6/servers/rendering/renderer_rd/shaders/effects/tonemap.glsl): input / output color matrices combined with a piecewise lightness curve preserve 0.18 middle gray, compress highlights, and shift extremely bright colored light toward white without compensating for seawater or specific colors. Its general default contrast 1.25 and white point 16.29 are fixed; this is not the full Blender OCIO transform and provides no additional artistic grading. The implementation and MIT attribution are in [`agx.wgsl`](../../src/ocean/render/shaders/agx.wgsl), with no runtime external resources or LUT.
 
-| 参数 | 含义与范围 | 默认值 |
+| Parameter | Meaning and range | Default |
 | --- | --- | --- |
-| AgX 色调映射 | 开关；独立于 Bloom，关闭时不压缩高光 | 开启（受总开关约束） |
-| 曝光补偿（档） | -8～8；每增加一档，提取高光和映射前的线性亮度翻倍；AgX／Bloom 均关闭时仍生效 | 0 |
-| 启用 Bloom | 开关；关闭时隐藏并保留泛光参数，跳过泛光计算 | 开启（受总开关约束） |
-| Bloom 强度 | 0～2，无量纲；0 也跳过泛光计算，不改变曝光与 AgX 开关 | 0.1 |
-| 高光阈值（线性） | 0～20，按曝光后的 RGB 最大分量提取，不是 sRGB 值 | 1 |
-| 阈值柔和度 | 0～1，过渡半宽占阈值的比例；0 为硬阈值 | 0.5 |
-| 泛光半径 | 0.5～2，单位为各层纹理像素，不是米；随画面分辨率变化 | 1 |
+| AgX Tone Mapping | Toggle, independent of Bloom; disabling it does not compress highlights | On (subject to master toggle) |
+| Exposure Compensation (stops) | -8–8; each additional stop doubles linear brightness before highlight extraction and mapping; still applies when both AgX / Bloom are off | 0 |
+| Enable Bloom | Toggle; disabling hides and retains bloom parameters and skips bloom computation | On (subject to master toggle) |
+| Bloom Strength | 0–2, dimensionless; 0 also skips bloom computation without changing exposure or the AgX toggle | 0.1 |
+| Highlight Threshold (linear) | 0–20, extracted according to the maximum RGB component after exposure, not an sRGB value | 1 |
+| Threshold Softness | 0–1, transition half-width as a proportion of the threshold; 0 is a hard threshold | 0.5 |
+| Bloom Radius | 0.5–2, measured in texture pixels at each level, not meters; varies with image resolution | 1 |
 
-所有场景的强高光都可产生泛光；阈值过低会使白沫和大片天空也泛光。关闭后处理总开关时直接输出原线性颜色，不应用曝光、Bloom 或 AgX。总开关启用时，可仅用曝光、仅加 Bloom、仅用 AgX，或联合使用；关闭 AgX 后超出 SDR 范围的值会截断，不因启用 Bloom 自动开启映射。AgX 会改变亮部和整体明暗，但不以全局饱和度补偿来掩盖曲线偏色；比较时固定曝光与场景，只切换对应开关。
+Strong highlights in every scene can produce bloom; too low a threshold also causes white foam and large areas of sky to bloom. When the post-processing master toggle is off, the original linear color is output directly, without exposure, Bloom, or AgX. When enabled, exposure alone, Bloom alone in addition to exposure, AgX alone, or both can be used; with AgX off, values outside the SDR range are clipped, and enabling Bloom does not automatically enable mapping. AgX changes highlights and overall brightness but does not use global saturation compensation to hide curve color shifts; fix exposure and scene when comparing, and toggle only the relevant switch.
 
-水体、近岸、泡沫材质、远海泡沫与浪花源调试模式自动跳过曝光、Bloom 和色调映射，避免更改数值色标。GUI 在后处理之后绘制，不产生泛光。窗口尺寸变化会重建 HDR 与泛光目标；正常帧没有同步 GPU 回读。离屏剖析的 `hdr_bloom_composite` GPU 时间包含后处理（关闭时仍有最终颜色输出 pass）。
+Water, nearshore, foam material, offshore foam, and spray source debug modes automatically bypass exposure, Bloom, and tone mapping to avoid changing numeric color scales. The GUI is drawn after post-processing and does not bloom. Window size changes rebuild HDR and bloom targets; normal frames do not synchronously read back the GPU. The `hdr_bloom_composite` GPU time in offscreen profiling includes post-processing (even when disabled, there is a final color output pass).
 
-`--verify-optics` 与完整 `--verify` 检查实际 GPU 的通用颜色参考、灰阶单调／中性、0.18 中灰、RGB／CMY 极亮去饱和、-8／0／+8 档曝光和 sRGB 编码一次；同时覆盖 HDR 高光保留、Bloom 扩散／阈值／能量、两项独立开关、调试旁路、开关历史，以及奇数／单像素／长条目标的尺寸重建。物理光学验证仍使用未经色调映射的线性浮点输出。
+`--verify-optics` and the full `--verify` check actual GPU generic color references, grayscale monotonicity / neutrality, 0.18 middle gray, RGB / CMY extreme-brightness desaturation, -8 / 0 / +8 stop exposure, and single sRGB encoding; they also cover HDR highlight preservation, Bloom spread / threshold / energy, the two independent toggles, debug bypass, toggle history, and size rebuilding for odd / single-pixel / elongated targets. Physical optics verification still uses linear floating-point output without tone mapping.
 
-## 沙地纹理
+## Sand Texture
 
-沙滩场景的岸上沙地与水下海床共用 ambientCG **Ground061** 2K 材质（CC0），资源及来源说明位于 `assets/sand/Ground061/`，编译时内嵌，无需访问下载目录。
+The beach scene's shore sand and underwater seabed share the ambientCG **Ground061** 2K material (CC0). Assets and source information are in `assets/sand/Ground061/`, embedded at compile time without requiring access to the download directory.
 
-颜色贴图按 sRGB 解码；OpenGL 法线、粗糙度和环境遮蔽（AO）按线性数据读取。初始化时生成完整 mip 链，使用重复、三线性与各向异性过滤。沙地和导入模型的颜色贴图仅在 CPU 解码 JPEG 并上传原始层，后续 mip 由 GPU 在线性空间逐级平均、写回 sRGB；数据贴图仍使用原有 CPU 过滤。沙滩参数组中的 **沙地纹理尺寸（米）** 控制每块纹理沿沙坡和沿岸覆盖的长度，范围 0.25～128 米，默认 4 米；数值越大，沙纹越大、重复越少，可先尝试 16～32 米。修改实时生效、不重置模拟，并随当前状态及命名配置保存；旧配置缺少此字段时仍使用 4 米。这是视觉尺度设定，素材未提供实测尺寸。法线仅改变光照，不改变海床几何或 SWE 床面。
+The color map is decoded as sRGB; the OpenGL normal, roughness, and ambient occlusion (AO) maps are read as linear data. A complete mip chain is generated at initialization, using repeat, trilinear, and anisotropic filtering. Color maps for sand and imported models are JPEG-decoded only on the CPU and uploaded as the base level; subsequent mips are averaged level by level on the GPU in linear space and written back to sRGB. Data maps retain the existing CPU filtering. **Sand Texture Size (m)** in the beach parameter group controls the length covered by each texture tile along the sand slope and shoreline, ranging from 0.25–128 meters, default 4 meters. Larger values produce larger sand patterns and less repetition; try 16–32 meters first. Changes apply live without resetting the simulation and are saved with the current state and named configurations; old configurations missing the field still use 4 meters. This is a visual scale setting; the asset provides no measured dimensions. Normals change lighting only, not seabed geometry or the SWE bed.
 
-同组的 **沙地纹理旋转（度）** 范围为 -180～180 度，默认 0 度；绕世界原点的沙坡平面坐标旋转，正角将纹理横轴从坡向 +X 转向沿岸 +Z。颜色、法线、粗糙度及 AO 同步旋转，法线光照方向随之调整。实时生效、不重置模拟，并随配置保存；旧配置默认不旋转。
+**Sand Texture Rotation (deg)** in the same group ranges from -180–180 degrees, default 0 degrees. It rotates sand-slope plane coordinates around the world origin; a positive angle turns the texture's horizontal axis from downslope +X toward alongshore +Z. Color, normal, roughness, and AO rotate together, and normal lighting direction adjusts accordingly. It applies live without resetting and is saved with configurations; old configurations default to no rotation.
 
-湿润历史仍控制沙地变暗，并降低材质粗糙度；AO 仅影响环境光部分。保留残留泡沫及湿润、密度调试视图，非沙滩场景仍使用光学检查棋盘格。当前高光仍为简化光照模型，并非完整 PBR；未接入位移贴图。
+Wetness history still controls sand darkening and reduces material roughness; AO affects only ambient light. Residual foam and wetness / density debug views remain available, and non-beach scenes still use the optical inspection checkerboard. Current highlights remain a simplified lighting model rather than full PBR; displacement maps are not used.
 
-## 验证和导出
+## Verification and Export
 
 ```powershell
 cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 
-# 无窗口运行真实 GPU 计算，和独立 f64 直接傅里叶求和逐点比较。
+# Run real GPU computation without a window and compare point by point with independent f64 direct Fourier summation.
 cargo run --features ocean --bin ocean -- --verify
 
-# 使用同一套 GPU 计算和绘制管线导出图片；目标文件必须不存在。
+# Export an image using the same GPU computation and rendering pipelines; the destination must not exist.
 cargo run --release --features ocean --bin ocean -- --snapshot ocean.png --time 3
 
-# 打开真实窗口，成功呈现 120 帧后自动退出，便于启动检查。
+# Open a real window and exit automatically after successfully presenting 120 frames, for startup checks.
 cargo run --features ocean --bin ocean -- --frames 120
 ```
 
-CPU 测试检查随机种子复现、有限数值、零频率、Nyquist 处理、A 的平方根振幅缩放、A=0 的平面、网格密度不影响频谱，以及共轭谱得到实数输出和时间变化。`--verify` 在 8×8 和 16×16 网格的三个时刻，比较高度、两个水平位移以及三个近岸输入通道的全部实部、虚部；同时检查零均值和波形是否随时间变化。普通测试不强制要求 GPU；GPU 验证通过独立命令明确运行。
+CPU tests check random-seed reproducibility, finite values, zero frequency, Nyquist handling, square-root amplitude scaling with A, a flat surface at A=0, mesh density not affecting the spectrum, and real output and time variation from the conjugate spectrum. `--verify` compares all real and imaginary components of height, two horizontal displacements, and three nearshore input channels at three times on 8×8 and 16×16 grids; it also checks zero mean and whether waveforms vary over time. Ordinary tests do not require a GPU; GPU verification is explicitly run via a separate command.
 
-## 文件
+## Files
 
 ```text
-src/bin/ocean.rs                         参数与入口
-src/ocean/camera.rs                      窗口与离屏共用的相机及 GPU 布局
-src/ocean/app/{viewer,snapshot}.rs       窗口调度与离屏 PNG，保留各自调度
-src/ocean/gpu/{context,timer}.rs         设备、回读与异步 GPU 时间戳
-src/ocean/parameters/                    参数定义、默认值与校验
-src/ocean/simulation/offshore/           波谱、FFT、远海泡沫及验证
-src/ocean/simulation/nearshore/          SWE、近岸泡沫、湿润历史及验证
-src/ocean/simulation/spray/              浪花源、粒子及验证
-src/ocean/scene/                         模型几何、地形与碰撞体
-src/ocean/render/                        场景绘制、水体与天空光学、纹理
-src/ocean/ui/                            Dock、参数面板、控件与布局保存
-src/ocean/settings/                      当前会话、命名配置库与保存
-src/ocean/labs/foam_weight_lab/          独立泡沫权重实验
-src/ocean/verify.rs                      真实 GPU 验证总入口
+src/bin/ocean.rs                         Parameters and entry point
+src/ocean/camera.rs                      Camera and GPU layout shared by windowed and offscreen modes
+src/ocean/app/{viewer,snapshot}.rs       Window scheduling and offscreen PNG, retaining separate scheduling
+src/ocean/gpu/{context,timer}.rs         Device, readback, and asynchronous GPU timestamps
+src/ocean/parameters/                    Parameter definitions, defaults, and validation
+src/ocean/simulation/offshore/           Spectrum, FFT, offshore foam, and verification
+src/ocean/simulation/nearshore/          SWE, nearshore foam, wetness history, and verification
+src/ocean/simulation/spray/              Spray sources, particles, and verification
+src/ocean/scene/                         Model geometry, terrain, and colliders
+src/ocean/render/                        Scene rendering, water and sky optics, textures
+src/ocean/ui/                            Dock, parameter panels, controls, and layout saving
+src/ocean/settings/                      Current session, named configuration library, and saving
+src/ocean/labs/foam_weight_lab/          Independent foam weight experiment
+src/ocean/verify.rs                      Main real GPU verification entry point
 ```
 
-各领域 WGSL 位于所属模块的 `shaders/`；跨模块使用同一份源文件，不复制。`ocean/mod.rs` 保留 `ocean::shore`、`ocean::viewer` 等旧公开路径，`gpu/mod.rs` 保留 `gpu::{Gpu, Ocean, Renderer, CameraUniform, Error}`，均为重导出而非另一套实现。
+Each domain's WGSL is in its owning module's `shaders/`; cross-module use references the same source file rather than copying it. `ocean/mod.rs` retains old public paths such as `ocean::shore` and `ocean::viewer`, and `gpu/mod.rs` retains `gpu::{Gpu, Ocean, Renderer, CameraUniform, Error}`; all are re-exports, not separate implementations.
 
-基础 FFT 生成周期海面，本身不求解岸边碰撞。沙滩和扫描模型场景叠加局部二维 SWE、泡沫输运及湿润历史，详见相关章节；耦合方向为 FFT → SWE。仍不包含真实翻卷或三维空气卷入，水平位移过大使网格折叠并不等于物理破浪。
+The basic FFT generates a periodic ocean and does not itself solve shoreline collisions. Beach and scanned-model scenes overlay local two-dimensional SWE, foam transport, and wetness history; see the relevant sections. Coupling is FFT → SWE. Real curling waves and three-dimensional air entrainment are still not included; mesh folding caused by excessive horizontal displacement is not physical wave breaking.
 
-公式参考：[Jerry Tessendorf, Simulating Ocean Water，§3.2–3.4、3.7](https://jtessen.people.clemson.edu/reports/papers_files/coursenotes2002.pdf)。图形接口：[wgpu](https://docs.rs/wgpu/27.0.1/wgpu/)、[winit ApplicationHandler](https://docs.rs/winit/0.30.13/winit/application/trait.ApplicationHandler.html)。
+Formula reference: [Jerry Tessendorf, Simulating Ocean Water, §3.2–3.4, 3.7](https://jtessen.people.clemson.edu/reports/papers_files/coursenotes2002.pdf). Graphics interfaces: [wgpu](https://docs.rs/wgpu/27.0.1/wgpu/), [winit ApplicationHandler](https://docs.rs/winit/0.30.13/winit/application/trait.ApplicationHandler.html).
 
 
-GUI 使用 [egui-wgpu 0.33.3](https://docs.rs/egui-wgpu/0.33.3/egui_wgpu/)，与 wgpu 27 配套。
+The GUI uses [egui-wgpu 0.33.3](https://docs.rs/egui-wgpu/0.33.3/egui_wgpu/), paired with wgpu 27.
+## Jacobian Foam: Research and Implementation
 
-## Jacobian 泡沫：调研与实现
+Uses **central differences after IFFT + compression-triggered generation + coverage with memory**.
 
-采用 **IFFT 后中心差分 + 压缩触发 + 有记忆的覆盖率**。
+References:
+- [Crest's UpdateFoam.compute](https://github.com/wave-harmonic/crest/blob/master/crest/Assets/Crest/Crest/Shaders/Resources/UpdateFoam.compute): computes a determinant from horizontal displacement, generates foam in compressed regions, and decays its history; it also has separate flow transport.
+- [Crest foam parameter documentation](https://crest.readthedocs.io/en/4.15.1/user/ocean-simulation.html#foam): generation intensity, coverage threshold, and dissipation rate are controlled separately.
+- [Aalto ocean rendering paper, section 3.8](https://aaltodoc.aalto.fi/bitstreams/805df4ad-f08a-40cc-a9bd-3d25947da66d/download): presents the Tessendorf displacement Jacobian and frequency-domain derivative formulas.
 
-参考资料：
-- [Crest 的 UpdateFoam.compute](https://github.com/wave-harmonic/crest/blob/master/crest/Assets/Crest/Crest/Shaders/Resources/UpdateFoam.compute)：从水平位移计算行列式，在压缩区域生成泡沫，并对历史衰减；也有独立 flow 输运。
-- [Crest 泡沫参数说明](https://crest.readthedocs.io/en/4.15.1/user/ocean-simulation.html#foam)：生成强度、覆盖阈值、消散速度分开控制。
-- [Aalto 海洋渲染论文，第 3.8 节](https://aaltodoc.aalto.fi/bitstreams/805df4ad-f08a-40cc-a9bd-3d25947da66d/download)：整理 Tessendorf 位移 Jacobian 和频域导数公式。
+### Why spatial differences
 
-### 为什么选空间差分
+Multiplying by `ik` in the frequency domain and then applying IFFT yields derivatives, but requires additional derivative channels and FFT work. Dx and Dz are already available, so a single O(N²) compute pass can approximate the derivatives and is easy to verify independently. The difference step is `patch_length / FFT_resolution`, independent of mesh density; changing FFT resolution changes the resolved short waves and derivative accuracy, so visual thresholds may need readjustment.
 
-频域中乘 `ik` 再 IFFT 可以得到导数，但需要增加导数通道及 FFT 工作量。当前已经有 Dx、Dz，使用一个 O(N²) compute pass 即可近似求导，易于独立验证。差分步长用 `patch_length / FFT_resolution`，与 mesh 密度无关；更改 FFT 分辨率会改变解析到的短波及导数精度，因此视觉阈值可能需要重新调整。
-
-令实际水平位移 `d = lambda * gain * D`。lambda 使用渲染中的负号（默认 -1.15），不可取绝对值，也不能漏掉 波高增益。
+Let the actual horizontal displacement be `d = lambda * gain * D`. Lambda uses the negative sign from rendering (default -1.15); do not take its absolute value or omit the wave height gain.
 
 ```text
 J = (1 + ∂dx/∂x) * (1 + ∂dz/∂z) - (∂dx/∂z) * (∂dz/∂x)
 ```
 
-所有导数在周期边界上取中心差分。分别计算两个交叉导数，避免把离散差分下不一定相等的量误写成同一个平方。
+All derivatives use central differences at periodic boundaries. Compute the two cross derivatives separately to avoid incorrectly writing quantities that are not necessarily equal under discrete differencing as a single square.
 
-J=1 表示水平面积不变；0<J<1 表示压缩；J 接近 0 表示局部水平映射接近奇异；J<0 表示局部方向翻转。J 是水平映射的有符号面积比，不是三维水面面积，也不是严格的破浪判据。使用 `threshold > 0` 可在几何翻折前产生白沫。
+J=1 means horizontal area is unchanged; 0<J<1 means compression; J near 0 means the local horizontal mapping is nearly singular; J<0 means local orientation is reversed. J is the signed area ratio of the horizontal mapping, not the three-dimensional water surface area or a strict wave-breaking criterion. Using `threshold > 0` allows white foam to appear before geometric folding.
 
-### 历史更新
+### History update
 
-覆盖率 F 在 0～1 之间，定义：
+Coverage F is between 0 and 1, defined as:
 
 ```text
 s = generation * clamp(threshold - J, 0, 1)
@@ -429,27 +428,27 @@ r = s + decay
 F_new = s/r + (F_old - s/r) * exp(-r*dt)
 ```
 
-r=0 或 dt=0 时保留原值。上式是本项目选择的有界源项模型，对每步冻结的 J 精确积分；对固定源而言 30/60/120 FPS 的结果一致。运动波形仍有时间采样误差，并不声称任意帧率下整个动态结果完全相同。
+When r=0 or dt=0, the previous value is retained. The equation above is the bounded source model chosen for this project, integrated exactly for J frozen during each step; for a fixed source, results agree at 30/60/120 FPS. Moving waveforms still have temporal sampling error; this does not claim that the entire dynamic result is identical at arbitrary frame rates.
 
-历史存于未位移海面的周期参数坐标，随 mesh 位移；不是世界空间海流输运。每个线程只读写自己的 F，因此无需 ping-pong。增加邻域输运、扩散时必须改成双缓冲。每个 FFT 像素保存 `(F,J)`，新增内存为 `8*N²` 字节（128² 时 128 KiB，512² 时 2 MiB），每帧额外一个 compute pass。
+History is stored in periodic parameter coordinates on the undisplaced surface and moves with the mesh; it is not world-space ocean-current transport. Each thread reads and writes only its own F, so ping-pong is unnecessary. Adding neighborhood transport or diffusion requires double buffering. Each FFT pixel stores `(F,J)`, adding `8*N²` bytes of memory (128 KiB at 128², 2 MiB at 512²) and one extra compute pass per frame.
 
-### 面板和生命周期
+### Panel and lifecycle
 
-独立的 **Jacobian foam** 面板直接显示在海洋参数面板右侧，所有泡沫控件即时生效，无需 Apply。
+The independent **Jacobian foam** panel appears directly to the right of the ocean parameter panel. All foam controls apply immediately without Apply.
 
-- **Chop strength**：实际水平位移强度，也会影响 J。
-- **Show foam / F 键**：只控制显示；历史继续演化。
-- **J threshold**：默认 0.65，越大越容易产生泡沫；最大 1，平面不会自己产生泡沫。
-- **Generation / s**：默认 4，增加生成速度；设为 0 可单独观察旧泡沫衰减。
-- **Decay / s**：默认 0.6，越大消失越快；设为 0 会保留历史。
-- **Foam view**：正常着色、Jacobian（红：负值，橙：压缩，白：1，蓝：拉伸）、Coverage（黑白 F）。
-- **Clear foam history**：清空历史，暂停时也有效。
+- **Chop strength**: actual horizontal displacement strength; also affects J.
+- **Show foam / F key**: controls display only; history continues to evolve.
+- **J threshold**: default 0.65; higher values make foam easier to generate. The maximum is 1, so a flat surface does not generate foam on its own.
+- **Generation / s**: default 4; increases generation speed. Set to 0 to observe old foam decay independently.
+- **Decay / s**: default 0.6; higher values make foam disappear faster. Set to 0 to retain history.
+- **Foam view**: normal shading, Jacobian (red: negative, orange: compression, white: 1, blue: stretching), Coverage (black-and-white F).
+- **Clear foam history**: clears history, including while paused.
 
-暂停或 Time speed=0 时不增长也不衰减；时间重置、R 重置和 Apply 重建时清空历史。关闭 choppiness 或把 gain 设为 0 后 J=1，不生成新泡沫，已有泡沫继续衰减。无雾渲染保持不变。
+When paused or Time speed=0, foam neither grows nor decays; resetting time, resetting with R, and rebuilding with Apply clear history. After disabling choppiness or setting gain to 0, J=1 and no new foam is generated, while existing foam continues to decay. Fog-free rendering remains unchanged.
 
-### 验证与导出
+### Verification and export
 
-`cargo test --all-features` 包含平面 J=1、无源衰减、暂停、清空、交叉导数、位移倍率为零、固定源下帧率一致性测试。`--verify` 额外运行真实 GPU 泡沫着色器，与 f64 CPU 参考逐点比较 F、J，涵盖周期接缝及历史更新。
+`cargo test --all-features` includes tests for a flat surface with J=1, sourceless decay, pause, clearing, cross derivatives, zero displacement scale, and frame-rate consistency with a fixed source. `--verify` additionally runs the real GPU foam shader and compares F and J point by point against an f64 CPU reference, covering periodic seams and history updates.
 
 ```powershell
 cargo run --features ocean --bin ocean -- --snapshot foam.png --time 3
@@ -457,13 +456,13 @@ cargo run --features ocean --bin ocean -- --snapshot jacobian.png --time 3 --foa
 cargo run --features ocean --bin ocean -- --snapshot coverage.png --time 3 --foam-view 2
 ```
 
-离屏导出按 60 Hz 预演历史，最多预演目标时间前 8 秒（长时间导出是有限预热近似）；t=0 时初始覆盖为零。输出日志包含 J 最小值、F 最大值及 F>0.02 的网格占比，方便与反射高光区分。
+Offscreen export prewarms history at 60 Hz for up to 8 seconds before the target time (long-time exports use a finite warm-up approximation); initial coverage is zero at t=0. The output log includes minimum J, maximum F, and the proportion of grid points with F>0.02, making it easier to distinguish foam from reflection highlights.
 
-## 水下地面与解析水体积分
+## Underwater Ground and Analytic Water-Medium Integration
 
-新增真实海底平面 mesh（两个三角形），默认位于平均海面以下 6 米。棋盘格用于观察远近变化，可切换 RGB 色带观察通道衰减。海底使用简化光照，场景先绘制到 `Rgba16Float` 线性颜色纹理和可采样的 `Depth32Float` 纹理；主 pass 再绘制天空、海底与水面。海底仅有几何与着色，不改变 FFT 波浪模拟。
+A real seabed plane mesh (two triangles) has been added, by default 6 meters below mean sea level. A checkerboard helps observe changes with distance; RGB color bands can be enabled to observe channel attenuation. The seabed uses simplified lighting. The scene is first drawn to an `Rgba16Float` linear color texture and a sampleable `Depth32Float` texture; the main pass then draws the sky, seabed, and water surface. The seabed has geometry and shading only and does not alter the FFT wave simulation.
 
-水面使用同一个屏幕像素处的海底深度，经逆视投影矩阵重建世界位置，计算 `d=length(Pbottom-Psurface)`。因此使用的是水中直线光程（米），不是相机到海面的距离、垂直水深或原始深度缓冲差。WebGPU 的 NDC 深度按 0～1 重建，纹理 Y 与 NDC Y 的方向已转换。默认关闭折射；启用“水底折射”后，在平底／沙坡上改为沿波面法线计算折射方向和解析水底交点，命中有效屏幕场景颜色时使用折射光程，失败时保留上述直线光程。详见下文“水底焦散与折射”。
+The water surface uses seabed depth at the same screen pixel, reconstructs the world position with the inverse view-projection matrix, and computes `d=length(Pbottom-Psurface)`. Thus the water path is a straight-line distance in meters, not camera-to-surface distance, vertical water depth, or a raw depth-buffer difference. WebGPU NDC depth is reconstructed over 0–1, with texture Y and NDC Y directions converted. Refraction is disabled by default; when **Seabed refraction** is enabled, a flat seabed or sand slope instead uses the wave-surface normal to calculate the refracted direction and analytic seabed intersection. A valid screen-scene color hit uses the refracted path length; otherwise the straight-line path above is retained. See “Seabed caustics and refraction” below.
 
 ```text
 T_rgb = exp(-sigma_t_rgb * d)
@@ -474,56 +473,56 @@ medium_rgb = background_rgb + scattering_rgb
 water_rgb = (1-Fresnel)*medium_rgb + Fresnel*reflection_rgb
 ```
 
-太阳高光使用介电 Cook–Torrance BRDF。各向同性 GGX 描述波面法线未解析的微小起伏，固定使用无量纲感知粗糙度 0.28；带高度相关性的 Smith 项计算微表面对光线和视线的遮蔽。环境反射与直射高光共用基于水折射率的 Schlick 菲涅耳，折射模式关闭时也生效；折射率为 1 时界面反射和高光都为零。天空与 SSR 使用镜面方向采样，天空光晕参与环境反射，太阳盘的水面贡献走 BRDF。水下背景继续使用下文的光程模型。
+Sun highlights use a dielectric Cook–Torrance BRDF. Isotropic GGX describes unresolved small variations in the wave-surface normal, using a fixed dimensionless perceptual roughness of 0.28; a height-correlated Smith term computes microfacet masking and shadowing for light and view directions. Environment reflection and direct highlights share Schlick Fresnel based on the water refractive index, including when refraction mode is off; at refractive index 1 both interface reflection and highlights are zero. Sky and SSR are sampled in the specular direction, the sky halo contributes to environment reflection, and the solar disk's contribution to the water surface goes through the BRDF. The underwater background continues to use the path-length model below.
 
-太阳高光加到介质与环境反射的合成结果上，最后再混合泡沫。计算在线性 RGB 中进行，最后由 sRGB 输出目标编码。不要对指数计算的输入做 gamma 编码；调试图中的 sRGB 显示数值也不等于线性数值。光程视图以米为尺度映射为灰度。
+Sun highlights are added to the combined medium and environment reflection, followed by foam blending. Calculations are in linear RGB, then encoded by the sRGB output target. Do not gamma-encode inputs to the exponential calculation; sRGB display values in debug images are not linear values either. The path view maps distances in meters to grayscale.
 
-sigma_t 是消光系数（吸收+出散射），单位 1/m；S 是沿观察方向每米增加的入散射辐亮度，不是 sigma_s。手动 S 是可直接调整、沿光路恒定的近似源项；新增天光源项由天空、散射反照率和深度求解，详见后文。太阳入散射尚未接入。海底 Lbg 使用简单环境光与方向光，不包含太阳到海底的水中入射路径衰减。该模型适合逐项观察公式，不等于完整的多次散射求解。
+sigma_t is the extinction coefficient (absorption + out-scattering), in 1/m; S is in-scattered radiance added per meter along the viewing direction, not sigma_s. Manual S is a directly adjustable approximate source term constant along the path; the added skylight source is solved from the sky, scattering albedo, and depth, as described below. Solar in-scattering is not yet connected. Seabed Lbg uses simple ambient and directional lighting and does not include attenuation along the underwater incident path from the sun to the seabed. This model is suitable for observing individual formula terms, not a complete multiple-scattering solution.
 
-`optics.wgsl` 在小光学厚度 tau=sigma_t*d 时使用泰勒展开，避免除零和 `1-exp(-tau)` 的消减误差。sigma_t=0 时严格使用权重 d，输出趋于 `Lbg+S*d`；d=0 时为 Lbg。RGB 每个通道独立处理。场景颜色和采样深度与主 pass 的写入目标分离，避免纹理反馈；resize 会同时重建场景目标、主深度以及对应绑定。
+`optics.wgsl` uses a Taylor expansion at small optical thickness tau=sigma_t*d to avoid division by zero and cancellation error in `1-exp(-tau)`. At sigma_t=0 it uses the exact weight d, and output approaches `Lbg+S*d`; at d=0 it is Lbg. Each RGB channel is handled independently. Scene color and sampled depth are separate from the main pass write targets to avoid texture feedback; resize rebuilds the scene targets, main depth, and associated bindings together.
 
-### Water optics 面板
+### Water optics panel
 
-控件即时生效，无需 Apply，不会重建海浪频谱或清空泡沫历史。
+Controls apply immediately without Apply, and do not rebuild the wave spectrum or clear foam history.
 
-| 控件 | 含义 |
+| Control | Meaning |
 | --- | --- |
-| Seabed depth (m) | 海底相对平均水位的深度，默认 6 米 |
-| Extinction sigma_t R/G/B | RGB 消光系数，默认 (0.18, 0.06, 0.025) 1/m |
-| Manual source S（颜色 + 强度） | RGB 恒定入散射源项，默认 (0.0025, 0.009, 0.006) 辐亮度/米 |
-| Water view | 下表所列调试输出 |
-| Path view white at (m) | 光程灰度图达到白色时对应的距离，默认 50 米 |
-| Sky reflection and highlights | 显示/隐藏天空反射和高光，便于单独观察海底 |
-| 屏幕空间反射（SSR） | 在着色分类的独立 SSR Tab 内开启。默认关闭，实时生效。需要开启「天空反射与高光」 |
-| 反射距离（米） | SSR 最大追踪距离，范围 1～500 米，默认 100 米 |
-| SSR 强度 | 有效命中与天空反射的混合权重，0～1，默认 1。0 时停止 SSR 追踪 |
-| SSR 追踪步数 | 每条射线最多访问的 Hi-Z 分块数，16～256，默认 128。降低可限制开销，也可能漏掉倒影 |
-| SSR 命中容差 | 相对像素覆盖范围的容差倍率，0.25～4，默认 1。过小可能漏检，过大可能误命中 |
-| SSR 边缘淡出（像素） | 靠近画面边缘时淡出到天空的宽度，0～128 渲染像素，默认 4。0 关闭淡出 |
-| Seabed RGB test bands | 在棋盘格上显示 R/G/B 测试色带 |
-| Checker size (m) | 每个棋盘格的世界尺寸 |
-| Reset optics | 恢复上述默认值 |
+| Seabed depth (m) | Seabed depth relative to mean water level, default 6 meters |
+| Extinction sigma_t R/G/B | RGB extinction coefficients, default (0.18, 0.06, 0.025) 1/m |
+| Manual source S (color + intensity) | Constant RGB in-scattering source, default (0.0025, 0.009, 0.006) radiance/meter |
+| Water view | Debug outputs listed in the table below |
+| Path view white at (m) | Distance corresponding to white in the path-length grayscale view, default 50 meters |
+| Sky reflection and highlights | Show/hide sky reflection and highlights to inspect the seabed independently |
+| Screen-space reflection (SSR) | Enabled in the independent SSR Tab under Shading. Off by default; applies live. Requires Sky reflection and highlights |
+| Reflection distance (m) | Maximum SSR tracing distance, range 1–500 meters, default 100 meters |
+| SSR intensity | Blend weight between valid hits and sky reflection, 0–1, default 1. At 0, SSR tracing stops |
+| SSR trace steps | Maximum Hi-Z tiles visited per ray, 16–256, default 128. Lower values can limit cost but may miss reflections |
+| SSR hit tolerance | Tolerance multiplier relative to pixel footprint, 0.25–4, default 1. Too small may miss hits; too large may cause false hits |
+| SSR edge fade (pixels) | Fade width to sky near screen edges, 0–128 render pixels, default 4. 0 disables fading |
+| Seabed RGB test bands | Show R/G/B test bands on the checkerboard |
+| Checker size (m) | World size of each checker |
+| Reset optics | Restore the defaults above |
 
-SSR 沿波面反射方向查找相机可见的不透明物体，例如露出水面的礁石和沙坡。未命中时使用天空反射，接近屏幕边缘或距离上限时渐隐。SSR 和模型物理折射同时开启时，共用一张场景深度金字塔。屏幕外或被其他物体遮住的岩面无法从相机深度中恢复。
+SSR searches along the wave-surface reflection direction for camera-visible opaque objects, such as reefs and sand slopes above the water. Misses use sky reflection, fading near screen edges or the distance limit. When SSR and physical model refraction are both enabled, they share a scene depth pyramid. Rock faces outside the screen or hidden behind other objects cannot be recovered from camera depth.
 
-SSR Tab 提供“正常／仅 SSR”分段切换。“仅 SSR”在水面上显示有效命中的场景颜色，保留 SSR 强度及渐隐权重，未命中显示黑色，跳过水面天空反射、菲涅耳混合、介质和泡沫合成；不透明场景保持可见。
+The SSR Tab provides a “Normal / SSR only” segmented switch. “SSR only” displays scene colors from valid hits on the water surface, retaining SSR intensity and fade weights; misses are black. It skips water-surface sky reflection, Fresnel blending, medium, and foam composition; the opaque scene remains visible.
 
-SSR 参数实时生效，旧配置缺少字段时使用上述默认值。追踪步数和命中容差只控制 SSR。强度为 0 且物理折射无需金字塔时，停止更新屏幕深度金字塔。
+SSR parameters apply live; old configurations missing fields use the defaults above. Trace steps and hit tolerance control SSR only. When intensity is 0 and physical refraction does not need the pyramid, the screen depth pyramid stops updating.
 
-| Water view / CLI 编号 | 输出 |
+| Water view / CLI number | Output |
 | --- | --- |
-| Shaded water / 0 | 完整水面合成 |
-| Water path (m) / 1 | clamp(d/path_range,0,1) 灰度 |
-| Transmittance T / 2 | RGB 透射率 T |
-| Attenuated seabed (absorption) / 3 | Lbg*T，直观观察吸收/消光后的海底颜色 |
-| In-scattering / 4 | 手动 S 与天光的累计入散射之和 |
-| Extinction loss / 5 | Lbg*(1-T)，被消光移除的颜色，包含出散射 |
-| Raw seabed / 6 | 未经过水体积分的 Lbg |
-| Medium sum / 7 | background+scattering，不混合表面反射和泡沫 |
+| Shaded water / 0 | Complete water-surface composition |
+| Water path (m) / 1 | clamp(d/path_range,0,1) grayscale |
+| Transmittance T / 2 | RGB transmittance T |
+| Attenuated seabed (absorption) / 3 | Lbg*T, showing seabed color after absorption/extinction |
+| In-scattering / 4 | Sum of accumulated in-scattering from manual S and skylight |
+| Extinction loss / 5 | Lbg*(1-T), color removed by extinction, including out-scattering |
+| Raw seabed / 6 | Lbg without water-medium integration |
+| Medium sum / 7 | background+scattering, without surface reflection and foam |
 
-水体调试视图优先于泡沫调试，并绕过反射、高光和泡沫。先用 Raw seabed 看地面，再比较 Attenuated seabed 与 In-scattering，可直接观察两个加和项。
+Water-medium debug views take precedence over foam debug and bypass reflection, highlights, and foam. First inspect the ground with Raw seabed, then compare Attenuated seabed and In-scattering to observe the two additive terms directly.
 
-### 运行、导出与验证
+### Running, export, and verification
 
 ```powershell
 cargo run --release --features ocean --bin ocean
@@ -535,67 +534,67 @@ cargo run --release --features ocean --bin ocean -- --snapshot in-scattering.png
 cargo run --features ocean --bin ocean -- --verify
 ```
 
-地面覆盖当前 3×3 海面块的范围。场景深度没有海底命中（例如远处超出地面或裁剪范围）时，以黑色背景、1000 米光程作为有限的深水近似；光程视图中表现为白色。S 非零而 sigma_t=0 时，恒定源会随光程线性累积；大参数的辐亮度超过 1 时，关闭 HDR 后处理、关闭 AgX 映射或处于调试视图的 SDR 显示目标会截断；正常着色同时启用后处理与 AgX 时改用色调映射压缩。不能据此判断积分结果上限为 1。地面调得很浅时，波谷可能低于地面，深度测试会让地面挡住水面；水平海底模式不模拟干湿边界；沙滩模式使用下述局部 SWE。
+The ground covers the current 3×3 ocean patch area. When scene depth has no seabed hit (for example, beyond the ground or clipping range in the distance), a black background and 1000-meter path provide a finite deep-water approximation; it appears white in the path view. With nonzero S and sigma_t=0, the constant source accumulates linearly with path length. When radiance from large parameters exceeds 1, an SDR display target clips it if HDR post-processing or AgX mapping is disabled, or in a debug view; normal shading with both post-processing and AgX enabled instead compresses it with tone mapping. This does not mean the integration result is bounded by 1. If the ground is very shallow, wave troughs may fall below it and depth testing will make the ground occlude the water surface; horizontal seabed mode does not simulate wet/dry boundaries; beach mode uses the local SWE described below.
 
-CPU 测试包含零距离、零消光、纯衰减、RGB 独立性、源项缩放和数值积分对照。`--verify` 运行共享的生产 WGSL 积分函数，检查 40 组参数下所有 RGB 分量；另用真实海底预绘制+水面绘制管线在两种尺寸（包含 resize）、三种深度、七种调试视图和三个像素位置，与独立解析平面交点计算的光程/颜色逐点比较。
+CPU tests cover zero distance, zero extinction, pure attenuation, RGB independence, source scaling, and comparison with numerical integration. `--verify` runs the shared production WGSL integration function and checks every RGB component across 40 parameter sets; it also uses the real seabed pre-render + water rendering pipelines at two sizes (including resize), three depths, seven debug views, and three pixel positions, comparing path length/color point by point with independently computed analytic plane intersections.
 
-代码：`src/ocean/parameters/optics.rs`（参数）、`render/optics.rs`（uniform 与参考计算）、`render/shaders/optics.wgsl`（共享积分）、`render/seabed.rs` / `render/shaders/seabed.wgsl`（海底预绘制）、`render/verification/optics.rs`（光栅管线验证）。后续简写路径均相对于 `src/ocean/`。
+Code: `src/ocean/parameters/optics.rs` (parameters), `render/optics.rs` (uniform and reference calculations), `render/shaders/optics.wgsl` (shared integration), `render/seabed.rs` / `render/shaders/seabed.wgsl` (seabed pre-render), `render/verification/optics.rs` (raster pipeline verification). Subsequent abbreviated paths are relative to `src/ocean/`.
 
 
-## 天光深度查找表与分段解析积分
+## Skylight Depth Lookup Table and Piecewise Analytic Integration
 
-### 沙滩观察场景
+### Beach observation scene
 
-启动时添加 `--beach`，或点击 浅水模拟（SWE） 面板的 **Beach scene**，即可载入沙坡、水体光学参数和俯视斜向岸线的相机预设。预设使用较小波幅，手动 S 为零、天光开启，方便比较从可见沙底的浅水到深色深水的变化。
+Add `--beach` at startup, or click **Beach scene** in the Shallow Water Simulation (SWE) panel, to load a sand slope, water optics parameters, and a camera preset looking obliquely down toward the shoreline. The preset uses smaller wave amplitude, zero manual S, and enabled skylight, making it easy to compare the transition from shallow water with visible sand to dark deep water.
 
-沙坡是实际几何平面 `y = -beach_slope * (x - shore_x)`，负 X 为陆地、正 X 为深水。面板 **沙滩坡度（高／宽）** 控制坡度，**岸线 X（米）** 移动平均水位岸线，**沙滩相机** 恢复观察角度；取消 **倾斜沙滩** 返回水平棋盘海底。沙坡启用时平底深度控件禁用，实际水深由坡面决定。上述设置支持手动保存。
+The sand slope is an actual geometric plane `y = -beach_slope * (x - shore_x)`, with land at negative X and deep water at positive X. The panel's **Beach slope (height / width)** controls the slope, **Shoreline X (m)** moves the mean-water-level shoreline, and **Beach camera** restores the viewing angle; disable **Sloped beach** to return to the horizontal checkerboard seabed. When the slope is enabled, the flat seabed depth control is disabled and actual water depth is determined by the slope. These settings support manual saving.
 
-沙地使用干湿颜色与抗锯齿细纹，光照法线随坡面倾斜。深度预绘制和世界坐标重建计算真实斜向光程，水色没有按岸线距离手工渐变；可切换 Water path、Transmittance、Attenuated seabed 检查。岸上沙坡通过深度测试遮住海面。`--beach --no-shore` 可回到只有 FFT 与沙坡的观察模式；默认沙滩启用下述局部二维 SWE。
+Sand uses dry/wet colors and antialiased fine lines, with lighting normals tilted along the slope. Depth pre-rendering and world-coordinate reconstruction compute the actual oblique path length; water color is not manually graded by distance from shore. Switch to Water path, Transmittance, or Attenuated seabed to inspect it. The landward sand slope occludes the ocean through depth testing. `--beach --no-shore` returns to an observation mode with only FFT and the sand slope; the default beach enables the local 2D SWE described below.
 
 ```powershell
 cargo run --release --features ocean --bin ocean -- --beach
 ```
 
-`--beach` 每次启动都会重新套用预设；希望继续调整后的状态时，下次省略该参数。`--snapshot beach.png --beach` 可离屏导出相同观察视角。
+`--beach` reapplies the preset at every startup; omit it next time to continue from the adjusted state. `--snapshot beach.png --beach` exports the same view offscreen.
 
-Water optics 的 **Sky scattering** 区域即时生效，不需要 Apply：
+The **Sky scattering** section of Water optics applies immediately without Apply:
 
-| 控件 | 含义 |
+| Control | Meaning |
 | --- | --- |
-| Enable sky scattering | 启用水下天光源项；不影响天空背景和表面反射开关 |
-| Sky tint / Sky intensity | egui 原生线性 RGB 颜色选择器及 0～20 强度，共用于天空背景、反射、水下天光；白色 tint 保留原有天空渐变 |
-| Scattering albedo RGB | 各通道 α=σ_s/σ_t，范围 0～1；σ_s=α σ_t，σ_a=(1-α) σ_t |
-| Precise sky RGB | 可直接输入颜色和反照率的线性 RGB 数值 |
-| Sky integration steps | 8 / 16 / 32 段，默认 16；更高档提高积分精度 |
-| Sky source vs depth | 显示水面到海底的 RGB 局部源项曲线，纵轴为 radiance/m，自动缩放 |
-| Manual source S | 原手动常量源项保留，可归零来单独观察天光 |
+| Enable sky scattering | Enable the underwater skylight source; does not affect the sky background or surface reflection switch |
+| Sky tint / Sky intensity | egui native linear RGB color picker and 0–20 intensity, shared by sky background, reflection, and underwater skylight; white tint retains the original sky gradient |
+| Scattering albedo RGB | Per-channel α=σ_s/σ_t, range 0–1; σ_s=α σ_t, σ_a=(1-α) σ_t |
+| Precise sky RGB | Direct linear RGB input for color and albedo |
+| Sky integration steps | 8 / 16 / 32 segments, default 16; higher settings improve integration accuracy |
+| Sky source vs depth | Show RGB local source curves from surface to seabed, vertical axis in radiance/m, automatically scaled |
+| Manual source S | The original constant manual source remains available and can be set to zero to observe skylight alone |
 
-天光使用无太阳圆盘和光晕的程序化天空背景，太阳亮斑仍显示在天空/反射里。采用各向同性相函数 `p=1/(4π)`，在上半球按立体角积分；不乘表面光照的 N·L。均匀天空、无衰减时半球因子为 1/2，不是 1。
+Skylight uses the procedural sky background without the solar disk and halo; the bright sun spot still appears in the sky/reflection. An isotropic phase function `p=1/(4π)` is integrated over the upper hemisphere by solid angle; it is not multiplied by surface-lighting N·L. For a uniform sky without attenuation, the hemisphere factor is 1/2, not 1.
 
 ```text
-z = max(-world.y, 0)                 # 平均海面 y=0
-mu_i = (i + 0.5) / 32               # 当前天空轴对称，32 个等立体角采样
+z = max(-world.y, 0)                 # Mean sea surface y=0
+mu_i = (i + 0.5) / 32               # The current sky is axisymmetric, with 32 equal-solid-angle samples
 J_c(tau) = sum_i Lsky_c(mu_i) * exp(-tau / mu_i) / 64
 Ssky_c(z) = sigma_t_c * albedo_c * J_c(sigma_t_c * z)
 S_total = S_manual + S_sky
 ```
 
-GPU 将 J 存入 **256×1 Rgba32Float** 查找表（4 KiB）。横轴使用光学深度 tau，而非固定米数，因此 RGB 不同消光系数可以共用同一张表。采样点 `tau=32*(i/255)^2` 在水面附近更密集，读取时在 tau 上做线性插值。tau>=32 的天光作为零处理，其透射上界小于 1.3e-14。只有天空颜色或强度变化时更新表；改变 σ_t、反照率、海底深度无需重建，resize 重新绑定原表。
+The GPU stores J in a **256×1 Rgba32Float** lookup table (4 KiB). Its horizontal axis uses optical depth tau rather than a fixed distance in meters, so RGB channels with different extinction coefficients can share one table. Samples `tau=32*(i/255)^2` are denser near the surface, and reads interpolate linearly in tau. Skylight at tau>=32 is treated as zero; its transmittance upper bound is less than 1.3e-14. The table updates only when sky color or intensity changes; changing σ_t, albedo, or seabed depth requires no rebuild, and resize rebinds the original table.
 
-沿视线从水面向海底累积天光，每段在中点求 Ssky，在段内使用原有解析权重 `(1-exp(-sigma_t*ds))/sigma_t`，再乘从该段到水面入口的透射率。手动 S 仍单独使用整条视线的解析解。
+Skylight is accumulated along the view ray from the surface to the seabed. Each segment evaluates Ssky at its midpoint, uses the original analytic weight `(1-exp(-sigma_t*ds))/sigma_t` within the segment, and multiplies by transmittance from that segment to the surface entry point. Manual S still uses a separate analytic solution for the entire ray.
 
-每通道独立按光程平方分段，并将天光积分尾部截断于 16 个观察光学深度（遗漏贡献的上界与 exp(-16) 成正比），避免长光程让第一段跨过整个浅层散射区。此截断只作用于天光，不改变手动 S、海底透射率或光程调试值。σ_t=0 或 α=0 时，对应通道的天光散射严格为零；手动 S 仍遵循原有 `S*d` 极限。
+Each channel independently uses segments spaced quadratically along the path, and truncates the skylight integration tail at 16 view optical depths (the upper bound on omitted contribution is proportional to exp(-16)), preventing a long path from making the first segment span the entire shallow scattering region. This truncation affects only skylight, not manual S, seabed transmittance, or path-length debug values. When σ_t=0 or α=0, skylight scattering for that channel is exactly zero; manual S still follows the original `S*d` limit.
 
-### 新增调试视图
+### Additional debug views
 
-| Water view / CLI 编号 | 输出 |
+| Water view / CLI number | Output |
 | --- | --- |
-| Sky source at ray midpoint / 8 | 水下视线中点的局部 Ssky（radiance/m） |
-| Integrated sky scattering / 9 | 已考虑观察光程衰减的累计天光颜色 |
-| Integrated manual source / 10 | 原手动 S 的累计入散射 |
-| Total source at ray midpoint / 11 | 中点处 S_manual+S_sky（radiance/m） |
+| Sky source at ray midpoint / 8 | Local Ssky at the midpoint of the underwater view ray (radiance/m) |
+| Integrated sky scattering / 9 | Accumulated skylight color accounting for view-path attenuation |
+| Integrated manual source / 10 | Accumulated in-scattering from the original manual S |
+| Total source at ray midpoint / 11 | S_manual+S_sky at the midpoint (radiance/m) |
 
-4 为累计天光+累计手动源项，7 再加衰减后的海底。所有调试视图绕过反射、高光和泡沫；8、11 是局部源项，不能直接与累计颜色比较。局部源项通常较暗，可通过深度曲线读取数值。
+4 is accumulated skylight + accumulated manual source; 7 also adds the attenuated seabed. All debug views bypass reflection, highlights, and foam; 8 and 11 are local source terms and cannot be directly compared with accumulated colors. Local sources are usually dark; values can be read from the depth curve.
 
 ```powershell
 cargo run --release --features ocean --bin ocean -- --skylight
@@ -604,27 +603,27 @@ cargo run --release --features ocean --bin ocean -- --snapshot sky-scattering.pn
 cargo run --release --features ocean --bin ocean -- --snapshot manual-scattering.png --water-view 10 --no-skylight
 ```
 
-边界：本版为单次、各向同性散射，入射天光按平均平面 y=0 计算深度，位于平均水面以上的浪峰按 z=0 处理。此天空散射积分未计算入水折射、入口 Fresnel 损失、波面遮挡、太阳体积散射或多次散射。独立的水底焦散模块计算太阳光入水折射及入口损失，不向天空散射源重复叠加焦散。海底本身仍是原来的简化光照。天空颜色只控制天空背景，不改变独立的太阳亮斑颜色。
+Limitations: this version uses single, isotropic scattering. Incident skylight depth is computed from the mean plane y=0, and crests above mean sea level use z=0. This sky-scattering integration does not calculate refraction into water, entry Fresnel loss, wave-surface occlusion, solar volume scattering, or multiple scattering. The separate seabed caustics module calculates sunlight refraction into water and entry loss; caustics are not added again to the skylight source. The seabed itself retains the original simplified lighting. Sky color controls only the sky background and does not change the independent sun spot color.
 
-`--verify` 对真实 GPU LUT 与 f64 角度求和逐项比较，再用独立的逐方向闭式线积分检查生产 WGSL。覆盖零/极小/较大消光、不同 RGB、关闭天光、零反照率、强度/颜色变化、0～1000 米光程、不同水深与观察方向、8/16/32 段收敛；光栅检查包括 resize、LUT 参数更新及局部/累计/合成调试视图。
+`--verify` compares the real GPU LUT term by term with an f64 angular sum, then checks production WGSL against an independent per-direction closed-form line integral. It covers zero/very small/large extinction, different RGB values, disabled skylight, zero albedo, intensity/color changes, 0–1000 meter paths, different depths and viewing directions, and convergence at 8/16/32 segments; raster checks include resize, LUT parameter updates, and local/accumulated/composite debug views.
 
-代码：`sky.wgsl` 共享天空背景，`skylight_lut.wgsl` 生成查找表，`skylight.wgsl` 查表和分段积分，`skylight.rs` 管理参数与 GPU 资源，`skylight_verify.rs` 独立验证。
+Code: `sky.wgsl` shares the sky background, `skylight_lut.wgsl` generates the lookup table, `skylight.wgsl` performs lookup and piecewise integration, `skylight.rs` manages parameters and GPU resources, and `skylight_verify.rs` provides independent verification.
 
-## 本地手动保存与颜色选择器
+## Local Manual Saving and Color Pickers
 
-所有海洋参数、未 Apply 的频谱草稿、泡沫参数、水体参数（包括天光）、相机、暂停和播放速度，优先保存到当前工作目录已有的 `configs/ocean-settings.json`。此文件已纳入 Git，包含原有当前会话和完整命名配置库；从仓库根目录 `cargo run` 会恢复它，之后的手动保存也会成为 Git 差异。其他工作目录没有此文件时，仍回退到 `%LOCALAPPDATA%\water-simulation\ocean-settings.json`（其次 `%APPDATA%`）。原位置的个人文件未迁移、删除或覆盖。仅点击顶部 **保存** 或按 **Ctrl+S** 才写入当前工作状态及配置库；停止编辑、失去焦点、载入配置和退出均不自动保存，未保存更改在退出后丢失。header 常驻显示未保存状态及 **保存成功／保存失败**，失败时悬浮可查看详情与路径；不会自动重试，修复后再次保存即可。Dock 布局仍独立自动保存，不受此规则影响。时间与泡沫历史不保存。
+All ocean parameters, unapplied spectrum drafts, foam parameters, water parameters (including skylight), camera, pause, and playback speed are saved preferentially to an existing `configs/ocean-settings.json` in the current working directory. This file is tracked by Git and contains the existing current session and complete named configuration library; running `cargo run` from the repository root restores it, and subsequent manual saves also become Git differences. If this file does not exist in another working directory, the fallback is still `%LOCALAPPDATA%\water-simulation\ocean-settings.json` (then `%APPDATA%`). Personal files at the original location are not migrated, deleted, or overwritten. Only clicking **Save** at the top or pressing **Ctrl+S** writes the current working state and configuration library; stopping editing, losing focus, loading a configuration, and exiting do not save automatically, and unsaved changes are lost on exit. The header always shows the unsaved state and **Save succeeded / Save failed**; hover over a failure for details and the path. There is no automatic retry; save again after fixing the problem. Dock layouts are still saved automatically and independently, unaffected by this rule. Time and foam history are not saved.
 
-左侧 **配置** 工作区使用单选列表，点击配置即载入，但不写盘。下方只有 **新配置 / 删除配置** 和 **保存配置**：新配置展开名称输入及 **确定 / 取消**，确定后在内存中保留当前参数快照，再用顶部保存或 Ctrl+S 写盘；删除配置展开对当前配置的删除询问及 **确定 / 取消**，确定删除后切回默认配置；**保存配置** 用当前参数覆盖所选命名配置并立即写盘。右键配置按钮可 **重命名**，同样通过名称输入及 **确定 / 取消** 完成。配置名称不能为空、不能重复，也不能使用保留名称“默认配置”。新建、删除和重命名的确认不隐式写盘，需再用顶部保存或 Ctrl+S。顶部保存只记录当前工作状态和配置库，不把当前参数覆盖到所选命名快照；命名快照仅在新建或 **保存配置** 时更新。重启恢复最后一次写盘的工作状态与配置库。面板只在出错时显示错误提示，操作说明放在按钮的 hover 提示中。
+The **Configurations** workspace on the left uses a single-selection list; clicking a configuration loads it but does not write to disk. Below it are only **New Configuration / Delete Configuration** and **Save Configuration**: New Configuration expands a name input and **Confirm / Cancel**; confirming retains a snapshot of current parameters in memory, then the top Save or Ctrl+S writes it to disk. Delete Configuration expands a deletion prompt for the current configuration and **Confirm / Cancel**; confirming deletion switches back to the default configuration. **Save Configuration** overwrites the selected named configuration with current parameters and writes immediately. Right-click a configuration button to **Rename**, also using a name input and **Confirm / Cancel**. Configuration names cannot be empty, duplicated, or use the reserved name “Default Configuration”. Confirming creation, deletion, or rename does not implicitly write to disk; use the top Save or Ctrl+S afterward. The top Save records only the current working state and configuration library; it does not overwrite the selected named snapshot with current parameters. Named snapshots update only on creation or **Save Configuration**. Restart restores the last working state and configuration library written to disk. The panel displays an error message only on failure; operation instructions are in button hover tooltips.
 
-首次升级时，原有本地配置会封存为只读 **默认配置**；没有已有配置时使用程序初始默认值。默认配置不能重命名、删除或覆盖，点击 **默认配置** 可恢复全部参数，再次点击当前配置也会重新载入。载入任意配置会恢复其中的已应用波谱和未应用草稿，并重置模拟时间、泡沫与浅水历史；草稿仍需 **应用更改** 后生效。`--no-settings` 下禁止新建、删除、保存和重命名，仍可恢复本次启动时的初始配置。
+On first upgrade, the existing local configuration is preserved as the read-only **Default Configuration**; if no configuration exists, the program's initial defaults are used. The default configuration cannot be renamed, deleted, or overwritten. Clicking **Default Configuration** restores all parameters; clicking the current configuration again also reloads it. Loading any configuration restores its applied spectrum and unapplied draft, and resets simulation time, foam, and shallow-water history; the draft still requires **Apply changes** to take effect. Under `--no-settings`, creation, deletion, saving, and renaming are disabled, but the initial configuration for this launch can still be restored.
 
-使用 `--settings PATH` 指定可写会话；`--no-settings` 禁用隐式会话读取／保存。`--config PATH` 则严格只读加载指定文件的顶层当前会话，不自动保存，不回退默认值，也不写损坏备份；不能与 `--settings` 合用。明确传入的 CLI 参数覆盖对应保存值，其余字段继续恢复。`--snapshot` 默认不读个人配置，但支持显式 `--config`，不支持可写的 `--settings`；`--time` 是快照模拟时刻，不受配置中的暂停／播放倍率影响。`--verify` 始终不读取配置。仓库配置与礁石实验启动方法见 [configs/README.md](../../configs/README.md)。
+Use `--settings PATH` to specify a writable session; `--no-settings` disables implicit session reading/saving. `--config PATH` strictly loads the specified file's top-level current session read-only, without automatic saving, fallback to defaults, or writing a corrupt-file backup; it cannot be combined with `--settings`. Explicit CLI arguments override corresponding saved values; other fields are still restored. `--snapshot` does not read personal configuration by default, but supports explicit `--config` and does not support writable `--settings`; `--time` is the snapshot simulation time, unaffected by the configuration's pause/playback multiplier. `--verify` never reads configuration. See [configs/README.md](../../configs/README.md) for repository configurations and reef experiment startup methods.
 
-每次启动恢复最后一次手动保存的配置选项和工作状态（可以包含未覆盖到命名快照的调整）。选择、新建、重命名和删除后的结果只有写盘后才影响下次启动；保存删除当前配置的结果后，下次启动选中默认配置。旧文件没有记录选项或记录已失效时，选中默认配置并保留原有工作状态与命名配置。恢复个人参数时直接运行 `cargo run`，不要额外传入 `--beach` 等场景覆盖参数。
+Each startup restores the last manually saved configuration selection and working state (which can include adjustments not overwritten into a named snapshot). Selection, creation, rename, and deletion affect the next startup only after being written to disk; after saving the deletion of the current configuration, the default configuration is selected at the next startup. If an old file has no recorded selection or the selection is invalid, the default configuration is selected while the existing working state and named configurations are retained. To restore personal parameters, run `cargo run` directly without additional scene override arguments such as `--beach`.
 
-旧配置不含 sky 段时默认关闭天光，以保留原效果；可勾选 Enable sky scattering 或加 `--skylight`。新配置默认启用天光。设置采用临时文件加原子替换写入，损坏或不支持的文件在重新保存前会保留 `.invalid-时间戳.json` 备份；写入失败会在顶部保留错误状态，等待手动重试，不会静默覆盖为成功。
+Old configurations without a sky section default to skylight off to preserve their original appearance; enable Sky scattering or add `--skylight`. New configurations enable skylight by default. Settings are written using a temporary file and atomic replacement; corrupt or unsupported files retain an `.invalid-timestamp.json` backup before being saved again. Write failures remain visible as an error state at the top until a manual retry, and are not silently reported as successful.
 
-σ_t 和手动 S 使用 egui 原生颜色选择器配合 Strength，实际线性系数为 `color * strength`，可展开精确 RGB 输入；颜色表示通道比例，强度不会受颜色选择器 0～1 范围限制。天空颜色和反照率直接使用 0～1 线性 RGB，天空另有独立强度。
+σ_t and manual S use egui native color pickers with Strength; the actual linear coefficient is `color * strength`, and precise RGB inputs can be expanded. Color represents channel proportions, while intensity is not limited by the color picker's 0–1 range. Sky color and albedo use 0–1 linear RGB directly, with a separate sky intensity.
 
 ## Local 2D shallow water, FFT offshore and waterborne foam
 
@@ -635,9 +634,9 @@ cargo run --release --features ocean --bin ocean -- --beach --no-settings --shor
 cargo run --release --features ocean --bin ocean -- --beach --no-shore
 ```
 
-The independent **浅水模拟（SWE）** panel contains the SWE, foam, wet-sand and beach controls and opens by default. FFT Phillips power, wind direction and spectral length now drive both the ocean and the SWE inlet. 波高增益 scales inlet elevation and both momentum components together. The independent shore amplitude/period controls have been removed; old saved fields are ignored. The retired `--shore-amplitude` / `--shore-period` flags report a migration message. The entire SWE patch starts with FFT elevation and momentum; repeated run-up and foam still need time to develop. CLI overrides belong after `--beach`, which installs the beach preset.
+The independent **Shallow Water Simulation (SWE)** panel contains the SWE, foam, wet-sand and beach controls and opens by default. FFT Phillips power, wind direction and spectral length now drive both the ocean and the SWE inlet. Wave height gain scales inlet elevation and both momentum components together. The independent shore amplitude/period controls have been removed; old saved fields are ignored. The retired `--shore-amplitude` / `--shore-period` flags report a migration message. The entire SWE patch starts with FFT elevation and momentum; repeated run-up and foam still need time to develop. CLI overrides belong after `--beach`, which installs the beach preset.
 
-| 浅水调试视图 | Meaning |
+| Shallow water debug view | Meaning |
 | --- | --- |
 | 0 | Shaded |
 | 1 | Geometric water depth; white at 3 m |
@@ -654,7 +653,7 @@ By default (dual-population experiment disabled), the stored variables are `(h, 
 
 Generation combines the original rising-water source (scaled by the background multiplier, default 0.15) with a directional front source: sample free-surface elevation (bed height plus water depth) ahead of the flow and emit where the surface falls. The front source does not require rising water or nearby dry land. Both retain wet-depth and offshore-sponge gating. This is a visual proxy, not resolved air entrainment; the criterion follows surface slope, so retreat can also emit when its forward water surface is lower; dry samples are excluded. Generation and exponential decay are integrated analytically with a frozen source per completed substep. Density may exceed the color reference, retaining accumulated amount rather than clipping it.
 
-The patch spans at least 64 m across the beach and 384 m along it for a 128 m FFT tile. Its inland coverage expands with a conservative spectral height bound and 波高增益, up to 64 m inland. Gentle slopes can also expand the offshore region. Alongshore spacing is 1.5 m at the default tile size. The bed remains the existing straight sand slope, shared by simulation and rendering. Landward and alongshore boundaries reflect; the offshore edge samples FFT elevation and matching depth-integrated momentum in a relaxation zone occupying the outer 20% of the patch. There is no arbitrary obstacle editor or terrain SDF in this version.
+The patch spans at least 64 m across the beach and 384 m along it for a 128 m FFT tile. Its inland coverage expands with a conservative spectral height bound and wave height gain, up to 64 m inland. Gentle slopes can also expand the offshore region. Alongshore spacing is 1.5 m at the default tile size. The bed remains the existing straight sand slope, shared by simulation and rendering. Landward and alongshore boundaries reflect; the offshore edge samples FFT elevation and matching depth-integrated momentum in a relaxation zone occupying the outer 20% of the patch. There is no arbitrary obstacle editor or terrain SDF in this version.
 
 Substeps use a conservative speed/depth estimate and the rectangular-grid bound `dt <= 0.2 / ((12 + sqrt(g * depth_bound)) * (1/dx + 1/dz))`. A frame advances at most 0.1 simulated seconds and 128 substeps; excess time from a long stall is discarded. This estimate is intended for the built-in terrain and wave controls, not arbitrary externally injected states. Boundary forcing, thin-film removal and velocity safeguards mean the entire open scene is not a closed conservative system.
 
@@ -676,7 +675,7 @@ omega = sqrt(g |k|)
 
 `Q` is depth-integrated horizontal momentum in m²/s, derived from linear continuity. It is not the FFT choppiness displacement and not the time derivative of that displacement. Both signed branches are retained, so the boundary carries the prescribed external FFT field, including its directional distribution; this is a relaxation boundary, not a characteristic decomposition that injects only incoming waves.
 
-The three boundary spectra `(H, Qx, Qz)` receive the same configurable smooth low-pass. In **浅水模拟（SWE） → FFT 输入 filter**, **Filter short waves** enables it; **Reject wavelength <= (m)** sets the rejected wavelength limit, and **Transition width (m)** sets the smooth transition above that limit. The default is a fixed 12 m cutoff plus a 12 m transition: wavelengths <= 12 m are rejected and >= 24 m pass fully. Unlike the earlier automatic rule, these values do not change with FFT resolution. A zero transition gives a hard cutoff. Disabling the filter passes all FFT modes. The **3–6 m** preset admits more short waves for comparison, but the first-order SWE grid can still dissipate unresolved waves and does not recover their dispersion.
+The three boundary spectra `(H, Qx, Qz)` receive the same configurable smooth low-pass. In **Shallow Water Simulation (SWE) → FFT input filter**, **Filter short waves** enables it; **Reject wavelength <= (m)** sets the rejected wavelength limit, and **Transition width (m)** sets the smooth transition above that limit. The default is a fixed 12 m cutoff plus a 12 m transition: wavelengths <= 12 m are rejected and >= 24 m pass fully. Unlike the earlier automatic rule, these values do not change with FFT resolution. A zero transition gives a hard cutoff. Disabling the filter passes all FFT modes. The **3–6 m** preset admits more short waves for comparison, but the first-order SWE grid can still dissipate unresolved waves and does not recover their dispersion.
 
 Filter changes apply immediately and reset SWE water/foam/sand history, while FFT time keeps advancing. The patch is reseeded from the current filtered FFT, rather than restarted as still water. The settings persist with the other controls. No additional short-wave normal detail is added. CLI equivalents (put overrides after `--beach`):
 
@@ -687,7 +686,7 @@ cargo run --release --features ocean --bin ocean -- --beach --no-swe-filter
 
 The six spectra share the existing IFFT stages. SWE samples channels 3–5 at `(world / FFT_tile_length + 0.5) * FFT_resolution`, with periodic wrapping and bilinear interpolation. This matches the ocean's undeformed world-coordinate convention. It interpolates the previous and current FFT boundary frames at each SWE substep; no FFT or momentum readback to the CPU is required.
 
-On reset, the entire patch samples the current filtered FFT elevation and momentum. The six-second startup ramp has been removed. 波高增益 multiplied by the SWE-specific input gain applies to elevation and momentum equally. For extreme inputs, a common safety scale limits elevation to half the local still-water depth and momentum magnitude to eight times that depth. The scale preserves their ratio, although those clipped cases no longer reproduce the raw FFT amplitude.
+On reset, the entire patch samples the current filtered FFT elevation and momentum. The six-second startup ramp has been removed. Wave height gain multiplied by the SWE-specific input gain applies to elevation and momentum equally. For extreme inputs, a common safety scale limits elevation to half the local still-water depth and momentum magnitude to eight times that depth. The scale preserves their ratio, although those clipped cases no longer reproduce the raw FFT amplitude.
 
 The relaxed target is `(max(eta-Bed, 0), Qx, Qz, 0)`, blended with weight `1-exp(-4*edge_weight*dt)`. Foam is generated inside the SWE region rather than imported from FFT. The existing Jacobian foam remains on the far ocean.
 
@@ -705,416 +704,415 @@ The bundled `assets/shorewaves/voronoi_lace.png` comes from Reboot16 / Enrico K.
 
 ### Lifecycle and validation
 
-Pause freezes simulation and texture flow. R, Restart time and **重置浅水、泡沫和沙地** reinitialize the local simulation from the current FFT and clear foam/sand history. Terrain, 波高增益, SWE input gain, blend-depth and enable changes also reset it; applying a new FFT spectrum rebuilds the coupled resources; foam-rate, drying-time and view changes preserve history. Settings persist, but simulation state does not. Snapshot mode prewarms up to 60 seconds of shore history (8 seconds offshore); later snapshots approximate a finite history window.
+Pause freezes simulation and texture flow. R, Restart time and **Reset shallow water, foam and sand** reinitialize the local simulation from the current FFT and clear foam/sand history. Terrain, wave height gain, SWE input gain, blend-depth and enable changes also reset it; applying a new FFT spectrum rebuilds the coupled resources; foam-rate, drying-time and view changes preserve history. Settings persist, but simulation state does not. Snapshot mode prewarms up to 60 seconds of shore history (8 seconds offshore); later snapshots approximate a finite history window.
 
 `--verify` exercises the actual GPU shader: lake at rest, local pulse mass conservation away from the inlet, propagation and foam transport in both axes, dry-cell foam removal and sand drying/rewetting, extreme slope/amplitude settings, terrain reset, run-up, finite/nonnegative states, pause, reset and disable. Raster verification prewarms 24 seconds and checks water history at two target sizes. The FFT test compares all six channels to a double-precision direct DFT and checks analytic oblique waves in both directions. An inlet probe checks production world-coordinate wrapping, time interpolation and gain against CPU samples. Zero FFT power must generate no shoreline flow/foam. Existing optics and sky tests remain enabled. `cargo test --all-features` covers configuration compatibility; use `cargo test --workspace --all-features` to also run the CPU suites in `tui-2d-prototype`.
 
 The heightfield cannot overturn or produce airborne spray. First-order numerical diffusion and the coarse alongshore spacing limit small-scale hydrodynamic detail; the lace texture supplies visual detail. Refraction remains the existing optical path implementation. Performance depends on substep count, mesh resolution and GPU; no frame-rate guarantee is implied.
 
 
-### Dock 参数工作区
+### Dock parameter workspaces
 
-交互窗口使用 `egui_dock 0.18`（匹配 egui 0.33）。左侧固定五个图标入口，hover 显示名称；右侧切换独立 Dock 布局：
+The interactive window uses `egui_dock 0.18` (matching egui 0.33). Five fixed icon entries on the left show their names on hover; the right side switches between independent Dock layouts:
 
-- **场景**：场景与地形、模型与区域、碰撞体。
-- **浅水**：SWE 与 FFT 输入、近岸泡沫模拟、浪花模拟。
-- **远海**：波谱与波形、远海泡沫。
-- **着色**：水体与天空、泡沫外观、表面与沙地、浪花外观。
-- **配置**：现有命名配置管理。
+- **Scene**: scene and terrain, models and regions, colliders.
+- **Shallow Water**: SWE and FFT input, nearshore foam simulation, spray simulation.
+- **Offshore**: spectrum and waveform, offshore foam.
+- **Shading**: water and sky, foam appearance, surface and sand, spray appearance.
+- **Configurations**: existing named configuration management.
 
-默认参数靠左，渲染视图占右侧主要区域；除配置外，参数侧默认分上下区。可拖动标签和分隔线，关闭参数页签，再从顶部 **面板** 菜单恢复或跨分类添加；每套布局保留一个不可关闭的渲染视图，不支持独立浮动窗口。**面板 → 重置当前布局** 只重置当前分类。渲染视图按实际尺寸和缩放创建目标，拖动旋转相机、滚轮缩放；参数区滚动不触发相机操作。
+By default parameters are on the left, and Render View occupies the main area on the right; except in Configurations, the parameter side defaults to upper and lower areas. Drag tabs and dividers, close parameter tabs, then restore or add them across categories from the top **Panels** menu; each layout retains one non-closable Render View and does not support separate floating windows. **Panels → Reset current layout** resets only the current category. Render View creates its target at the actual size and scale; drag to rotate the camera and use the scroll wheel to zoom. Scrolling the parameter area does not operate the camera.
 
-切换分类不改变模拟、时间、暂停、相机或未应用草稿。不可用参数与面板按模式隐藏，保留原值和恢复入口。布局及当前分类保存在会话旁独立的 `<会话文件 stem>.workspaces.json`，普通重启恢复；命名配置不改布局。损坏布局只回退 UI 并报告错误，明确重置或确认修复前不覆盖原文件。`--no-settings`、只读 `--config`、快照和验证不隐式读写布局。
+Switching categories does not change simulation, time, pause, camera, or unapplied drafts. Unavailable parameters and panels are hidden according to mode, retaining their values and a way to restore them. Layouts and the current category are stored separately beside the session in `<session file stem>.workspaces.json` and restored on normal restart; named configurations do not change layouts. A corrupt layout falls back only for the UI and reports an error; the original file is not overwritten until an explicit reset or confirmed repair. `--no-settings`, read-only `--config`, snapshots, and verification do not implicitly read or write layouts.
 
-顶部常驻播放／倍率、时间／相机和面板菜单；右侧显示 FPS、CPU 与异步真实 GPU 主帧时间，窄窗口另起一行。SWE 实际启用时显示其 GPU 子区间；不支持、等待、失败、空闲状态明确标注。主帧包含模拟、场景和 GUI，不含呈现等待。完整约束见 [工作区界面规范](../specs/workspace-ui.md)。命令行离屏截图仍只输出海面，不包含 Dock 界面。
-
-
-### 近岸小波法线
-
-SWE 面板的 **小波法线 → 法线细节强度** 控制近岸视觉细节，默认 1，范围 0～3，0 为关闭。调整即时生效，不重置 SWE；参数随其他设置保存。CLI 对应 `--shore-normal-strength`（放在 `--beach` 后）。
-
-片元着色器读取未过滤 FFT 水位，以 1 格与 4 格跨度的中心差分坡度之差构造近似高频细节；它独立于 SWE 输入过滤，不是严格的频域带通。格点坡度使用周期 Catmull–Rom 双三次插值重建，保留原格点值，让坡度及其一阶空间导数跨格连续，避免双线性插值的方格高光转折；这不是 mip 三线性过滤。水面与泡沫复用同一次小波坡度采样，但保留各自的基础法线；FFT 主水面的几何采样和顶点法线不变。细节按近岸混合权重补入法线，在 2～25 厘米水深内渐隐，并按像素足迹抑制远处闪烁。它影响水面反射、高光及表面光照，以及启用的观察折射／太阳焦散所用法线，不修改几何位移、水位、流动、泡沫生成和沙滩残留。反射和高光需启用 Water optics 的 Sky reflection and highlights；物理调试视图保持原样。这不是短波在 SWE 中的真实传播或折射。`--verify-optics` 检查生产小波法线的跨格平滑、周期接缝、格点坡度及强度／单位换算、渐隐和关闭／远海保护。
+The top always shows playback/speed, time/camera, and the panel menu; the right side shows FPS, CPU, and asynchronous real GPU main-frame time, wrapping to another line in narrow windows. When SWE is actually enabled, its GPU sub-interval is shown; unsupported, waiting, failure, and idle states are clearly labeled. The main frame includes simulation, scene, and GUI, but not presentation wait. See the complete constraints in the [workspace UI specification](../specs/workspace-ui.md). Command-line offscreen screenshots still output only the ocean, without the Dock interface.
 
 
-### SWE 一阶／二阶与 GPU 计时
+### Nearshore wavelet normals
 
-运行时按水体／泡沫阶数组合缓存专用计算管线，去掉未启用的高阶分支；首次使用一种组合可能有短暂编译开销。MUSCL 水体与泡沫各自在同一计算 pass 内复用按轴五格邻域；水体的两面通量和床面源项共用中心重构，泡沫复用中心斜率和地形阻挡查询。模型求解单元中心直接读取上传床面，任意世界坐标的渲染采样仍用插值；正常推进只在边界松弛带读取 FFT 水位和动量，重置仍从当前 FFT 初始化全域。这些优化不增加网格缓冲或 pass，不改变默认阶数、CFL、RK2 两阶段、源项或材质。预测只写校正需要的守恒量和泡沫动量；双浓度与纹理运动共用回溯位置，但保留各自插值规则。完整子步在两个完整场间交替输出，浪花源读取匹配的新旧场，帧末仅同步一次；仍保留固定的公开渲染场。
+The SWE panel's **Wavelet normals → Normal detail strength** controls nearshore visual detail, default 1, range 0–3, with 0 disabling it. Changes apply immediately without resetting SWE; the parameter is saved with other settings. The CLI equivalent is `--shore-normal-strength` (after `--beach`).
 
-**浅水模拟（SWE） → SWE solver** 可切换 **First order (Euler)** 和 **Second order (MUSCL + RK2)**。默认保留一阶，选择会保存。切换会重置近岸水体、泡沫和湿沙，FFT 时间继续推进。两种模式使用相同的所选网格和 CFL 子步条件，二阶每子步执行两阶段。
+The fragment shader reads unfiltered FFT water levels and constructs approximate high-frequency detail from the difference between central-difference slopes at spans of 1 and 4 grid cells; it is independent of SWE input filtering and is not a strict frequency-domain band-pass. Grid-point slopes are reconstructed with periodic Catmull–Rom bicubic interpolation, preserving original grid-point values and keeping slope and its first spatial derivatives continuous across cells, avoiding the square highlight transitions of bilinear interpolation; this is not mip trilinear filtering. Water and foam reuse the same wavelet slope sample but retain their respective base normals; geometric sampling and vertex normals of the main FFT water surface remain unchanged. Detail is added to normals according to the nearshore blend weight, fades out over water depths of 2–25 cm, and is suppressed according to pixel footprint to reduce distant shimmer. It affects water reflection, highlights and surface lighting, as well as normals used by enabled view refraction/solar caustics; it does not modify geometric displacement, water level, flow, foam generation, or beach residue. Reflection and highlights require Water optics' Sky reflection and highlights; physical debug views remain unchanged. This is not actual propagation or refraction of short waves in SWE. `--verify-optics` checks production wavelet normals for cross-cell smoothness, periodic seams, grid-point slopes and strength/unit conversion, fading, and disabled/offshore protection.
+<a id="first-and-second-order-swe-and-gpu-timing"></a>
+### First- and second-order SWE and GPU timing
 
-面板显示最近异步采样的 **SWE GPU 毫秒数、子步数、推进的模拟毫秒数及每子步耗时**。时间戳覆盖本帧首个 SWE pass 开始至最后一个 pass 结束，包括中间参数拷贝、泡沫/湿沙更新及启用时的浪花源；不包含 FFT、渲染、粒子更新、CPU 提交、帧末状态同步及计时读回。只有一个读回在途，未完成时跳过采样，不阻塞帧循环。暂停/关闭显示 idle；不支持 timestamp query 的显卡显示 unsupported，不以 CPU 时间冒充 GPU 时间。
+At runtime, specialized compute pipelines are cached by water/foam order combination, eliminating disabled higher-order branches; the first use of a combination may incur a short compilation cost. MUSCL water and foam each reuse an axis-aligned five-cell neighborhood within the same compute pass; the water fluxes on both faces and the bed source term share the center reconstruction, while foam reuses the center slope and terrain-blocking queries. Solver cell centers read the uploaded bed directly, while rendering samples at arbitrary world coordinates still use interpolation; normal advancement reads FFT water level and momentum only in the boundary relaxation zone, while reset still initializes the entire domain from the current FFT. These optimizations add no grid buffers or passes and do not change the default order, CFL, two-stage RK2, source terms, or materials. The predictor writes only the conserved quantities and foam momentum needed by the corrector; dual concentrations and texture motion share backtraced positions but retain their respective interpolation rules. Complete substeps alternate output between two complete fields; spray sources read matching old and new fields, with synchronization only once at the end of the frame. A fixed public rendering field is still retained.
 
-对比时先将 **法线细节强度** 设为 0，使用相同 FFT、过滤参数、网格和时间倍率。切换后等待波重新到岸；需要同一相位时点击 Ocean controls 的 Restart time。比较耗时时同时检查子步数，避免帧长变化造成工作量差异。二阶仍是非色散 SWE，不能恢复网格无法分辨的波。
+**Shallow Water → SWE solver** switches between **First order (Euler)** and **Second order (MUSCL + RK2)**. First order remains the default, and the selection is saved. Switching resets nearshore water, foam, and wet sand, while FFT time continues advancing. Both modes use the same selected grid and CFL substep condition; second order performs two stages per substep.
+
+The panel displays the most recently asynchronously sampled **SWE GPU milliseconds, substep count, advanced simulation milliseconds, and time per substep**. Timestamps cover the start of the first SWE pass through the end of the last pass in the frame, including intermediate parameter copies, foam/wet-sand updates, and spray sources when enabled; they exclude FFT, rendering, particle updates, CPU submission, end-of-frame state synchronization, and timing readback. Only one readback can be in flight; sampling is skipped while it is incomplete, without blocking the frame loop. Pausing/disabling displays idle; GPUs without timestamp query support display unsupported, rather than presenting CPU time as GPU time.
+
+For comparisons, first set **Normal detail strength** to 0 and use the same FFT, filtering parameters, grid, and time multiplier. After switching, wait for waves to reach shore again; click Restart time in Ocean controls when the same phase is needed. When comparing timings, also check the substep count to avoid workload differences caused by changes in frame duration. Second-order SWE is still nondispersive and cannot recover waves that the grid cannot resolve.
 
 ```powershell
 cargo run --release --features ocean --bin ocean -- --beach --swe-order 2 --shore-normal-strength 0
 ```
 
-GPU 验证包含两种模式的静水保持、局部脉冲质量与输运、湿干及退水泡沫、极端坡度、切换重置，以及 4 米波长小振幅波在平底上的传播误差检查。该波形测试每波长 16 格，不代表默认沿岸 1.5 米格距也能分辨 4 米波。
+GPU verification covers still-water preservation, local pulse mass and transport, wet/dry boundaries and foam during recession, extreme slopes, switch resets, and propagation error for a small-amplitude wave with a 4-meter wavelength over a flat bed in both modes. This wave test uses 16 cells per wavelength; it does not imply that the default alongshore 1.5-meter cell spacing can resolve a 4-meter wave.
 
 
-### 水面泡沫与沙滩残留颜色
+### Water surface foam and beach residue colors
 
-SWE 面板的 **泡沫颜色 → 水上泡沫** 控制水面泡沫（含远海白沫）。**恢复默认泡沫颜色** 恢复近白配色。颜色即时生效、手动保存，不重置水体；光照和水下吸收仍影响最终显示色。CLI 使用 `--water-foam-color R,G,B`，范围为 0～1 线性 RGB，放在 `--beach` 后。
-
-
-残留可见性修正：沙滩残留现在以浓度调节透明度，纹理只调制斑驳程度，避免低浓度残留被纹理阈值整体抹掉。近岸水面覆盖改用采样的 SWE 水深，避免较粗的水面三角形横跨干格子遮住残留。**区分位置：水绿／沙红** 可用绿色标记水面泡沫、红色标记真正的沙滩残留，**默认区分色** 恢复正常配色。较宽的临水泡沫带通常仍属于水面泡沫；残留是靠陆一侧的细窄退水痕迹。
+**Foam color → Water foam** in the SWE panel controls water surface foam, including offshore whitecaps. **Restore default foam color** restores the near-white palette. Color changes apply immediately and are saved manually without resetting the water; lighting and underwater absorption still affect the final displayed color. The CLI uses `--water-foam-color R,G,B`, with a range of 0–1 in linear RGB, placed after `--beach`.
 
 
-### 泡沫面密度调试
-
-在 **浅水模拟（SWE）** 面板点击 **密度调试：低绿／高红**，或在 **浅水调试视图** 选择 **泡沫密度（低绿／高红）**。CLI：`--beach --shore-view 6`。水面与沙滩残留使用同一色标：低密度绿色，中间黄色，达到参考值及以上红色；无泡沫保留背景。调试颜色不经过泡沫纹理、光照或远海白沫混合，低于 0.01 的极弱密度淡入背景。正常 Shaded 视图保留已有材质。
-
-- **背景生成速率（每秒）**：控制背景源，受背景生成倍率缩放；前沿生成独立控制。此速率和前沿速率都设为 0 后，可观察已有泡沫的输送与汇聚。
-- **水上泡沫衰减（每秒）**：每秒指数衰减系数，0 表示关闭水面泡沫衰减。
-- **汇聚增强阈值（每秒）**：生成模型中压缩增强项的阈值；不改变守恒输送本身的汇聚效果。
-- **密度颜色参考值**：红色对应的密度，默认 2；只调整显示映射，不裁剪模拟密度。
-
-这些参数即时生效；需要公平比较时使用 **重置浅水、泡沫和沙地** 或重启时间。退水后清除水上泡沫，不再沉积沙地残留。此阶段不新增孔隙纹理模型。GPU 验证覆盖两种求解模式的泡沫总量守恒、平移、汇聚增密、扩散减密、指数衰减及干湿转换。
+Residue visibility correction: beach residue now uses concentration to adjust opacity, while the texture only modulates mottling, preventing low-concentration residue from being completely erased by the texture threshold. Nearshore water surface coverage now uses sampled SWE water depth, preventing coarser water surface triangles from spanning dry cells and obscuring residue. **Distinguish locations: water green / sand red** marks surface foam in green and actual beach residue in red; **Default distinction colors** restores the normal palette. A wider foam band next to the water usually still belongs to surface foam; residue is the narrow receding-water trace on the landward side.
 
 
-### FFT 初始化与输入增益
+### Foam surface density debugging
 
-**浅水模拟（SWE） → FFT 输入 → FFT → SWE 增益**，范围 **0～3**，默认 **1**。该系数同时乘到 FFT 水位扰动与两个水平动量分量上，并同时用于全域初始化和持续边界输入；远海 FFT 的显示不受此系数影响。它与原有 **波高增益** 相乘，0 会把 SWE 重置为静水并关闭后续输入。参数手动保存；修改后即使暂停也重新初始化 SWE，清除泡沫和湿沙历史。
+Click **Density debug: low green / high red** in the **Shallow Water** panel, or select **Foam density (low green / high red)** in **Shallow water debug view**. CLI: `--beach --shore-view 6`. Water surface foam and beach residue use the same color scale: green for low density, yellow in the middle, and red at or above the reference value; the background remains visible where there is no foam. Debug colors bypass foam texture, lighting, and offshore whitecap blending; very weak density below 0.01 fades into the background. The normal Shaded view retains the existing material.
 
-初始化取当前时刻、经过当前过滤参数的 FFT 场，不使用上一帧 FFT，也不再等待 6 秒渐强。水深由“FFT 水位减地形高度”得到并限制为非负，干区动量清零；极浅水保留速度保护。因此强增益受安全限幅时，不保证实际振幅严格增至三倍。初始化不是完整的浅水稳态解，之后仍会调整传播相位、建立冲岸和泡沫。
+- **Background generation rate (per second)**: Controls the background source, scaled by the background generation multiplier; front generation is controlled independently. Set both this rate and the front rate to 0 to observe transport and convergence of existing foam.
+- **Water foam decay (per second)**: Exponential decay coefficient per second; 0 disables water surface foam decay.
+- **Convergence enhancement threshold (per second)**: Threshold for the compression enhancement term in the generation model; it does not change the convergence effect of conservative transport itself.
+- **Density color reference**: Density corresponding to red, default 2; adjusts only the display mapping and does not clip simulation density.
 
-CLI 示例：`cargo run --release --features ocean --bin ocean -- --beach --swe-input-gain 1.5`。
-
-
-沙地残留泡沫的沉积、存储、衰减、渲染及对应颜色、沉积水深控件已删除，湿沙历史与干燥时间保留。水上泡沫在水深不超过 3 毫米时清除，不留下地面残留；水面几何裁剪和求解器干湿保护仍使用各自阈值。旧配置中的 `stranded_foam_color`、`foam_deposit_depth_mm` 被忽略；旧沙地泡沫视图 5 加载为正常着色，水上密度视图保留编号 6。CLI 已移除 `--stranded-foam-color` 和视图 5。
-
-
-近岸背景泡沫生成条件可在 **浅水模拟（SWE）** 调整：
-- **背景生成起始阈值**：起始阈值，默认 0.25，范围 0～2。判断值为“水深上升速度 ÷ 局部浅水波速”，无量纲；调低更容易产泡。
-- **背景生成过渡范围**：从起始阈值到完整生成权重的过渡宽度，默认 0.40，范围 0～2。因此默认在 0.25 开始、0.65 达到完整权重。调小会更快增强，0 表示严格超过阈值后立即达到完整权重。
-
-两项参数即时生效、手动保存，不清空已有泡沫。静水在两项均为 0 时仍不产泡。它们只控制背景生成权重，不影响新增前沿源；实际泡沫量还受生成速率、背景倍率、压缩增强、水深、输送与衰减影响。老设置文件缺少这些字段时使用默认值。
+These parameters apply immediately; use **Reset shallow water, foam, and sand** or restart time when a fair comparison is needed. Water foam is cleared after recession and no longer deposits sand residue. No pore texture model is added at this stage. GPU verification covers foam mass conservation, translation, densification under convergence, dilution under divergence, exponential decay, and wet/dry transitions in both solver modes.
 
 
-## 新鲜白沫 N / 水面残余 R 实验
+### FFT initialization and input gain
 
-在 **浅水模拟（SWE）→ 新鲜白沫与水面残余 → 双浓度实验** 开启。默认关闭，旧配置缺字段时仍使用原来的单浓度守恒／惯性路径。切换模式会重置近岸水体、泡沫与湿沙，不重启 FFT；修改下面三个参数实时生效，手动保存，不清空历史。
+**Shallow Water → FFT input → FFT → SWE gain**, range **0–3**, default **1**. This factor multiplies both the FFT water level perturbation and the two horizontal momentum components, and is used for both full-domain initialization and continuous boundary input; offshore FFT display is unaffected. It multiplies the existing **Wave height gain**; 0 resets SWE to still water and disables subsequent input. The parameter is saved manually; changing it reinitializes SWE even when paused, clearing foam and wet-sand history.
 
-| 参数 | 默认 | 范围／单位 |
+Initialization uses the FFT field at the current time with the current filtering parameters, not the previous frame's FFT, and no longer waits for a 6-second ramp-up. Water depth is calculated as “FFT water level minus terrain height” and constrained to be nonnegative; momentum is zeroed in dry areas, while velocity safeguards remain in very shallow water. Consequently, when safety limits constrain a strong gain, the actual amplitude is not guaranteed to triple exactly. Initialization is not a complete shallow-water steady-state solution; propagation phase still adjusts afterward, and shoreward run-up and foam develop.
+
+CLI example: `cargo run --release --features ocean --bin ocean -- --beach --swe-input-gain 1.5`.
+
+
+Deposition, storage, decay, and rendering of residual foam on sand, along with the corresponding color and deposition-depth controls, have been removed; wet-sand history and drying time remain. Water foam is cleared at water depths of 3 mm or less, leaving no ground residue; water surface geometry clipping and solver wet/dry safeguards still use their respective thresholds. `stranded_foam_color` and `foam_deposit_depth_mm` in old configurations are ignored; old sand foam view 5 loads as normal shading, while water density view retains number 6. The CLI options `--stranded-foam-color` and view 5 have been removed.
+
+
+Nearshore background foam generation conditions can be adjusted in **Shallow Water**:
+- **Background generation start threshold**: Start threshold, default 0.25, range 0–2. The criterion is “water depth rise rate ÷ local shallow-water wave speed,” dimensionless; lowering it makes foam generation easier.
+- **Background generation transition range**: Transition width from the start threshold to full generation weight, default 0.40, range 0–2. Thus, by default generation starts at 0.25 and reaches full weight at 0.65. A smaller value increases it faster; 0 means full weight is reached immediately once the threshold is strictly exceeded.
+
+Both parameters apply immediately, are saved manually, and do not clear existing foam. Still water produces no foam even when both are 0. They control only the background generation weight and do not affect the new front source; actual foam quantity also depends on generation rate, background multiplier, compression enhancement, water depth, transport, and decay. Old settings files missing these fields use defaults.
+
+
+## Fresh white foam N / water surface residual R experiment
+
+Enable under **Shallow Water → Fresh white foam and water surface residual → Dual-concentration experiment**. It is off by default; old configurations missing the field continue to use the original single-concentration conservative/inertial path. Switching modes resets nearshore water, foam, and wet sand without restarting FFT; changing the three parameters below applies live, is saved manually, and does not clear history.
+
+| Parameter | Default | Range / unit |
 | --- | --- | --- |
-| 新鲜半衰期 | 1.4 | 0.1～60 模拟秒 |
-| 残余半衰期 | 9 | 0.1～120 模拟秒 |
-| 退出转残余比例 | 0.65 | 0～1，无量纲 |
+| Fresh half-life | 1.4 | 0.1–60 simulation seconds |
+| Residual half-life | 9 | 0.1–120 simulation seconds |
+| Exit-to-residual fraction | 0.65 | 0–1, dimensionless |
 
-新鲜浓度 **N** 的退出速率为 `a = ln(2) / 新鲜半衰期`，残余浓度 **R** 的衰减速率为 `b = ln(2) / 残余半衰期`，转化比例记为 `f`。局部关系为 `dN/dt = 新生成率 − aN`、`dR/dt = f·aN − bR`。所有现有前沿／背景源只直接注入 N，没有新增独立撞岩造泡器。半衰期已包含转化造成的退出，不能再叠加一次新鲜衰减。
+The exit rate of fresh concentration **N** is `a = ln(2) / fresh half-life`, the decay rate of residual concentration **R** is `b = ln(2) / residual half-life`, and the conversion fraction is denoted by `f`. The local relations are `dN/dt = new generation rate − aN` and `dR/dt = f·aN − bR`. All existing front/background sources inject directly into N only; no independent rock-impact foam generator is added. The half-life already includes exit due to conversion, so fresh decay must not be applied a second time.
 
-局部生成、转化、衰减联合使用解析积分，并处理两种半衰期相同或接近的情况；每个完整 SWE 子步更新一次，二阶预测阶段不重复更新。无源、无输运时，从 `N=1、R=0` 出发，1.4 秒后 `N=0.5、R≈0.306191`：累计进入过 R 的量是 0.325，但转入后也会衰减。
+Local generation, conversion, and decay are integrated analytically together, including cases where the two half-lives are equal or close; the update occurs once per complete SWE substep and is not repeated in the second-order predictor stage. Without sources or transport, starting from `N=1, R=0`, after 1.4 seconds `N=0.5, R≈0.306191`: the cumulative amount transferred into R is 0.325, but it also decays after conversion.
 
-开启后，N、R 和两套材质坐标使用同一个 SWE 粗水流速度回溯，浓度采用双线性半拉格朗日采样，并同时乘以局部压缩／膨胀响应。此模式不使用旧泡沫动量输送、拖曳、跟随倍率、新生速度倍率、空间通量阶数或“水上泡沫衰减”；这些设置保留供关闭实验后恢复。压缩响应只用于此半拉格朗日路径，不叠加到旧守恒通量。SWE 一阶／二阶仍可选择；整个泡沫过程并非严格守恒或帧率无关，仍有回溯插值、流场近似和算子分裂误差。
+When enabled, N, R, and both sets of material coordinates are backtraced using the same coarse SWE flow velocity; concentrations use bilinear semi-Lagrangian sampling and are both multiplied by the local compression/expansion response. This mode does not use the old foam momentum transport, drag, following multiplier, newborn velocity multiplier, spatial flux order, or “Water foam decay”; those settings are retained for use when the experiment is disabled. The compression response applies only to this semi-Lagrangian path and is not added to the old conservative flux. First- or second-order SWE remains selectable; the entire foam process is not strictly conservative or frame-rate independent, and still has backtrace interpolation, flow-field approximation, and operator-splitting errors.
 
-- 两类浓度不限制到 0～1；露出的障碍物阻挡回溯，淹没后允许通过；外部不导入泡沫，FFT 松弛带消散两者。水深不超过 3 毫米时一起清除，R **不是沙地残留**。
-- 开启时使用独立的 N／R 外观，单浓度 NSH／原型材质设置保留。N 默认使用两尺度三角格梯度噪声显示亮白块，细层旋转并错开坐标，减少稀疏前沿的格点排列；也可选择常数阈值或三套 NSH 纹理，见下节。R 始终使用细尺度多层噪声的窄等值带，颜色为当前水上泡沫颜色的 72%，随浓度降低露出细丝和斑点，不跟随 N 的纹理、微法线或粗糙度。仍在同一水面上着色，没有新增几何层、细尺度湍流或单气泡模拟。
-- “不透明度密度尺度”分别控制 N、R 的覆盖响应；坐标重置周期仍有效，默认 2 秒。8 秒保留较长拉伸，0 持续输运、不重置。材质调试 1／2 分别看新鲜 N 的阈值场或纹理 Soft／残余噪声；3 在 N 纹理覆盖处显示其微法线，其余显示原宏观法线；4 看合成不透明度，5 看共享输运网格。
-- 在“着色 → 泡沫外观 → 近岸泡沫材质”切换“纹理随流扭曲”（默认开启）。关闭后所有近岸泡沫材质使用固定世界坐标，N、R 浓度仍正常输送和更新；位移历史继续推进，重新开启立即恢复当前扭曲。实时生效，手动保存，不重置模拟。坐标重置周期为 0 仅表示持续扭曲，不等于关闭扭曲。
-- 在“泡沫材质 → 近岸泡沫材质 → 泡沫显示成分”选择“全部／仅新鲜泡沫 N／仅残余泡沫 R”，默认全部。双浓度模式下可用，实时生效，手动保存，不重置或改变模拟。单独查看时保留对应材质与外观高度，并隐藏远海白沫；密度调试视图独立于此选项。
-- 密度调试 `--shore-view 6` 显示 N+R，`9` 显示 N，`10` 显示 R，均绕过噪声、光照和远海泡沫。关闭实验时视图 9 显示原单浓度，10 无残余。
-- 暂停冻结两者；重置、禁用和网格重建清空两者；暂停时编辑碰撞体也会清除新变干格子的 R，保留湿沙历史。远海 FFT 泡沫保持独立。
+- Neither concentration is limited to 0–1; exposed obstacles block backtracing, but passage is allowed after submersion. No foam is imported from outside, and the FFT relaxation zone dissipates both. Both are cleared when water depth is 3 mm or less; R is **not sand residue**.
+- When enabled, separate N/R appearances are used, while single-concentration NSH/prototype material settings are retained. By default N displays bright white patches using two-scale triangular-grid gradient noise, with the fine layer rotated and its coordinates offset to reduce grid alignment at sparse fronts; a constant threshold or one of three NSH textures may also be selected, as described below. R always uses a narrow isoband of fine-scale multilayer noise, colored at 72% of the current water foam color; filaments and spots appear as concentration decreases. It does not follow N's texture, micro-normal, or roughness. Shading remains on the same water surface; no new geometry layer, fine-scale turbulence, or individual bubble simulation is added.
+- “Opacity density scale” controls the coverage response of N and R respectively; the coordinate reset period remains effective, default 2 seconds. Eight seconds retains longer stretching; 0 means continuous transport without reset. Material debug 1/2 respectively show fresh N's threshold field or texture Soft / residual noise; 3 shows its micro-normal where N texture is present and the original macro normal elsewhere; 4 shows composite opacity, and 5 shows the shared transport grid.
+- Switch “Texture flow distortion” under “Shading → Foam appearance → Nearshore foam material” (on by default). When off, all nearshore foam materials use fixed world coordinates, while N and R concentrations continue to transport and update normally; displacement history continues advancing, and re-enabling immediately restores current distortion. Applies live, saved manually, and does not reset the simulation. A coordinate reset period of 0 means continuous distortion, not disabling distortion.
+- Under “Foam material → Nearshore foam material → Foam display component,” select “All / Fresh foam N only / Residual foam R only,” default All. Available in dual-concentration mode; applies live, is saved manually, and does not reset or change the simulation. Viewing either separately retains its corresponding material and appearance height and hides offshore whitecaps; density debug views are independent of this option.
+- Density debug `--shore-view 6` displays N+R, `9` displays N, and `10` displays R; all bypass noise, lighting, and offshore foam. When the experiment is off, view 9 displays the original single concentration and 10 has no residual.
+- Pausing freezes both; reset, disabling, and grid rebuilding clear both. Editing colliders while paused also clears R from newly dry cells while preserving wet-sand history. Offshore FFT foam remains independent.
 
 ```powershell
-# 不读写个人配置，有限帧试运行。
+# Finite-frame trial without reading or writing personal settings.
 cargo run --release -- --beach --no-settings --foam-dual-phase --frames 600
-# 从已保存场景开启实验；不额外加 --beach 覆盖场景。
+# Enable the experiment from the saved scene; do not add --beach to override it.
 cargo run --release -- --foam-dual-phase
-# 固定礁石配置的只读对照。
+# Read-only comparison with a fixed reef configuration.
 cargo run --release -- --config configs/experiments/reef-front-ridge.json --no-foam-ridges --foam-dual-phase --foam-texture-period 8
 ```
 
-CLI 还支持 `--no-foam-dual-phase`、`--foam-fresh-half-life`、`--foam-residual-half-life`、`--foam-conversion`。配置字段为 `foam_dual_phase`、`foam_fresh_half_life`、`foam_residual_half_life`、`foam_conversion`；会话和命名配置均保存，运行中的浓度不保存。`--verify` 用独立 f64 ODE 积分核对 GPU 解析更新，检查步长拆分、相同速率、0／100% 转化，以及实际 SWE 两阶的共享输运、压缩／膨胀、仅向 N 生成、干湿／障碍物、暂停、重置和水动力独立性。固定礁石快照已观察到近岸白块与外围细纹；不据此宣称复现真实泡沫形态。
+The CLI also supports `--no-foam-dual-phase`, `--foam-fresh-half-life`, `--foam-residual-half-life`, and `--foam-conversion`. Configuration fields are `foam_dual_phase`, `foam_fresh_half_life`, `foam_residual_half_life`, and `foam_conversion`; both sessions and named configurations save them, but running concentrations are not saved. `--verify` checks the GPU analytical update against an independent f64 ODE integration, including timestep splitting, equal rates, 0/100% conversion, and shared transport, compression/expansion, generation into N only, wet/dry boundaries and obstacles, pause, reset, and hydrodynamic independence in both actual SWE orders. A fixed reef snapshot has shown nearshore white patches and fine peripheral streaks; this does not establish reproduction of real foam morphology.
 
-### 新鲜 N 外观：常数／噪波／纹理
+### Fresh N appearance: constant / noise / texture
 
-在 **着色 → 泡沫外观 → 新鲜泡沫 N 外观** 的“渲染方式”中使用“常数｜噪波｜纹理”三选一分段选择器；仅双浓度模式显示。默认仍为噪波，与旧效果相同。只显示当前模式有效的参数，切换保留三种模式的全部参数，实时生效，不清空浓度、不重置水体或坐标历史，需手动保存。旧配置缺少字段时加载下表默认值。
+Use the “Constant | Noise | Texture” segmented selector under “Render mode” in **Shading → Foam appearance → Fresh foam N appearance**; it is shown only in dual-concentration mode. Noise remains the default and matches the old effect. Only parameters valid for the current mode are shown; switching retains all parameters for all three modes, applies live, does not clear concentration or reset water or coordinate history, and requires manual saving. Old configurations missing fields load the defaults in the table below.
 
-| 参数 | 配置字段 | 默认值／范围 |
+| Parameter | Configuration field | Default / range |
 | --- | --- | --- |
-| 渲染方式 | `foam_fresh_threshold_mode` | 1 噪波；0 常数、2 纹理（保留原字段名兼容旧配置） |
-| N 常数阈值 | `foam_fresh_threshold` | 0.5；0～1，无量纲 |
-| N 主噪波频率 | `foam_fresh_noise_frequency` | 0.8；0.05～20／米 |
-| N 细噪波频率 | `foam_fresh_noise_detail_frequency` | 2.5；0.05～60／米 |
-| N 细噪波占比 | `foam_fresh_noise_detail_weight` | 0.3；0～1，无量纲 |
-| N 纹理来源 | `foam_fresh_texture` | 1 Shorewaves NSH；2 Crest Foam NSH、3 Crest Foam2 NSH |
-| N 纹理尺寸 | `foam_fresh_texture_size` | 12；0.25～64 米，粗层世界边长 |
-| N 微法线强度 | `foam_fresh_micro_normal` | 0.65；0～3，无量纲，0 关闭微法线 |
-| N 粗糙度 | `foam_fresh_roughness` | 0.85；0.15～1，无量纲 |
-| N 覆盖参考值 | `foam_fresh_coverage_reference` | 2；0.01～20，模拟泡沫量／面积，非实测质量单位 |
-| N 浓度决定透明度 | `foam_fresh_density_opacity` | 关闭，三种 N 渲染方式均可用 |
-| N 浓度范围 | `foam_fresh_opacity_range` | 1；0～10，模拟泡沫量／面积 |
-| N 浓度幂值 p | `foam_fresh_opacity_power` | 1；0.1～5，无量纲 |
-| R 浓度决定透明度 | `foam_residual_density_opacity` | 关闭，位于“残余泡沫 R 外观”组 |
-| R 浓度范围 | `foam_residual_opacity_range` | 1；0～10，模拟泡沫量／面积 |
-| R 浓度幂值 p | `foam_residual_opacity_power` | 1；0.1～5，无量纲 |
+| Render mode | `foam_fresh_threshold_mode` | 1 Noise; 0 Constant, 2 Texture (original field name retained for compatibility with old configurations) |
+| N constant threshold | `foam_fresh_threshold` | 0.5; 0–1, dimensionless |
+| N primary noise frequency | `foam_fresh_noise_frequency` | 0.8; 0.05–20/meter |
+| N detail noise frequency | `foam_fresh_noise_detail_frequency` | 2.5; 0.05–60/meter |
+| N detail noise weight | `foam_fresh_noise_detail_weight` | 0.3; 0–1, dimensionless |
+| N texture source | `foam_fresh_texture` | 1 Shorewaves NSH; 2 Crest Foam NSH, 3 Crest Foam2 NSH |
+| N texture size | `foam_fresh_texture_size` | 12; 0.25–64 meters, coarse-layer world-space side length |
+| N micro-normal strength | `foam_fresh_micro_normal` | 0.65; 0–3, dimensionless, 0 disables micro-normal |
+| N roughness | `foam_fresh_roughness` | 0.85; 0.15–1, dimensionless |
+| N coverage reference | `foam_fresh_coverage_reference` | 2; 0.01–20, simulated foam quantity/area, not a measured mass unit |
+| N density controls opacity | `foam_fresh_density_opacity` | Off, available for all three N render modes |
+| N density range | `foam_fresh_opacity_range` | 1; 0–10, simulated foam quantity/area |
+| N density exponent p | `foam_fresh_opacity_power` | 1; 0.1–5, dimensionless |
+| R density controls opacity | `foam_residual_density_opacity` | Off, in the “Residual foam R appearance” group |
+| R density range | `foam_residual_opacity_range` | 1; 0–10, simulated foam quantity/area |
+| R density exponent p | `foam_residual_opacity_power` | 1; 0.1–5, dimensionless |
 
-常数模式以统一数值替代 N 的噪波阈值场；阈值越低越容易显示。两模式均与 `1 − exp(−N／不透明度密度尺度)` 比较，保留原柔和过渡、零浓度不可见和薄水淡出，不是直接按原始 N 做硬裁切。噪波模式保留三角格梯度噪波、细层旋转／偏移及像素足迹过滤；频率越大图案越细，不等于精确周期波长。主／细层按 `1−占比`／`占比` 混合，默认 70%／30%；占比 0 或 1 可隔离单层。
+Constant mode replaces N's noise threshold field with a uniform value; a lower threshold makes it easier to display. Both modes compare against `1 − exp(−N / opacity density scale)`, retaining the original soft transition, invisibility at zero concentration, and thin-water fade, rather than hard-clipping raw N directly. Noise mode retains triangular-grid gradient noise, fine-layer rotation/offset, and pixel-footprint filtering; higher frequency makes the pattern finer and is not an exact periodic wavelength. Primary/detail layers are mixed by `1−weight` / `weight`, default 70%/30%; a weight of 0 or 1 isolates one layer.
 
-纹理模式为 N 复用完整 NSH 渲染，不只是用图片替换噪波：以 N 浓度计算孔隙覆盖和连续不透明度，使用纹理微法线与粗糙度计算 N 的光照。三套资源、线性通道、mip 与许可沿用 [NSH 泡沫纹理与材质](#nsh-泡沫纹理与材质)。不包含“原灰度效果”；NSH 的 Height 不是几何高度，不会抬高水面。粗细层尺寸比仍为 10，权重为 72%／28%，沿用现有输运坐标和双相位混合；每个相位先分别完成 N／R 着色与合成，再混合最终结果，避免先混纹理造成孔洞跳变。
+Texture mode reuses full NSH rendering for N, not merely an image in place of noise: N concentration determines pore coverage and continuous opacity, while texture micro-normals and roughness determine N lighting. The three assets, linear channels, mip levels, and licenses are the same as in [NSH foam textures and materials](#nsh-foam-textures-and-materials). It does not include the “Original grayscale effect”; NSH Height is not geometric height and does not raise the water surface. The coarse-to-fine layer size ratio remains 10 and weights remain 72%/28%, using existing transport coordinates and dual-phase blending; each phase first completes N/R shading and compositing separately, then blends final results, avoiding abrupt hole changes from mixing textures first.
 
-N 纹理参数独立于单浓度模式的纹理设置。孔隙填充使用独立的“N 覆盖参考值”，不借用“密度颜色参考值”；纹理不透明度为“孔隙覆盖率 × `1 − exp(−N／共用不透明度密度尺度)`”，保留零浓度与薄水保护。共用密度尺度仍同时影响 N 与 R，位于共用材质组，不属于 N 独立参数。NSH 和常数／噪波使用不同的浓度到可见覆盖曲线，因此同样的 N 数值可能显示不同面积，但模拟浓度没有变化。现有 `--foam-texture` 仍选择单浓度纹理；N 的新字段通过会话／命名配置或只读 `--config` 加载。
+N texture parameters are independent of the single-concentration mode's texture settings. Pore filling uses a separate “N coverage reference,” not “Density color reference”; texture opacity is “pore coverage × `1 − exp(−N / shared opacity density scale)`,” retaining zero-concentration and thin-water safeguards. The shared density scale still affects both N and R and is located in the shared material group, not among N's independent parameters. NSH and constant/noise use different concentration-to-visible-coverage curves, so the same N value may display different areas without changing simulated concentration. Existing `--foam-texture` still selects the single-concentration texture; N's new fields are loaded through session/named configurations or read-only `--config`.
 
-这些参数只改变双浓度 N 的材质；不改生成、输送、N→R 转化、衰减、模拟密度、泡沫几何高度、密度调试、单浓度材质或 R 自身的材质。N 覆盖变化仍会改变合成中 R 被遮挡的部分。常数模式不随纹理运动改变阈值；共享坐标仍为 R 持续更新。真实 GPU 验证检查三套 N 纹理与原单浓度 NSH 的纯 N 外观一致、各独立参数确实改变渲染、仅 R 的光照／法线／不透明度和三种密度视图不受 N 外观影响，以及一阶／二阶 SWE 的完整模拟状态保持一致。
+These parameters change only the dual-concentration N material; they do not alter generation, transport, N→R conversion, decay, simulated density, foam geometry height, density debugging, the single-concentration material, or R's own material. Changes in N coverage can still alter how much R is occluded in the composite. Constant mode does not change its threshold with texture motion; shared coordinates continue updating for R. Real GPU verification checks that pure-N appearance for the three N textures matches the original single-concentration NSH, that each independent parameter actually changes rendering, that R-only lighting/normals/opacity and the three density views are unaffected by N appearance, and that the full simulation state remains consistent for first- and second-order SWE.
 
-#### N／R 独立的浓度透明度因子
+#### Independent N/R density opacity factors
 
-“新鲜泡沫 N 外观”与“残余泡沫 R 外观”各有一个默认关闭的“浓度决定透明度”开关。开启后只显示本类泡沫的“浓度范围”和“浓度幂值 p”；关闭保留参数并恢复原外观。浓度范围为 0～10，p 为 0.1～5，默认均为 1。两类分别设置，只作用于双浓度模式，实时生效、手动保存，不重置历史。
+“Fresh foam N appearance” and “Residual foam R appearance” each have a “Density controls opacity” switch, off by default. When enabled, only that foam category's “Density range” and “Density exponent p” are shown; disabling it retains the parameters and restores the original appearance. Density range is 0–10 and p is 0.1–5, both defaulting to 1. The categories are configured separately, apply only to dual-concentration mode, take effect live, are saved manually, and do not reset history.
 
-公式中的 `n` 为当前类别的局部模拟浓度，`N` 为该类别设置的浓度范围（不是新鲜泡沫类别名），`p` 为幂值。附加因子为 `pow(clamp(n / N, 0, 1), p)`：0 表示该类泡沫完全透明，1 保持其原有外观。它叠乘在现有孔隙覆盖和密度响应之后，不替换原曲线；同时缩放本类泡沫的预乘颜色与不透明度，再按新鲜泡沫覆盖残余泡沫合成，不是只把 RGB 乘暗。N 的常数／噪波／纹理三种渲染方式均可用；R 使用自身浓度和参数，不借用 N 参数。N 因子降低后可能露出更多 R，这是合成遮挡变化，不是 R 浓度变化。
+In the formula, `n` is the local simulated concentration of the current category, `N` is its configured density range (not the fresh foam category name), and `p` is the exponent. The additional factor is `pow(clamp(n / N, 0, 1), p)`: 0 makes that category completely transparent, while 1 retains its original appearance. It multiplies the existing pore coverage and density response rather than replacing the original curve; it scales both the category's premultiplied color and opacity, then fresh foam is composited over residual foam. It does not merely darken RGB. All three N render modes, constant/noise/texture, support it; R uses its own concentration and parameters rather than N's. Lowering the N factor can reveal more R; this is a change in composite occlusion, not R concentration.
 
-浓度范围为 0 时，正浓度归一化为 1、零或负浓度归一化为 0，不执行除零；p 不允许为 0。增大浓度范围或 p 会让未饱和部分更透明，降低 p 则更不透明。零浓度与薄水保护仍保留；不修改孔隙输入图案、微法线、泡沫几何高度、密度调试或 N/R 模拟。旧配置缺字段时两个开关均关闭。GPU 检查独立 f64 幂函数参考、范围零／夹取／p 边界，并验证实际渲染的颜色与不透明度按该因子一起趋近底层水色，而非仅变暗。
+When density range is 0, positive concentration normalizes to 1 and zero or negative concentration to 0, without division by zero; p cannot be 0. Increasing density range or p makes unsaturated portions more transparent, while lowering p makes them more opaque. Zero-concentration and thin-water safeguards remain; pore input patterns, micro-normals, foam geometry height, density debugging, and N/R simulation are unchanged. Both switches are off when old configurations lack the fields. GPU checks use an independent f64 power-function reference, range-zero/clamping/p boundaries, and verify that actual rendered color and opacity approach the underlying water color together according to the factor, rather than merely darkening.
 
-## 前沿泡沫：有方向的压缩
+## Front foam: directional compression
 
-前沿生成只保留**有方向的压缩**，不再提供检测方式切换。压缩强度为 `max(当前速度沿采样方向的分量 − 前方速度沿该方向的分量, 0) ÷ 实际采样距离`，单位每秒。同向追赶、迎面相遇可以触发，沿流向拉开和纯横向速度差不触发。
+Front generation retains only **directional compression**; detection method switching is no longer provided. Compression strength is `max(component of current velocity along sampling direction − component of forward velocity along that direction, 0) ÷ actual sampling distance`, in inverse seconds. Catch-up in the same direction and head-on convergence can trigger it; separation along the flow and purely transverse velocity differences cannot.
 
-沿当前水流方向在采样距离的 1/4、1/2、3/4、1 倍处取样，分别计算压缩强度后取最大值。使用同一求解阶段的水体速度，按世界距离计算，兼容非正方形网格。双线性插值只计有水角点；越界及完全干燥的点跳过。当前流速不超过 0.02 m/s 时关闭检测，0.02～0.1 m/s 平滑开启。
+Samples are taken along the current flow direction at 1/4, 1/2, 3/4, and 1 times the sampling distance; compression strength is calculated for each and the maximum is used. Water velocity from the same solver stage is used, calculated in world-space distance, and supports non-square grids. Bilinear interpolation counts only wet corners; out-of-bounds and completely dry points are skipped. Detection is disabled when current speed is at most 0.02 m/s and smoothly enabled from 0.02 to 0.1 m/s.
 
-在 **浅水模拟（SWE） → 前沿泡沫** 调整：
+Adjust under **Shallow Water → Front foam**:
 
-| 参数 | 默认值 | 范围 / 含义 |
+| Parameter | Default | Range / meaning |
 | --- | --- | --- |
-| 前沿生成速率（每秒） | 8 | 0～30，满权重时的生成速率；0 关闭 |
-| 前沿采样距离（米） | 1 | 0.05～10 |
-| 速度变化起始阈值（每秒） | 0.1 | 0～20，压缩强度超过后开始生成 |
-| 速度变化过渡范围（每秒） | 0.5 | 0～20，从阈值到阈值加此范围平滑升至满权重；0 为严格大于阈值的硬切换 |
-| 背景生成倍率 | 0.15 | 0～1，设为 0 可单独观察前沿源 |
+| Front generation rate (per second) | 8 | 0–30, generation rate at full weight; 0 disables it |
+| Front sampling distance (meters) | 1 | 0.05–10 |
+| Velocity change start threshold (per second) | 0.1 | 0–20, generation starts once compression strength exceeds it |
+| Velocity change transition range (per second) | 0.5 | 0–20, smoothly rises to full weight from the threshold to the threshold plus this range; 0 is a hard switch strictly above the threshold |
+| Background generation multiplier | 0.15 | 0–1, set to 0 to observe the front source alone |
 
-例如相距 0.5 米的水流，同向速度从后方 2 m/s 降到前方 0.5 m/s，压缩强度为 3/s；反过来则为 0。强度映射为 0～1 的生成权重，不直接限制累计泡沫密度。背景源与前沿源相加后应用 3～30 mm 薄水抑制和外海边界淡出，每个完整 SWE 子步只添加一次。
+For example, for flows 0.5 meters apart, with same-direction velocity dropping from 2 m/s at the rear to 0.5 m/s ahead, compression strength is 3/s; reversing them gives 0. Strength maps to a generation weight of 0–1 and does not directly limit accumulated foam density. Background and front sources are added, then thin-water suppression at 3–30 mm and offshore boundary fade are applied; the result is added only once per complete SWE substep.
 
-调参实时生效、手动保存，不清空已有泡沫，不改变水体方程。旧配置中的 `foam_front_mode`、`foam_front_depth_drop`、`foam_front_gain_points` 和 `foam_front_power` 被忽略，其余参数正常加载。可将背景倍率设为 0、使用密度调试，并固定时间、相机、FFT 和 SWE 阶数观察效果。压缩判据是浅水产泡的近似信号，未解析实际空气卷入。
+Parameter changes apply live, are saved manually, do not clear existing foam, and do not change the water equations. `foam_front_mode`, `foam_front_depth_drop`, `foam_front_gain_points`, and `foam_front_power` in old configurations are ignored; other parameters load normally. Set the background multiplier to 0, use density debugging, and fix time, camera, FFT, and SWE order to observe the effect. The compression criterion is an approximate signal for shallow-water foam generation and does not resolve actual air entrainment.
 
-## 泡沫动量、追赶与汇聚
+## Foam momentum, catch-up, and convergence
 
-在 **浅水模拟（SWE）→ 泡沫动量与水流拖曳** 调整：
+Adjust under **Shallow Water → Foam momentum and water drag**:
 
-| 参数 | 默认值 | 范围 | 含义 |
+| Parameter | Default | Range | Meaning |
 | --- | --- | --- | --- |
-| 泡沫空间输送 | 一阶 | 一阶／二阶 MUSCL | 仅 SWE 二阶（RK2）时启用选择；SWE 一阶始终使用原通量 |
-| 启用水流拖曳 | 开启 | 开／关 | 关闭后保留独立惯性，用于隔离验证；生成、衰减和干格子清除仍有效 |
-| 水流跟随倍率 | 0.8 | 0～1 | 泡沫目标速度为水流速度乘此倍率 |
-| 速度响应时间（秒） | 0.35 | 0～20 | 速度向目标靠拢的时间常数，0 表示立即跟随 |
-| 新生泡沫速度倍率 | 1 | 0～1 | 新生速度为当地水流速度乘此倍率；只影响新增泡沫 |
+| Foam spatial transport | First order | First order / second-order MUSCL | Selection is enabled only with second-order SWE (RK2); first-order SWE always uses the original flux |
+| Enable water drag | On | On/off | Disabling retains independent inertia for isolated verification; generation, decay, and dry-cell clearing still operate |
+| Flow following multiplier | 0.8 | 0–1 | Foam target velocity is water velocity multiplied by this factor |
+| Velocity response time (seconds) | 0.35 | 0–20 | Time constant for velocity approaching the target; 0 means immediate following |
+| New foam velocity multiplier | 1 | 0–1 | New foam velocity is local water velocity multiplied by this factor; affects only newly generated foam |
 
-以下说明适用于默认单浓度模式；双浓度实验使用上文的 SWE 随流输运。默认每格保存“泡沫量／面积”和“泡沫量／面积 × 水平速度”。两者使用相同的迎风权重跨格输送；格内速度等于动量除以泡沫量。因此快泡沫追上慢泡沫时会积聚、增密，并按泡沫量加权混合速度。比如前团泡沫量 0.2、速度 0.2 m/s，后团泡沫量 0.8、速度 1 m/s，充分混合后总量为 1，总动量为 0.84，平均速度为 0.84 m/s。局部密度允许超过 1；汇聚不会额外制造泡沫。
+The following applies to the default single-concentration mode; the dual-concentration experiment uses SWE flow transport as described above. By default each cell stores “foam quantity/area” and “foam quantity/area × horizontal velocity.” Both are transported across cells using the same upwind weights; cell velocity equals momentum divided by foam quantity. Thus fast foam catching slow foam accumulates and densifies, with velocities mixed weighted by foam quantity. For example, if the front patch has foam quantity 0.2 and velocity 0.2 m/s, and the rear patch has quantity 0.8 and velocity 1 m/s, after complete mixing the total quantity is 1, total momentum is 0.84, and average velocity is 0.84 m/s. Local density may exceed 1; convergence does not create additional foam.
 
-新生泡沫注入“新增量 × 新生速度”的动量，衰减按相同比例移除泡沫量与动量。拖曳加速度为“目标速度与泡沫速度之差／响应时间”。对每子步内固定的水流与生成率，生成、衰减、拖曳联合使用解析积分；仅有拖曳时，速度按指数靠拢目标。拖曳关闭后，跟随倍率与响应时间不影响惯性输送。跟随倍率为 0 且拖曳开启时才会逐渐停下。此模型不反作用于水体。
+New foam injects momentum equal to “new quantity × newborn velocity,” while decay removes foam quantity and momentum in the same proportion. Drag acceleration is “difference between target velocity and foam velocity / response time.” For fixed flow and generation rate within each substep, generation, decay, and drag are integrated analytically together; with drag alone, velocity approaches the target exponentially. With drag off, following multiplier and response time do not affect inertial transport. Foam gradually stops only when the following multiplier is 0 and drag is enabled. This model does not feed back on the water.
 
-SWE 历史第四块保存泡沫面动量和第一套纹理位移，第五块保存第二套纹理位移与更新相位；第五块 w 在双浓度模式下保存水面 R，原密度槽保存 N+R，默认单浓度模式的 R 为零。缓冲区仍为五块，大小不变。泡沫量与两个动量分量共用守恒通量，在 RK2 预测、校正中共同推进；生成和拖曳只在完成子步时积分一次。输送速度上限沿用 SWE 的 12 m/s 与 CFL 步长约束。两套纹理位移使用同一泡沫速度场反向追踪并累计，材质坐标为“世界位置 − 位移”。
+The fourth SWE history block stores foam surface momentum and the first set of texture displacement; the fifth stores the second set of texture displacement and the update phase. The fifth block's w stores surface R in dual-concentration mode, the original density slot stores N+R, and R is zero in default single-concentration mode. The buffer still has five blocks and is unchanged in size. Foam quantity and both momentum components share conservative fluxes and advance together in RK2 prediction and correction; generation and drag are integrated only once when the substep completes. Transport velocity retains SWE's 12 m/s limit and CFL timestep constraint. Both sets of texture displacement are backtraced and accumulated using the same foam velocity field; material coordinates are “world position − displacement.”
 
-为避免无限累计造成拉丝，每套纹理只保留最多 **2 秒模拟时间**的形变，两套错开 **1 秒**更新。更新时该套纹理的显示权重为零，两套覆盖率平滑交替；不混合坐标，也不直接把两张噪声平均后再做阈值。每套纹理在显示期间仍随水流移动、拉伸，但具体孔隙会逐渐更新，不能永久追踪同一个孔隙。泡沫密度与速度不会随纹理更新清空。
+To avoid streaking from unlimited accumulation, each texture retains at most **2 seconds of simulation time** of deformation, and the two update **1 second** apart. The display weight of a texture is zero when it updates, and the two coverage weights alternate smoothly; coordinates are not mixed, nor are two noise fields directly averaged before thresholding. Each texture still moves and stretches with the flow while displayed, but individual pores gradually refresh and cannot be tracked forever. Foam density and velocity are not cleared when textures update.
 
-纹理追踪与渲染插值仅使用湿格子的位移，并重新归一化权重，避免干格子的零位移拉扯湿区纹理。完全没有湿采样时使用初始坐标。更新相位随实际 SWE 子步推进，暂停不更新，RK2 只在完成子步后更新一次；干格子仍保持同步相位。
+Texture tracking and rendering interpolation use displacement only from wet cells and renormalize weights, preventing zero displacement in dry cells from pulling wet-area textures. Initial coordinates are used when there are no wet samples. Update phase advances with actual SWE substeps, does not update while paused, and updates only once after a completed RK2 substep; dry cells still maintain a synchronized phase.
 
-参数实时生效，需手动保存，不重置历史。暂停保持动量和纹理历史；重置和禁用清空历史，干格子清除泡沫及其动量，不留下沙地残留。背景生成中的汇聚判据继续使用水流速度；前沿生成仅使用有方向的压缩。薄水材质的 8 mm 裁剪不变。
+Parameters apply live, require manual saving, and do not reset history. Pausing preserves momentum and texture history; reset and disabling clear history, while dry cells clear foam and its momentum without leaving sand residue. The convergence criterion for background generation continues to use water velocity; front generation uses only directional compression. The thin-water material's 8 mm cutoff is unchanged.
 
-泡沫速度使用深度平均水流作为目标；纹理位移的半拉格朗日输送仍有数值扩散，单次 2 秒内的强剪切仍可能产生拉伸。泡沫空间输送默认仍为一阶；可在二阶 SWE（RK2）下，将“泡沫空间输送”切为二阶 MUSCL。它对泡沫量与两个动量分量共同做受限线性重构，用统一缩放保证面密度非负、面速度不产生明显邻域过冲。干湿交界（重构邻域水深不超过 20 mm 或湿阈值）、障碍物阻挡和域边缘局部退回一阶。沿用共享 Rusanov 通量与现有 0.2 CFL；不通过截断到 0～1 保形，也不改变生成、衰减、拖曳、两秒纹理更新或材质。它减少数值扩散，但不会产生新的湍流或永久保留格子以下的细丝。
+Foam velocity uses depth-averaged water flow as its target; semi-Lagrangian transport of texture displacement still has numerical diffusion, and strong shear during a single 2-second interval can still cause stretching. Foam spatial transport remains first order by default; under second-order SWE (RK2), “Foam spatial transport” can be switched to second-order MUSCL. It performs limited linear reconstruction jointly on foam quantity and both momentum components, with uniform scaling to keep face density nonnegative and avoid significant neighborhood overshoot in face velocity. It locally falls back to first order at wet/dry interfaces (reconstruction neighborhood depth at or below 20 mm or the wet threshold), obstacle blockages, and domain edges. It retains the shared Rusanov flux and existing 0.2 CFL; it does not preserve shape by clipping to 0–1, nor change generation, decay, drag, two-second texture updates, or materials. It reduces numerical diffusion but does not create new turbulence or permanently preserve sub-cell filaments.
 
-`foam_transport_order` 缺失时取 1，旧配置不会改变行为。选择实时生效且不清空历史；SWE 为一阶时保存的二阶选择暂不生效。固定场景可用以下命令启用，不读取或覆盖个人配置：
+When `foam_transport_order` is missing, it defaults to 1, so old configurations do not change behavior. Selection applies live without clearing history; a saved second-order selection has no effect while SWE is first order. The following command enables it for a fixed scene without reading or overwriting personal settings:
 
 ```powershell
 cargo run --release -- --beach --no-settings --swe-order 2 --foam-transport-order 2
 ```
 
-`--verify` 先用生产 GPU 管线验证前慢后快的两团泡沫：各长 2 m，相隔 1 m，后团密度 0.8、速度 1 m/s，前团密度 0.2、速度 0.2 m/s，静水中关闭生成、拖曳、衰减，推进 5 秒。检查总量与两方向总动量守恒、质心位移、汇聚密度增长和相对动能耗散，覆盖一阶 SWE、一阶泡沫 + RK2、MUSCL 泡沫 + RK2，并将 MUSCL 追赶场景缩放到 1e-7 初始密度检验近真空行为。二阶泡沫同样覆盖障碍物、干湿清除及完整海岸推进。另以独立 f64 RK4 对照 WGSL 的新生动量、拖曳、衰减及时间步一致性，随后验证海岸传播、干湿清除、暂停、参数修改与渲染。
+`--verify` first uses the production GPU pipeline to verify two foam patches, slow in front and fast behind: each 2 m long, separated by 1 m, rear density 0.8 and velocity 1 m/s, front density 0.2 and velocity 0.2 m/s, in still water with generation, drag, and decay disabled, advancing 5 seconds. It checks conservation of total quantity and total momentum in both directions, center-of-mass displacement, convergence density growth, and relative kinetic energy dissipation, covering first-order SWE, first-order foam + RK2, and MUSCL foam + RK2; it also scales the MUSCL catch-up scenario to an initial density of 1e-7 to test near-vacuum behavior. Second-order foam also covers obstacles, wet/dry clearing, and full coastal advancement. An independent f64 RK4 reference additionally checks WGSL newborn momentum, drag, decay, and timestep consistency, followed by verification of coastal propagation, wet/dry clearing, pause, parameter changes, and rendering.
 
-原一阶空间通量在 RTX 3070 / Vulkan 验证中，Euler／RK2 的峰值密度分别为 1.0483／1.0441，总动量除以总量均约为 0.84 m/s；总量相对误差约百万分之一，动量误差约千万分之二。0.25 m 网格下，质心移动约 4.10 m，相比连续守恒方程的 4.20 m 有约 0.10 m 的一阶空间误差；总量和总动量守恒不等同于轨迹没有数值误差。
+In RTX 3070 / Vulkan verification of the original first-order spatial flux, Euler/RK2 peak densities were 1.0483/1.0441 respectively, and total momentum divided by total quantity was approximately 0.84 m/s in both; relative total quantity error was about one part per million, and momentum error about two parts per ten million. On a 0.25 m grid, the center of mass moved about 4.10 m, compared with 4.20 m for the continuous conservation equation, an approximately 0.10 m first-order spatial error; conservation of total quantity and momentum does not mean trajectories have no numerical error.
 
-### 物理依据与推荐起点
+### Physical basis and recommended starting point
 
-“物理参考起点 → 应用推荐值”设置以下五项，实时生效，手动保存；旧配置仍保留原有跟随倍率、响应时间与衰减值，缺少新字段时补默认值。
+“Physical reference starting point → Apply recommended values” sets the following five items, applies live, and is saved manually; old configurations retain their existing following multiplier, response time, and decay values, with defaults supplied for missing new fields.
 
-| 参数 | 推荐起点 | 解释 |
+| Parameter | Recommended starting point | Explanation |
 | --- | --- | --- |
-| 启用水流拖曳 | 开启 | 水流向泡沫传递动量 |
-| 水流跟随倍率 | 1 | 仅有水流拖曳时，两者趋向同速；小于 1 是附加的视觉阻滞 |
-| 速度响应时间 | 2 秒 | 约 2 秒消除初始相对速度的 63%；可在 2～5 秒比较保留惯性的程度 |
-| 新生泡沫速度倍率 | 1 | 生成时继承当地水流速度，之后再由拖曳与输送改变 |
-| 水上泡沫衰减 | 0.3 /秒 | 无源时半衰期约 2.31 秒，约 7.68 秒剩 10%；与显示消失时刻不同 |
+| Enable water drag | On | Water transfers momentum to foam |
+| Flow following multiplier | 1 | With water drag alone, both approach the same velocity; a value below 1 adds visual retardation |
+| Velocity response time | 2 seconds | Eliminates approximately 63% of initial relative velocity in 2 seconds; compare 2–5 seconds for different degrees of retained inertia |
+| New foam velocity multiplier | 1 | Inherits local water velocity at generation, then changes through drag and transport |
+| Water foam decay | 0.3 /second | With no source, half-life is about 2.31 seconds and 10% remains after about 7.68 seconds; this differs from the time of visible disappearance |
 
-[Wretborn 等，SIGGRAPH 2022，Guided Bubbles and Wet Foam](https://alexey.stomakhin.com/research/siggraph2022_whitewater.pdf) 使用相对水流速度产生线性表面拖曳，表 3 给出的模拟拖曳系数为 0.05～0.5 /秒。取其倒数得到本项目响应时间 2～20 秒；推荐 2 秒取较强拖曳端。这是生产模拟的调参依据，并非海岸实测通用常数。其完整模型还包含泡沫压力、黏性与内聚力，本实现只借鉴拖曳形式，不能直接等同整篇论文的物理模型。
+[Wretborn et al., SIGGRAPH 2022, Guided Bubbles and Wet Foam](https://alexey.stomakhin.com/research/siggraph2022_whitewater.pdf) uses velocity relative to water to produce linear surface drag; Table 3 gives simulated drag coefficients of 0.05–0.5 /second. Taking their reciprocals gives response times of 2–20 seconds in this project; the recommended 2 seconds selects the stronger-drag end. This is a tuning reference for a production simulation, not a universal constant measured on a coast. The complete model also includes foam pressure, viscosity, and cohesion; this implementation borrows only the drag form and cannot be equated directly with the paper's full physical model.
 
-[Callaghan 等，2024，实验与现场白浪泡沫演化比较](https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2023JC020193) 表明泡沫衰退同时受水下气泡逸出及表面活性物质稳定作用影响，寿命不能只由水流速度确定。本项目选择 0.3 /秒作为秒级衰退的校准起点，并不是把论文的可见面积寿命直接转换为本项目面密度衰减系数。
+[Callaghan et al., 2024, comparison of laboratory and field whitecap foam evolution](https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2023JC020193) indicates that foam decay is influenced both by escape of underwater bubbles and stabilization by surfactants, so lifetime cannot be determined from water velocity alone. This project chooses 0.3 /second as a calibration starting point for decay on a timescale of seconds, not as a direct conversion of the paper's visible-area lifetime into this project's surface-density decay coefficient.
 
-本实现假设泡沫量正比于有效质量，使用无压力的单速度层；碰撞后的格内混合保持总动量，耗散相对动能。尚未模拟含液率变化、排液、泡径分布、膜破裂、压力、黏性、内聚力、风力或泡沫对水体的反作用。因此能表达“追赶—汇聚—衰退”，但不是完整的定量海水泡沫模型。前沿生成阈值和生成率仍是模型／分辨率相关参数，缺少当地实测输入时不称为物理材料常数。
+This implementation assumes foam quantity is proportional to effective mass and uses a pressureless single-velocity layer; mixing within a cell after collision conserves total momentum and dissipates relative kinetic energy. It does not yet simulate liquid fraction changes, drainage, bubble-size distribution, film rupture, pressure, viscosity, cohesion, wind, or foam feedback on water. It can therefore represent “catch-up–convergence–decay,” but is not a complete quantitative seawater foam model. Front generation thresholds and rates remain model- and resolution-dependent parameters and are not called physical material constants without local measurements.
 
-## 泡沫形态输送对照
+## Foam morphology transport comparison
 
-新增独立离线工具 `foam-lab`：固定平移、剪切、差速旋流，直接调用生产 GPU 泡沫输送，默认在相同 RK2 和 CFL=0.2 下对比 128／256／512 格的一阶与二阶空间输送，在 0、2、4、8 模拟秒输出密度快照、解析参考、误差指标及设备支持时的真实 GPU timestamp 耗时。默认保形实验不读取个人配置、不运行完整 SWE、不使用泡沫材质。另有 `--benchmark` 模式，调用完整生产 SWE 内核，以固定稀疏／密集／合成模型地形／8 障碍物及模型双浓度＋非零 FFT 输入比较三种阶数组合，预热后报告重复 GPU 子步计时并导出单步状态。该内核基准不包含正常帧的参数／状态拷贝及渲染，不代表界面 FPS。另有 `ocean-profile --config PATH --output NEW_DIR`，只读配置并离屏运行完整生产路径，固定时间后分开记录 FFT、远海泡沫、SWE（含复制与浪花源）、粒子和绘制耗时。使用方式、参数与结果边界见 [泡沫诊断与基准测试](foam-lab.md)。
+The independent offline `foam-lab` tool directly calls production GPU foam transport with fixed translation, shear, and differential rotation. By default it compares first- and second-order spatial transport on 128/256/512 grids under the same RK2 and CFL=0.2, outputting density snapshots, analytical references, error metrics, and actual GPU timestamp timings where supported at 0, 2, 4, and 8 simulation seconds. The default shape-preservation experiment does not read personal settings, run full SWE, or use foam materials. A separate `--benchmark` mode calls the full production SWE kernel, comparing three order combinations on fixed sparse/dense/synthetic model terrain/8-obstacle cases and a model with dual concentration + nonzero FFT input; after warm-up it reports repeated GPU substep timings and exports single-step state. This kernel benchmark excludes normal-frame parameter/state copies and rendering and does not represent UI FPS. There is also `ocean-profile --config PATH --output NEW_DIR`, which reads the configuration without writing to it, runs the full production path offscreen, and separately records FFT, offshore foam, SWE (including copies and spray sources), particle, and drawing times after a fixed time. See [Foam diagnostics and benchmarking](foam-lab.md) for usage, parameters, and limitations of results.
 
 ```powershell
 cargo run --release --features ocean --bin foam-lab -- --output target/foam-lab
-# 完成后打开 target/foam-lab/index.html；输出目录必须不存在。
+# Open target/foam-lab/index.html when complete; the output directory must not exist.
 ```
 
-## 泡沫高度：独立的外观偏移
+## Foam height: independent appearance offset
 
-在 **浅水模拟（SWE）→ 泡沫高度（仅外观）** 中设置：
+Set under **Shallow Water → Foam height (appearance only)**:
 
-| 参数 | 默认值 | 范围 | 作用 |
+| Parameter | Default | Range | Effect |
 | --- | --- | --- | --- |
-| 最大高度（米） | 0.05 | 0～1 | 泡沫最多向上抬高多少；0 关闭 |
-| 起始密度 | 0.1 | 0～20 | 低于或等于此密度时高度为 0 |
-| 密度过渡范围 | 1.9 | 0.001～20 | 从起始密度到“起始密度＋过渡范围”逐渐达到最大高度 |
+| Maximum height (meters) | 0.05 | 0–1 | Maximum upward foam lift; 0 disables it |
+| Start density | 0.1 | 0–20 | Height is 0 at or below this density |
+| Density transition range | 1.9 | 0.001–20 | Gradually reaches maximum height from start density to “start density + transition range” |
 
-使用模拟中的水上泡沫量／面积作为密度，不先截断到 0～1，也不使用密度颜色参考值或孔隙纹理。充分有水处的计算为：
+The simulated water foam quantity/area is used as density, without first clipping to 0–1 or using the density color reference or pore texture. The calculation where water is sufficiently deep is:
 
 ```text
-高度权重 = smoothstep(起始密度, 起始密度 + 密度过渡范围, 泡沫密度)
-外观高度偏移 = 最大高度 × 高度权重
-渲染顶点高度 = 原水面高度 + 外观高度偏移
+height weight = smoothstep(start density, start density + density transition range, foam density)
+appearance height offset = maximum height × height weight
+rendered vertex height = original water surface height + appearance height offset
 ```
 
-例如使用默认值：密度 0.1 时不抬高，密度 1.05 时抬高 0.025 米，密度达到 2.0 及以上时抬高 0.05 米。这里的密度是现有模拟量，不是以 kg/m³ 表示的泡沫材料密度；该映射用于表现厚度，没有引入含液率或体积求解。
+For example, with defaults: density 0.1 produces no lift, density 1.05 lifts by 0.025 meters, and density 2.0 or above lifts by 0.05 meters. Density here is the existing simulated quantity, not foam material density in kg/m³; this mapping represents thickness without introducing liquid fraction or volume solving.
 
-偏移只发生在渲染顶点中，不写回 FFT/SWE，不改变水位、水深、动量、泡沫输送或生成。泡沫明暗使用抬高后表面的法线，水体光学和水体法线继续使用原水面数据。参数与水面振幅增益独立，实时生效、手动保存，暂停时也可调整，不清空历史；旧配置缺少这些字段时补上述默认值。
+The offset occurs only in rendered vertices and is not written back to FFT/SWE; it does not change water level, depth, momentum, foam transport, or generation. Foam shading uses the raised surface normal, while water optics and water normals continue to use original water surface data. Parameters are independent of water surface amplitude gain, apply live, are saved manually, can be adjusted while paused, and do not clear history; old configurations missing these fields receive the defaults above.
 
-目前只抬高近岸水上泡沫；远海 FFT 泡沫不受影响。按模拟水深在 8～20 毫米间平滑开启，8 毫米及以下为零，防止干地被顶起；关闭“显示泡沫”或 SWE 时同样关闭偏移。红绿密度调试视图可观察高度变化。仍复用现有水面网格，孔隙处没有另建泡沫壳层，细窄泡沫带的几何细节受渲染网格分辨率限制。
+Currently only nearshore water foam is raised; offshore FFT foam is unaffected. The effect smoothly enables over simulated water depths of 8–20 mm and is zero at 8 mm or less to prevent lifting dry land; disabling “Show foam” or SWE also disables the offset. The red/green density debug view can show height changes. The existing water mesh is reused, with no separate foam shell at pores; geometric detail of narrow foam bands is limited by render mesh resolution.
 
-`--verify` 调用实际顶点函数检查 smoothstep 数值节点、饱和高度、干湿边界、显示开关、颜色参考值和振幅独立性，以及抬高后泡沫法线与未抬高水面数据的分离。另验证一阶／二阶中只改变高度参数时全部模拟状态一致，并在固定海岸历史、相机、时间下验证实际渲染像素变化。
+`--verify` calls the actual vertex function to check smoothstep numerical points, saturated height, wet/dry boundaries, display switches, independence from color reference and amplitude, and separation of raised foam normals from unraised water surface data. It also verifies that all simulation state remains identical when only height parameters change in first- and second-order modes, and checks actual rendered pixel changes with fixed coastal history, camera, and time.
 
-## 静态碰撞体
+## Static colliders
 
-右侧 Dock 新增 **碰撞体** 页签，可添加最多 8 个圆柱或长方体。默认没有障碍物；先在 SWE 面板开启“倾斜沙滩”和“启用浅水模拟”，然后添加。面板沿用统一的两列表格，详细说明放在名称 hover 中。
+A **Colliders** tab is added to the right Dock, allowing up to 8 cylinders or cuboids. There are no obstacles by default; first enable “Sloped beach” and “Enable shallow water simulation” in the SWE panel, then add them. The panel uses the shared two-column table, with detailed explanations in name hover tooltips.
 
-| 控件 | 含义 |
+| Control | Meaning |
 | --- | --- |
-| 启用／删除 | 单独开关或移除一个碰撞体 |
-| 形状 | 圆柱或长方体 |
-| 位置 X/Z（米） | 世界坐标；X 增大朝海，Z 沿岸 |
-| 半径（米） | 圆柱半径，0.25～30 |
-| 宽度／长度（米） | 长方体完整尺寸，0.5～60 |
-| 旋转（度） | 长方体绕竖直轴旋转，±180 |
-| 高度（米） | 从中心处原海底到水平顶面的高度，0.1～30 |
-| 顶面海拔（米） | 自动计算的顶面高度；静止海平面为 0 |
-| 模拟状态 | 是否启用、是否处于有效 SWE 区域 |
+| Enable / delete | Toggle or remove an individual collider |
+| Shape | Cylinder or cuboid |
+| Position X/Z (meters) | World coordinates; increasing X points offshore, Z runs alongshore |
+| Radius (meters) | Cylinder radius, 0.25–30 |
+| Width / length (meters) | Full cuboid dimensions, 0.5–60 |
+| Rotation (degrees) | Cuboid rotation around the vertical axis, ±180 |
+| Height (meters) | Height from the original seabed at the center to the horizontal top, 0.1–30 |
+| Top elevation (meters) | Automatically calculated top height; still sea level is 0 |
+| Simulation status | Whether enabled and whether inside the valid SWE region |
 
-第一次添加放在岸线向海 8 米处，后续槽位沿 Z 错开 8 米。默认高度 4 米；默认 0.18 的沙滩坡度下，顶面高于海平面 2.56 米，适合先观察挡水与绕流。降低高度使顶面接近或低于海平面，可观察漫顶或水下障碍的影响。面板显示实际网格间距和有效范围；建议两个方向至少覆盖 3 格，圆形和旋转边界在模拟中仍按网格近似。
+The first added collider is placed 8 meters seaward of the shoreline; subsequent slots are offset by 8 meters along Z. Default height is 4 meters; with the default 0.18 beach slope, the top is 2.56 meters above sea level, suitable for initially observing water blockage and flow around it. Lower the height to bring the top near or below sea level to observe overtopping or submerged obstacle effects. The panel displays actual grid spacing and valid bounds; covering at least 3 cells in both directions is recommended, and circular and rotated boundaries remain grid approximations in the simulation.
 
-碰撞体作为固定海底地形参与 SWE：每格有效底面取原沙滩与覆盖该格的各碰撞体顶面的最高值。一阶与二阶求解都使用同一底面，通过原有静水重构、重力与干湿边界产生阻挡、反射和绕流；水面超过顶面时允许流过。多个形状重叠时取最高顶面，不叠加高度。水上泡沫沿用独立动量输送，在未被淹没的障碍边界关闭跨面通量，避免穿过侧壁；不额外凭空制造碰撞泡沫，泡沫仍由现有生成模式判断水流变化。
+Colliders participate in SWE as fixed seabed terrain: each cell's effective bed is the maximum of the original beach and the tops of all colliders covering that cell. First- and second-order solvers use the same bed, producing blockage, reflection, and flow around obstacles through existing still-water reconstruction, gravity, and wet/dry boundaries; flow can pass over the top when the water surface exceeds it. Overlapping shapes use the highest top, without adding heights. Water foam retains independent momentum transport; cross-face flux is disabled at unsubmerged obstacle boundaries to prevent passage through side walls. No extra collision foam is created from nothing; existing generation modes still determine foam from flow changes.
 
-圆柱与长方体同时写入不透明颜色和深度，水下部分参与水体吸收与散射，水上部分遮挡水面。水面插值忽略干燥障碍顶面，避免在物体周围拉出假的水丘。远海 FFT 保持单向输入；碰撞体附近 2 米内显示 SWE，2～8 米恢复原 FFT 混合，并在计算域边缘淡出这一覆盖。
+Cylinders and cuboids write both opaque color and depth; submerged portions participate in water absorption and scattering, while above-water portions occlude the water surface. Water surface interpolation ignores dry obstacle tops to avoid pulling false water mounds around objects. Offshore FFT remains a one-way input; SWE is displayed within 2 meters of colliders, original FFT blending is restored over 2–8 meters, and this override fades out at the computational domain boundary.
 
-交互限于局部 SWE。整个形状必须位于模拟区域内，远海一侧还须避开最后 20% 的 FFT 输入松弛带；实现预留了额外边界余量。超出范围时保留参数，但不显示、不参与碰撞，面板给出状态。碰撞响应不会反向写回远海 FFT。
+Interaction is limited to local SWE. The entire shape must be inside the simulation area and, on the offshore side, must also avoid the final 20% FFT input relaxation zone; the implementation reserves an additional boundary margin. When out of bounds, parameters are retained, but the collider is neither displayed nor used for collision, and the panel reports its status. Collision response is not written back to offshore FFT.
 
-有效碰撞体的添加、移动、尺寸／高度／旋转编辑、启用和删除即时生效，暂停时也会应用，不重新初始化 SWE、不重启近岸输入，也不清空全域泡沫和沙地历史。只在有效底面实际变化的格子调整状态：抬高底面时裁除新占据的水体，按剩余水深缩放水流动量，避免把原有水面直接抬到物体顶上；降低底面时保留原有水量，由周围水流在继续运行后回填，不凭空补水。新变干格子的水上泡沫、泡沫动量和纹理位移清除，不在物体顶面产生假沉积；其他格子的历史保持不变。编辑会改变局部水量，不做守恒排水或移动刚体推水。参数进入手动保存的工作状态和命名配置，旧配置缺少碰撞体字段时按空场景加载。这是静态场景编辑，不是移动刚体：未模拟浮力、刚体运动、流体对物体的反作用、悬空物体下穿流或三维飞溅。
+Adding, moving, editing the dimensions/height/rotation, enabling, or deleting valid colliders takes effect immediately, including while paused, without reinitializing SWE, restarting nearshore input, or clearing domain-wide foam and sand history. State is adjusted only in cells whose effective bed actually changes: raising the bed clips newly occupied water and scales water momentum by the remaining depth, avoiding directly raising the original water surface to the object's top; lowering the bed retains the existing water quantity, allowing surrounding flow to refill it after execution resumes without creating water. Water foam, foam momentum, and texture displacement are cleared in newly dry cells, without creating false deposits on object tops; history in other cells remains unchanged. Editing changes local water quantity and does not perform conservative drainage or water displacement by moving rigid bodies. Parameters enter the manually saved working state and named configurations; old configurations missing collider fields load as an empty scene. This is static scene editing, not moving rigid bodies: buoyancy, rigid-body motion, fluid feedback on objects, flow underneath suspended objects, and three-dimensional spray are not simulated.
 
-`--verify` 在两种求解阶数下检查圆柱／旋转长方体的静水平衡、露出水面的高墙反射、水与泡沫不穿墙及总量守恒、圆柱两侧绕流、低障碍漫顶，以及暂停编辑的局部状态调整、未变化区域的历史保留和继续运行；渲染验证覆盖圆柱／旋转长方体的水上遮挡和水下场景颜色读取。可用环境变量 `OCEAN_COLLIDER_PREVIEW` 指定验证预览 PNG 的输出路径；普通验证不会额外写图。
+`--verify` checks still-water balance for cylinders/rotated cuboids, reflection from tall walls exposed above water, water and foam not passing through walls and total quantity conservation, flow around both sides of a cylinder, overtopping of low obstacles, and local state adjustment during paused editing, preservation of history in unchanged areas, and resumption under both solver orders. Rendering verification covers above-water occlusion and underwater scene color reads for cylinders/rotated cuboids. The `OCEAN_COLLIDER_PREVIEW` environment variable can specify the output path for a verification preview PNG; normal verification writes no additional image.
 
 
-### SWE 网格精度
+### SWE grid resolution
 
-在 **浅水模拟（SWE） → 每轴网格数** 选择 64、128、256、512 或 1024，默认 256。该参数独立于 FFT 分辨率和渲染网格，手动保存，也包含在命名配置中；旧配置默认使用 256。
+Select 64, 128, 256, 512, or 1024 under **Shallow Water → Grid cells per axis**, default 256. This parameter is independent of FFT resolution and the render mesh, is saved manually, and is also included in named configurations; old configurations default to 256.
 
-模拟覆盖范围不变，X/Z 每格大小分别为区域宽度/格数、区域长度/格数，SWE 和碰撞体面板均显示实际网格间距。切换立即重建近岸缓存，并用当前 FFT 重新初始化水体，清空近岸泡沫与湿沙历史；FFT 时间和远海泡沫继续运行。碰撞体边缘预留的一格也随精度变化。
+The simulation coverage remains unchanged; X/Z cell sizes are respectively region width/cell count and region length/cell count, and both SWE and collider panels display actual grid spacing. Switching immediately rebuilds nearshore buffers and reinitializes water with the current FFT, clearing nearshore foam and wet-sand history; FFT time and offshore foam continue running. The one-cell margin reserved at collider edges also changes with resolution.
 
-每轴格数翻倍，单元数和主要状态显存约为原来的 4 倍，CFL 稳定步长通常减半，相同模拟时间的运算量可能约为 8 倍。三份状态缓存在 256/512/1024 时分别约为 15/60/240 MiB。可结合 SWE GPU 耗时与实际推进时间比较，默认每帧最多推进 128 个子步的限制仍生效。
+Doubling the cell count per axis roughly quadruples cell count and primary state GPU memory; the CFL stable timestep is usually halved, so computation for the same simulation time may increase roughly eightfold. Three state buffers occupy approximately 15/60/240 MiB at 256/512/1024 respectively. Compare SWE GPU time with actual advanced time; the default limit of at most 128 substeps per frame remains in effect.
 
-## NSH 泡沫纹理与材质
+## NSH foam textures and materials
 
-在 **浅水模拟（SWE）→ 泡沫纹理与材质** 中选择原灰度效果、Shorewaves NSH、Crest Foam NSH 或 Crest Foam2 NSH。默认使用 Shorewaves NSH；旧配置缺少字段时补此默认值，其余已有参数正常加载。切换纹理、尺寸、微法线、不透明度密度尺度及粗糙度实时生效，手动保存，暂停时也可以比较，不重置模拟或纹理位移历史。旧配置中的 `foam_soft_opacity`、`foam_thick_start` 被忽略，新字段 `foam_opacity_scale` 缺失时使用默认值 2，其余参数正常加载。
+Select Original grayscale effect, Shorewaves NSH, Crest Foam NSH, or Crest Foam2 NSH under **Shallow Water → Foam textures and materials**. Shorewaves NSH is the default; old configurations missing the field receive this default, while other existing parameters load normally. Switching texture, size, micro-normal, opacity density scale, and roughness applies live, is saved manually, and can be compared while paused, without resetting the simulation or texture displacement history. `foam_soft_opacity` and `foam_thick_start` in old configurations are ignored; when the new `foam_opacity_scale` field is missing, it defaults to 2, and other parameters load normally.
 
-三张 NSH 都由仓库内的源图离线烘焙，统一为 1024×1024：RG 为切线法线 XY，B 为 Soft，A 为相对 Height。它们作为线性 `Rgba8Unorm` 纹理数组上传，使用 Repeat 和完整 mip 链；法线按三维方向平均后归一化，Soft／Height 单独做线性过滤。Crest 源图按原导入设置解码 sRGB 后烘焙；源图、固定版本、SHA-256 和 MIT 许可见 [assets/foam/SOURCES.md](../../assets/foam/SOURCES.md)。Height 是为着色设计的形态，不是实测泡沫厚度。
+All three NSH textures are baked offline from source images in the repository and standardized to 1024×1024: RG is tangent normal XY, B is Soft, and A is relative Height. They are uploaded as a linear `Rgba8Unorm` texture array, using Repeat and a complete mip chain; normals are averaged as three-dimensional directions and normalized, while Soft/Height are linearly filtered separately. Crest source images are decoded from sRGB according to their original import settings before baking; see [assets/foam/SOURCES.md](../../assets/foam/SOURCES.md) for source images, pinned versions, SHA-256, and MIT license. Height is morphology designed for shading, not measured foam thickness.
 
-材质保留现有两套位移场与 2 秒交替重置。每套位移分别采样粗细两种尺度，细尺度为粗尺度的 1/10，权重 0.72／0.28。每个相位保留原有密度和 Soft 决定的孔隙覆盖，但不再划分薄／厚两种着色；覆盖内使用连续密度响应：
+The material retains the existing two displacement fields and alternating 2-second resets. Each displacement samples coarse and fine scales separately, with the fine scale at 1/10 of the coarse scale and weights 0.72/0.28. Each phase retains the original pore coverage determined by density and Soft, but no longer separates thin/thick shading; a continuous density response is used within coverage:
 
 ```text
-不透明度 = 孔隙覆盖率 × (1 − exp(−原始泡沫密度／不透明度密度尺度))
+opacity = pore coverage × (1 − exp(−raw foam density / opacity density scale))
 ```
 
-原始密度是模拟泡沫量／面积，不先归一化截断，不是实测质量密度。完整覆盖且尺度为默认 2 时，密度 2、4、6 的不透明度约为 63%、86%、95%；增大尺度使同一密度更透水，不改变孔隙阈值。密度颜色参考值仍控制调试色标和孔隙填充范围，但不再作为 NSH 浓淡的饱和上限；高密度仍可填满原有孔洞。这是外观映射，不增加新的形态或扭曲。
+Raw density is simulated foam quantity/area, not normalized and clipped first, and not a measured mass density. At full coverage and the default scale of 2, densities 2, 4, and 6 give approximately 63%, 86%, and 95% opacity; increasing the scale makes the same density more transparent without changing the pore threshold. Density color reference still controls the debug color scale and pore filling range, but is no longer the saturation limit for NSH opacity; high density can still fill existing holes. This is an appearance mapping and adds no new morphology or distortion.
 
-每个相位分别完成光照后混合预乘颜色与不透明度，避免先混原始图案再阈值导致孔洞跳变。微法线随流动坐标的局部旋转／剪切调整方向，叠在现有宏观泡沫厚度法线上。Height 仍可调试查看，且是离线微法线的来源，不再用于运行时薄／厚门控。
+Each phase completes lighting separately before premultiplied color and opacity are blended, avoiding abrupt hole changes caused by mixing raw patterns before thresholding. Micro-normal direction adjusts to local rotation/shear of flow coordinates and is layered over the existing macro foam thickness normal. Height can still be inspected in debugging and is the source of offline micro-normals, but is no longer used for runtime thin/thick gating.
 
-| 参数 | 默认值 | 含义 |
+| Parameter | Default | Meaning |
 | --- | --- | --- |
-| 纹理尺寸 | 12 米 | 粗层每块纹理的世界长度，范围 0.25～64 米 |
-| 泡沫微法线强度 | 0.65 | 无量纲，范围 0～3；0 保留宏观法线，关闭纹理微法线 |
-| 不透明度密度尺度 | 2 | 模拟泡沫量／面积，范围 0.01～20；完整覆盖处此密度对应约 63% 不透明度，越大越透水 |
-| 泡沫粗糙度 | 0.85 | 范围 0.15～1，控制简化泡沫高光的宽度 |
+| Texture size | 12 meters | World-space length of each coarse-layer texture tile, range 0.25–64 meters |
+| Foam micro-normal strength | 0.65 | Dimensionless, range 0–3; 0 retains the macro normal and disables the texture micro-normal |
+| Opacity density scale | 2 | Simulated foam quantity/area, range 0.01–20; at full coverage this density corresponds to about 63% opacity, with larger values more transparent |
+| Foam roughness | 0.85 | Range 0.15–1, controls the width of simplified foam highlights |
 
-材质调试提供 Soft、Height、世界法线、最终不透明度四种视图。编号 4 原为薄绿／厚红，现在显示含孔隙与双相位混合的不透明度：黑色为 0，白色为 1。它只在浅水正常着色且开启泡沫显示时生效；现有红绿密度调试仍直接显示模拟密度。连续不透明度只作用于近岸 NSH 路径，原灰度效果和远海 FFT 泡沫保持原样；材质参数本身不改变密度、动量、生成、衰减、湿沙或泡沫外观高度。
+Material debugging provides four views: Soft, Height, world normal, and final opacity. View 4 was formerly thin green/thick red and now displays opacity including pores and dual-phase blending: black is 0 and white is 1. It applies only under normal shallow-water shading with foam display enabled; existing red/green density debugging still directly displays simulated density. Continuous opacity applies only to the nearshore NSH path; the original grayscale effect and offshore FFT foam remain unchanged. Material parameters themselves do not change density, momentum, generation, decay, wet sand, or foam appearance height.
 
 ```powershell
-# 重建三张 NSH 与制作配方；预览写入被忽略的 target 目录。
+# Rebuild the three NSH textures and their recipe; previews are written to the ignored target directory.
 cargo run --features ocean --bin foam-bake
-# 查看自定义源图、颜色空间、曲线、模糊和法线参数。
+# View custom source image, color space, curve, blur, and normal parameters.
 cargo run --features ocean --bin foam-bake -- --help
 
-# 固定默认种子、场景和时间，对比来源 0～3（输出路径需不存在）。
+# Fix the default seed, scene, and time to compare sources 0–3 (the output path must not exist).
 cargo run --release --bin ocean -- --beach --no-settings --foam-texture 2 --time 6 --snapshot target/crest-foam.png
-# 调试 NSH Height。
+# Debug NSH Height.
 cargo run --release --bin ocean -- --beach --no-settings --foam-texture 2 --foam-material-view 2 --frames 600
-# 扩大浓淡响应范围，并查看最终不透明度；场景预设应放在参数前面。
+# Expand the density response range and inspect final opacity; put the scene preset before the parameters.
 cargo run --release --bin ocean -- --beach --no-settings --foam-opacity-scale 4 --foam-material-view 4 --frames 600
 ```
 
-烘焙流程及预览面板顺序见 [assets/foam/README.md](../../assets/foam/README.md)。输出图在编译时嵌入，重新烘焙后需要重新构建 ocean。当前工具从现成灰度图加工 NSH，尚未实现从随机种子生成泡径／网膜形态的生成器，也未改成三相位。
+See [assets/foam/README.md](../../assets/foam/README.md) for the bake process and preview panel order. Output images are embedded at compile time, so ocean must be rebuilt after rebaking. The current tool processes existing grayscale images into NSH; it does not yet implement a generator for bubble-size/network morphology from random seeds, nor has it been changed to three phases.
 
-`--verify` 检查生产 WGSL 的零密度／干水边界、超出旧参考值后的指数不透明度、密度与尺度单调性、孔隙保持及法线方向与归一化，以及实际 GPU 三层纹理采样、Repeat 和 mip 标量平均。已有一阶／二阶对照同时检查材质参数不影响模拟状态。
+`--verify` checks production WGSL zero-density/dry-water boundaries, exponential opacity beyond the old reference value, density and scale monotonicity, pore preservation, normal direction and normalization, and actual GPU three-layer texture sampling, Repeat, and mip scalar averaging. Existing first-/second-order comparisons also check that material parameters do not affect simulation state.
 
-近岸泡沫保留背景与前沿生成，两者生成率相加后应用薄水抑制和入口淡出。流场融合生成及其参数面板、`--foam-source-mode` 参数已移除；旧配置中的相关字段会被忽略，其余参数正常加载。水上泡沫随水流输送、汇聚与拖曳不变。
+Nearshore foam retains background and front generation; their rates are added before thin-water suppression and inlet fade. Flow-field-blend generation and its parameter panel, along with the `--foam-source-mode` option, have been removed; related fields in old configurations are ignored, while other parameters load normally. Water foam transport, convergence, and drag remain unchanged.
 
 
-## 水底焦散与折射
+## Underwater caustics and refraction
 
-在“着色”分类中，焦散 Tab 提供“关闭｜物理”，折射 Tab 提供“关闭｜快速｜物理”。两项独立选择，默认关闭。旧配置保留启用状态，原快速焦散改用物理焦散，折射方法缺省为物理。参数随当前会话和命名配置保存，切换实时生效，不重置 FFT、SWE 或泡沫，各模式参数分别保留。水折射率是两个 Tab 共享的参数。支持平底、沙坡和导入礁石模型。模型焦散以预烘焙高度场为接收面，折射以实际不透明模型深度为交点依据。
+In the “Shading” category, the caustics Tab offers “Off | Physical,” and the refraction Tab offers “Off | Fast | Physical.” The two are selected independently and default to off. Old configurations retain their enabled states; former fast caustics use physical caustics, and a missing refraction method defaults to physical. Parameters are saved with the current session and named configurations; switching applies live without resetting FFT, SWE, or foam, and each mode retains its own parameters. Water refractive index is shared between the two Tabs. Flat beds, sand slopes, and imported reef models are supported. Model caustics use the prebaked heightfield as the receiving surface; refraction uses actual opaque model depth to determine intersections.
 
 ```powershell
-# 平底：固定参数启用两项效果，不覆盖个人设置。
+# Flat bed: enable both effects with fixed parameters, without overwriting personal settings.
 cargo run --release -- --no-settings --caustics --refraction
-# 沙坡：保留 FFT → SWE 耦合。
+# Sand slope: retain FFT → SWE coupling.
 cargo run --release -- --beach --no-settings --caustics --refraction
-# 礁石：共享已有高度场和 FFT／SWE。
+# Reef: share the existing heightfield and FFT/SWE.
 cargo run --release -- --model --no-settings --caustics --refraction
-# 物理焦散搭配快速折射。
+# Physical caustics with fast refraction.
 cargo run --release -- --model --no-settings --caustics --refraction-mode fast
-# 仅运行焦散／折射真实 GPU 检查。
+# Run only the real GPU caustics/refraction checks.
 target\release\ocean.exe --verify-optics
 ```
 
-| 参数 | 默认值／范围 | 含义 |
+| Parameter | Default / range | Meaning |
 | --- | --- | --- |
-| 启用水底焦散 | 关闭 | 太阳光折射网格生成水底光照 |
-| 焦散强度 | 1／0～4 | 无量纲；1 使用计算的透射直射光，0 恢复原直射光 |
-| 焦散覆盖宽度 | 128／8～512 米 | 世界空间接收区域的边长 |
-| 焦散柔化 | 1／0～4 纹素 | 512×512 光照贴图的五点过滤半径 |
-| 焦散光束网格 | 256／128、256、512 | 每轴光束单元数，独立于水体模拟精度 |
-| 启用水底折射 | 关闭 | 观察光线的空气→水折射 |
-| 水折射率 | 1.333／1～1.6 | 与焦散共享；1 不偏折 |
-| 折射最大光程 | 100／1～500 米 | 超出范围时回退直线取样 |
+| Enable underwater caustics | Off | A refracted sunlight mesh generates underwater illumination |
+| Caustics strength | 1 / 0–4 | Dimensionless; 1 uses computed transmitted direct light, 0 restores original direct light |
+| Caustics coverage width | 128 / 8–512 meters | Side length of the world-space receiving region |
+| Caustics softness | 1 / 0–4 texels | Five-point filter radius of the 512×512 illumination map |
+| Caustics beam grid | 256 / 128, 256, 512 | Beam cells per axis, independent of water simulation resolution |
+| Enable underwater refraction | Off | Air→water refraction of viewing rays |
+| Water refractive index | 1.333 / 1–1.6 | Shared with caustics; 1 produces no bending |
+| Maximum refraction path length | 100 / 1–500 meters | Falls back to straight sampling beyond this range |
 
-对应 CLI：`--caustics`／`--no-caustics`、`--caustics-strength`、`--caustics-extent`、`--caustics-softness`、`--caustics-resolution`、`--refraction`／`--no-refraction`、`--water-ior`、`--refraction-distance`。场景预设放在这些覆盖参数之前。
+Corresponding CLI: `--caustics`/`--no-caustics`, `--caustics-strength`, `--caustics-extent`, `--caustics-softness`, `--caustics-resolution`, `--refraction`/`--no-refraction`, `--water-ior`, `--refraction-distance`. Place scene presets before these override parameters.
 
 
-快速折射使用当前法线、观察方向与折射率，向原始背景接收点高度所在的局部水平面估算一次折射落点，再投影成屏幕 UV 偏移；不是射线步进。薄水层与掠射角减弱偏移，并按屏幕高度限制最大偏移。候选深度必须在水面之后且接收点位于水下；颜色使用带深度遮罩的四点双线性重建，屏幕边缘平滑回退。光程和积分方向来自估计的接收位置。可减少近岸与礁石轮廓的拉伸，但不能恢复被遮住／屏幕外的水底，也不保证几何精确交点。
+Fast refraction uses the current normal, viewing direction, and refractive index to estimate a refracted hit on the local horizontal plane at the original background receiver's height, then projects it into a screen UV offset; it is not ray marching. Thin water and grazing angles reduce the offset, and the maximum offset is limited relative to screen height. Candidate depth must be behind the water surface and the receiver must be underwater; color uses four-point bilinear reconstruction with a depth mask, with smooth fallback at screen edges. Path length and integration direction come from the estimated receiver position. This can reduce stretching near shorelines and reef outlines, but cannot recover occluded/offscreen seabed or guarantee a geometrically exact intersection.
 
-| 快速参数 | 默认值／范围 | 含义 |
+| Fast parameter | Default / range | Meaning |
 | --- | --- | --- |
-| 折射扰动强度 | 1／0～2 | 缩放估计 UV 偏移 |
-| 折射充分扰动水深 | 2／0.01～20 米 | 达到完整扰动的水厚度 |
-| 折射偏移上限 | 4／0～20% 屏幕高度 | 宽高比无关的最大屏幕偏移 |
+| Refraction distortion strength | 1 / 0–2 | Scales the estimated UV offset |
+| Refraction depth for full distortion | 2 / 0.01–20 meters | Water thickness at which full distortion is reached |
+| Refraction offset limit | 4 / 0–20% of screen height | Aspect-ratio-independent maximum screen offset |
 
-快速折射跳过屏幕深度金字塔和分层追踪。下面描述物理模式；“物理”表示基于波面和接收面求交的既有近似，不表示完整三维路径追踪。
+Fast refraction skips the screen depth pyramid and hierarchical tracing. Physical mode is described below; “Physical” refers to the existing approximation based on wave-surface and receiver intersections, not full three-dimensional path tracing.
 
-焦散共享水面位置、FFT 水平位移、SWE 混合与近岸 FFT 小波法线；小波过滤按光束采样决定，不使用相机屏幕导数。泡沫的视觉抬高不参与折射，近岸泡沫通过密度及材质不透明度尺度作连续遮光近似，不改写泡沫状态。计算每束光在水底的落点，以入射投影面积／接收面积计算照度，在浮点贴图中加法累积重叠光束；包含入口 Fresnel 损失与太阳光到水底的 RGB 消光。沙地只替换太阳直射光，环境光保持原有语义，水底到观察方向的消光仍由水体积分负责。
+Caustics share water surface position, FFT horizontal displacement, SWE blending, and nearshore FFT wavelet normals; wavelet filtering is determined by beam sampling and does not use camera screen derivatives. Visual foam lift does not participate in refraction; nearshore foam uses density and material opacity density scale for a continuous light-blocking approximation without changing foam state. Each beam's seabed hit is calculated, irradiance is computed from incident projected area / receiving area, and overlapping beams are accumulated additively in a floating-point map; entry Fresnel loss and RGB extinction from sun to seabed are included. Sand replaces only direct sunlight, ambient light retains its existing semantics, and extinction from seabed to viewer remains the responsibility of water integration.
 
-接收贴图固定在世界空间：SWE 或模型开启时以其区域中心定位，否则以原点定位；不会随相机游动。发射区域留有保护带，并向太阳来光方向偏移。接收区域边缘渐变到平水面的透射直射光，因此远处没有动态焦散。强汇聚使用最小接收面积限制奇异亮度，配合空间过滤；这不是严格守恒的有限光源求解，欠采样的折叠仍可能闪烁。提高光束精度或缩小覆盖范围可改善细节。
+The receiver map is fixed in world space: centered on the SWE or model region when enabled, otherwise on the origin; it does not move with the camera. The emission region has a guard band and is offset toward the incoming sun direction. The receiving region edge fades to transmitted direct light for a flat water surface, so distant areas have no dynamic caustics. Strong convergence uses a minimum receiving area to limit singular brightness, combined with spatial filtering; this is not a strictly conservative finite-light-source solution, and undersampled folds may still flicker. Higher beam resolution or a smaller coverage region can improve detail.
 
-平底／沙坡折射从当前波面沿 Snell 方向与水底平面求交，将交点投影回场景颜色。只有场景深度重建的位置与接收面匹配时才取样；屏幕外、前景遮挡、无交点或超过最大光程均回退原始直线取样，防止拉伸陆地／障碍物颜色。成功时同步更新水中光程和散射积分方向，屏幕边缘四个像素内平滑混合回退结果；该过渡是消除屏幕边界接缝的外观近似。此为屏幕空间颜色重用，不包含屏幕外场景、模型三角形追踪、相机入水或全反射。
+Flat-bed/sand-slope refraction intersects the seabed plane from the current wave surface along the Snell direction and projects the intersection back into scene color. Sampling occurs only when the scene-depth-reconstructed position matches the receiving surface; offscreen positions, foreground occlusion, no intersection, or exceeding maximum path length all fall back to original straight sampling to prevent stretching land/obstacle colors. On success, underwater path length and scattering integration direction are updated together; within four pixels of the screen edge the fallback result is smoothly blended in. This transition is an appearance approximation to remove screen-boundary seams. This is screen-space color reuse and does not include offscreen scenes, model triangle tracing, a submerged camera, or total internal reflection.
 
-礁石焦散复用已上传的海平面相对高度场，建立逐级 2×2 合并的 min/max 金字塔（逻辑上是规则四叉树）。叶层包含双线性采样邻域的保守高度范围；光线由近到远跳过不相交块，在候选单元内对双线性曲面求最近交点。金字塔仅在模型变换、水位、区域、补充海床或网格重建后更新，普通帧及暂停复用。细节上限仍是上传的 SWE 床面分辨率，不能恢复被它滤掉的岩石细节。每束光最多访问 256 个节点，耗尽预算则丢弃该束；跨越陡坎、内部偏离地形的接收三角形会被拒绝。
+Reef caustics reuse the uploaded heightfield relative to sea level, building a min/max pyramid with successive 2×2 merges (logically a regular quadtree). The leaf level contains conservative height ranges for bilinear sampling neighborhoods; rays skip nonintersecting blocks from near to far and find the nearest intersection with the bilinear surface inside candidate cells. The pyramid updates only after model transforms, water level, region, supplemental seabed, or grid rebuilding changes; normal and paused frames reuse it. Detail remains limited by uploaded SWE bed resolution and cannot recover rock details filtered out by it. Each beam visits at most 256 nodes and is discarded if the budget is exhausted; receiver triangles crossing steep steps or deviating internally from the terrain are rejected.
 
-扫描模型保留原有 unlit 颜色与烘焙阴影，在水面合成时只叠加超过平水面参考照度的聚光增亮。真实可见交点需与高度场接近且位于水下，避免把焦散涂到悬挑下方；它是外观近似，不是对扫描材质的物理重照明。焦散诊断显示水下接收照度，水上的扫描模型仍显示原材质。
+Scanned models retain their original unlit color and baked shadows; water surface compositing adds only focused brightening above the flat-water reference irradiance. Actual visible intersections must be close to the heightfield and underwater, avoiding painting caustics beneath overhangs; this is an appearance approximation, not physical relighting of scanned materials. Caustics diagnostics display underwater receiver irradiance, while above-water scanned models retain their original materials.
 
-模型折射在不透明预绘制后生成屏幕深度 min/max mip 链，沿投影后的折射射线由粗到细查找可见表面。求交容差随像素世界空间尺寸变化，避免离散深度间反复切换命中／回退产生条纹；光程由重建的世界坐标沿射线投影得到，减少远处非线性深度的精度损失。只有模型折射开启时逐帧构建；窗口尺寸变化时重建资源。最多访问 128 个节点，屏幕外、遮挡后不可见的表面、超出光程或查询预算时回退原取样。命中后同步更新水中光程、散射方向及焦散接收位置；深度差先在一致坐标系重建，不能直接相减硬件深度。屏幕空间只有每像素最前面的不透明层，因此仍不能恢复被前景遮住的水底。
+Model refraction builds a screen-depth min/max mip chain after the opaque prepass and searches visible surfaces from coarse to fine along the projected refracted ray. Intersection tolerance varies with pixel world-space size to avoid stripes from repeatedly switching between hit and fallback across discrete depths; path length is obtained by projecting reconstructed world coordinates along the ray, reducing precision loss from distant nonlinear depth. It is built every frame only when model refraction is enabled; resources are rebuilt when the window size changes. At most 128 nodes are visited; offscreen surfaces, surfaces hidden behind occluders, paths beyond the limit, or exhausted query budgets fall back to original sampling. On a hit, underwater path length, scattering direction, and caustics receiver position are updated together; depth differences are first reconstructed in a consistent coordinate system, rather than subtracting hardware depth directly. Screen space contains only the foremost opaque layer per pixel, so it still cannot recover seabed hidden by foreground objects.
 
-两个 Tab 各有诊断入口，与“水体与天空 → 光学诊断”共享同一个调试视图：
+Each Tab has a diagnostic entry sharing the same debug view as “Water and sky → Optics diagnostics”:
 
-- 12：焦散入射光，线性 RGB，不乘沙地颜色和观察路径消光；需开启焦散，关闭时为黑。显示值可能大于 1。
-- 13：实际用于积分的水中光线方向，分量从 -1～1 映射至 0～1。
-- 14：折射命中绿色，回退红色，折射关闭时灰色。
+- 12: Incident caustic light, linear RGB, without multiplying by sand color or viewing-path extinction; requires caustics enabled and is black when disabled. Display values may exceed 1.
+- 13: Underwater ray direction actually used for integration, with components mapped from -1–1 to 0–1.
+- 14: Refraction hits in green, fallback in red, and gray when refraction is disabled.
 
-高度场最近交点可处理水中光线遇到礁脊的遮挡；仍未计算入水前岩石投影、波面自遮挡、独立碰撞体遮挡、远海泡沫遮光、体积焦散及色散。单层高度场不支持洞穴、悬挑和完整垂直岩壁。密度、湿沙和流体求解不受这两项开关影响。比较时固定相机、FFT 种子、时间、增益、SWE 阶数和小波法线参数。`--verify-optics` 检查生产路径的平底／沙坡照度、光束精度、太阳方向、Snell 光程、回退、尺寸重建、FFT 动画／暂停、一／二阶 SWE 重绑定及干沙保护，以及高度场窄脊／复杂床面最近交点、空区跳过、真实礁石屏幕折射、水位变化和暂停复用；另检查快速折射的零扰动、礁石有效采样和模式切换。
+The nearest heightfield intersection can handle underwater rays blocked by reef ridges; rock shadows before water entry, wave-surface self-occlusion, independent collider occlusion, offshore foam light blocking, volumetric caustics, and dispersion are still not calculated. A single-layer heightfield does not support caves, overhangs, and complete vertical rock walls. Density, wet sand, and the fluid solver are unaffected by the two switches. Fix camera, FFT seed, time, gain, SWE order, and wavelet normal parameters when comparing. `--verify-optics` checks production-path flat-bed/sand-slope irradiance, beam resolution, sun direction, Snell path length, fallback, size rebuilding, FFT animation/pause, first-/second-order SWE rebinding, and dry-sand protection, as well as nearest intersections with narrow heightfield ridges/complex beds, empty-space skipping, real reef screen refraction, water level changes, and paused reuse; it also checks zero-distortion fast refraction, valid reef sampling, and mode switching.

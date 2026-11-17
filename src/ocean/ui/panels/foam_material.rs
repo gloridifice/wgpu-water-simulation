@@ -11,37 +11,48 @@ impl Gui {
         ui: &mut egui::Ui,
         camera: &mut Camera,
     ) {
-        group(ui, "泡沫显示", |ui| {
-            toggle(ui, "显示泡沫", &mut camera.foam);
+        group(ui, "Foam Display", |ui| {
+            toggle(ui, "Show Foam", &mut camera.foam);
         });
         if !camera.foam {
             return;
         }
         let swe = self.optics.swe_enabled();
         let shore = &mut self.optics.shore;
-        group(ui, "共用泡沫颜色", |ui| {
-            parameter(ui, "水上泡沫", help("水上泡沫"), |ui| {
+        group(ui, "Shared Foam Color", |ui| {
+            parameter(ui, "Water Foam", help("Water Foam"), |ui| {
                 ui.color_edit_button_rgb(&mut shore.water_foam_color)
             });
         });
-        if ui.add(PanelButton::new("恢复默认泡沫颜色")).clicked() {
+        if ui
+            .add(PanelButton::new("Restore Default Foam Color"))
+            .clicked()
+        {
             shore.water_foam_color = [0.87, 0.92, 0.90];
         }
         if !swe {
             return;
         }
-        group(ui, "近岸泡沫材质", |ui| {
-            toggle(ui, "纹理随流扭曲", &mut shore.foam_texture_distortion);
+        group(ui, "Nearshore Foam Material", |ui| {
+            toggle(
+                ui,
+                "Flow-Warped Texture",
+                &mut shore.foam_texture_distortion,
+            );
             if shore.foam_dual_phase {
                 list(
                     ui,
-                    "泡沫显示成分",
+                    "Foam Display Components",
                     &mut shore.foam_species_view,
-                    &[(0, "全部"), (1, "仅新鲜泡沫 N"), (2, "仅残余泡沫 R")],
+                    &[
+                        (0, "All"),
+                        (1, "Fresh Foam N Only"),
+                        (2, "Residual Foam R Only"),
+                    ],
                 );
             }
             if !shore.foam_dual_phase {
-                toggle(ui, "原型孔洞外观", &mut shore.foam_prototype);
+                toggle(ui, "Prototype Hole Appearance", &mut shore.foam_prototype);
             }
             if !shore.foam_dual_phase && !shore.foam_prototype {
                 let names: Vec<_> = crate::ocean::parameters::shore::FOAM_TEXTURE_NAMES
@@ -49,12 +60,12 @@ impl Gui {
                     .enumerate()
                     .map(|(i, n)| (i as u32, *n))
                     .collect();
-                list(ui, "纹理来源", &mut shore.foam_texture, &names);
+                list(ui, "Texture Source", &mut shore.foam_texture, &names);
             }
             parameter(
                 ui,
-                "坐标重置周期（秒）",
-                help("坐标重置周期（秒）"),
+                "Coordinate Reset Period (s)",
+                help("Coordinate Reset Period (s)"),
                 |ui| {
                     ui.add(
                         ParameterSlider::new(&mut shore.foam_texture_period, 0.0..=60.0)
@@ -65,21 +76,21 @@ impl Gui {
             if shore.foam_texture > 0 && !shore.foam_prototype && !shore.foam_dual_phase {
                 number(
                     ui,
-                    "纹理尺寸（米）",
+                    "Texture Size (m)",
                     &mut shore.foam_texture_size,
                     0.25..=64.0,
                     true,
                 );
                 number(
                     ui,
-                    "泡沫微法线强度",
+                    "Foam Micro Normal Strength",
                     &mut shore.foam_micro_normal,
                     0.0..=3.0,
                     false,
                 );
                 number(
                     ui,
-                    "泡沫粗糙度",
+                    "Foam Roughness",
                     &mut shore.foam_roughness,
                     0.15..=1.0,
                     false,
@@ -88,7 +99,7 @@ impl Gui {
             if shore.foam_texture > 0 || shore.foam_prototype || shore.foam_dual_phase {
                 number(
                     ui,
-                    "不透明度密度尺度",
+                    "Opacity Density Scale",
                     &mut shore.foam_opacity_scale,
                     0.01..=20.0,
                     true,
@@ -98,29 +109,29 @@ impl Gui {
                     .enumerate()
                     .map(|(i, n)| (i as u32, *n))
                     .collect();
-                list(ui, "材质调试", &mut shore.foam_material_view, &names);
+                list(ui, "Material Debug", &mut shore.foam_material_view, &names);
             }
             number(
                 ui,
-                "密度颜色参考值",
+                "Density Color Reference",
                 &mut shore.foam_density_reference,
                 0.01..=20.0,
                 true,
             );
         });
         if shore.foam_dual_phase {
-            group(ui, "新鲜泡沫 N 外观", |ui| {
-                parameter(ui, "渲染方式", help("N 渲染方式"), |ui| {
+            group(ui, "Fresh Foam N Appearance", |ui| {
+                parameter(ui, "Rendering Mode", help("N Rendering Mode"), |ui| {
                     segmented_control(
                         ui,
                         &mut shore.foam_fresh_threshold_mode,
-                        &[(0, "常数"), (1, "噪波"), (2, "纹理")],
+                        &[(0, "Constant"), (1, "Noise"), (2, "Texture")],
                     );
                 });
                 match shore.foam_fresh_threshold_mode {
                     0 => number(
                         ui,
-                        "N 常数阈值",
+                        "N Constant Threshold",
                         &mut shore.foam_fresh_threshold,
                         0.0..=1.0,
                         false,
@@ -128,21 +139,21 @@ impl Gui {
                     1 => {
                         number(
                             ui,
-                            "N 主噪波频率（每米）",
+                            "N Main Noise Frequency (per m)",
                             &mut shore.foam_fresh_noise_frequency,
                             0.05..=20.0,
                             true,
                         );
                         number(
                             ui,
-                            "N 细噪波频率（每米）",
+                            "N Fine Noise Frequency (per m)",
                             &mut shore.foam_fresh_noise_detail_frequency,
                             0.05..=60.0,
                             true,
                         );
                         number(
                             ui,
-                            "N 细噪波占比",
+                            "N Fine Noise Fraction",
                             &mut shore.foam_fresh_noise_detail_weight,
                             0.0..=1.0,
                             false,
@@ -155,72 +166,81 @@ impl Gui {
                             .skip(1)
                             .map(|(i, n)| (i as u32, *n))
                             .collect();
-                        list(ui, "N 纹理来源", &mut shore.foam_fresh_texture, &names);
+                        list(
+                            ui,
+                            "N Texture Source",
+                            &mut shore.foam_fresh_texture,
+                            &names,
+                        );
                         number(
                             ui,
-                            "N 纹理尺寸（米）",
+                            "N Texture Size (m)",
                             &mut shore.foam_fresh_texture_size,
                             0.25..=64.0,
                             true,
                         );
                         number(
                             ui,
-                            "N 微法线强度",
+                            "N Micro Normal Strength",
                             &mut shore.foam_fresh_micro_normal,
                             0.0..=3.0,
                             false,
                         );
                         number(
                             ui,
-                            "N 粗糙度",
+                            "N Roughness",
                             &mut shore.foam_fresh_roughness,
                             0.15..=1.0,
                             false,
                         );
                         number(
                             ui,
-                            "N 覆盖参考值",
+                            "N Coverage Reference",
                             &mut shore.foam_fresh_coverage_reference,
                             0.01..=20.0,
                             true,
                         );
                     }
                 }
-                toggle(ui, "浓度决定透明度", &mut shore.foam_fresh_density_opacity);
+                toggle(
+                    ui,
+                    "Concentration Controls Opacity",
+                    &mut shore.foam_fresh_density_opacity,
+                );
                 if shore.foam_fresh_density_opacity {
                     number(
                         ui,
-                        "N 浓度范围",
+                        "N Concentration Range",
                         &mut shore.foam_fresh_opacity_range,
                         0.0..=10.0,
                         false,
                     );
                     number(
                         ui,
-                        "N 浓度幂值 p",
+                        "N Concentration Exponent p",
                         &mut shore.foam_fresh_opacity_power,
                         0.1..=5.0,
                         false,
                     );
                 }
             });
-            group(ui, "残余泡沫 R 外观", |ui| {
+            group(ui, "Residual Foam R Appearance", |ui| {
                 toggle(
                     ui,
-                    "浓度决定透明度",
+                    "Concentration Controls Opacity",
                     &mut shore.foam_residual_density_opacity,
                 );
                 if shore.foam_residual_density_opacity {
                     number(
                         ui,
-                        "R 浓度范围",
+                        "R Concentration Range",
                         &mut shore.foam_residual_opacity_range,
                         0.0..=10.0,
                         false,
                     );
                     number(
                         ui,
-                        "R 浓度幂值 p",
+                        "R Concentration Exponent p",
                         &mut shore.foam_residual_opacity_power,
                         0.1..=5.0,
                         false,
@@ -228,10 +248,10 @@ impl Gui {
                 }
             });
         }
-        group(ui, "泡沫高度（仅外观）", |ui| {
+        group(ui, "Foam Height (Appearance Only)", |ui| {
             number(
                 ui,
-                "最大高度（米）",
+                "Maximum Height (m)",
                 &mut shore.foam_height_max,
                 0.0..=1.0,
                 false,
@@ -239,14 +259,14 @@ impl Gui {
             if shore.foam_height_max > 0.0 {
                 number(
                     ui,
-                    "起始密度",
+                    "Starting Density",
                     &mut shore.foam_height_threshold,
                     0.0..=20.0,
                     false,
                 );
                 number(
                     ui,
-                    "密度过渡范围",
+                    "Density Transition Range",
                     &mut shore.foam_height_transition,
                     0.001..=20.0,
                     true,

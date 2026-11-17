@@ -1,6 +1,6 @@
 use super::Settings;
 use serde::{Deserialize, Serialize};
-pub const DEFAULT_CONFIGURATION_NAME: &str = "默认配置";
+pub const DEFAULT_CONFIGURATION_NAME: &str = "Default";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct NamedConfiguration<T> {
@@ -55,14 +55,14 @@ impl<T: Settings> ConfigurationLibrary<T> {
                 .profiles
                 .get(index)
                 .map(|p| &p.settings)
-                .ok_or_else(|| "配置不存在".into()),
+                .ok_or_else(|| "Configuration not found".into()),
         }
     }
 
     fn check_name(&self, name: &str, except: Option<usize>) -> Result<String, String> {
         let name = name.trim();
         if name.is_empty() {
-            return Err("请输入配置名称".into());
+            return Err("Enter a configuration name".into());
         }
         if name == DEFAULT_CONFIGURATION_NAME
             || self
@@ -71,7 +71,7 @@ impl<T: Settings> ConfigurationLibrary<T> {
                 .enumerate()
                 .any(|(i, p)| Some(i) != except && p.name == name)
         {
-            return Err("配置名称已存在，请使用其他名称".into());
+            return Err("Configuration name already exists; choose another".into());
         }
         Ok(name.to_owned())
     }
@@ -86,23 +86,29 @@ impl<T: Settings> ConfigurationLibrary<T> {
     }
 
     pub fn rename(&mut self, index: Option<usize>, name: &str) -> Result<(), String> {
-        let index = index.ok_or("默认配置不可重命名")?;
+        let index = index.ok_or("The default configuration cannot be renamed")?;
         let name = self.check_name(name, Some(index))?;
-        self.profiles.get_mut(index).ok_or("配置不存在")?.name = name;
+        self.profiles
+            .get_mut(index)
+            .ok_or("Configuration not found")?
+            .name = name;
         Ok(())
     }
 
     pub fn overwrite(&mut self, index: Option<usize>, settings: T) -> Result<(), String> {
-        let index = index.ok_or("默认配置不可覆盖")?;
+        let index = index.ok_or("The default configuration cannot be overwritten")?;
         settings.validate()?;
-        self.profiles.get_mut(index).ok_or("配置不存在")?.settings = settings;
+        self.profiles
+            .get_mut(index)
+            .ok_or("Configuration not found")?
+            .settings = settings;
         Ok(())
     }
 
     pub fn delete(&mut self, index: Option<usize>) -> Result<(), String> {
-        let index = index.ok_or("默认配置不可删除")?;
+        let index = index.ok_or("The default configuration cannot be deleted")?;
         if index >= self.profiles.len() {
-            return Err("配置不存在".into());
+            return Err("Configuration not found".into());
         }
         self.profiles.remove(index);
         self.active = self.active.and_then(|active| match active.cmp(&index) {
@@ -126,8 +132,19 @@ impl<T: Settings> ConfigurationLibrary<T> {
     pub(super) fn validate(&self) -> Result<(), String> {
         self.default.validate()?;
         for (index, profile) in self.profiles.iter().enumerate() {
-            if self.check_name(&profile.name, Some(index))? != profile.name {
-                return Err("配置名称不能包含首尾空格".into());
+            // A previously saved user profile may have the newly reserved display name.
+            // Preserve it on load without allowing new profiles to take that name.
+            if profile.name == DEFAULT_CONFIGURATION_NAME {
+                if self
+                    .profiles
+                    .iter()
+                    .enumerate()
+                    .any(|(other, p)| other != index && p.name == profile.name)
+                {
+                    return Err("Configuration name already exists; choose another".into());
+                }
+            } else if self.check_name(&profile.name, Some(index))? != profile.name {
+                return Err("Configuration names cannot have leading or trailing spaces".into());
             }
             profile.settings.validate()?;
         }

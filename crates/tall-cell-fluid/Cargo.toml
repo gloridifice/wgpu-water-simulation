@@ -5,7 +5,7 @@ edition = "2024"
 description = "Independent wgpu liquid solver with adaptive tall cells and a CPU reference"
 publish = false
 
-# 独立测试，不改变主项目的依赖、feature 或默认启动程序。
+# Independent tests do not alter the main project's dependencies, features, or default executable.
 [workspace]
 
 [dependencies]

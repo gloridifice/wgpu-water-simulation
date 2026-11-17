@@ -14,20 +14,22 @@ impl Gui {
         let [beach, model, lake] = action_row(
             ui,
             [
-                PanelButton::new("沙滩场景"),
-                PanelButton::new("岩岸模型场景"),
-                PanelButton::new("湖泊场景"),
+                PanelButton::new("Beach Scene"),
+                PanelButton::new("Rocky Coast Scene"),
+                PanelButton::new("Lake Scene"),
             ],
         );
         if beach
-            .on_hover_text("载入完整沙滩预设并重置近岸历史，不只是切换地形。")
+            .on_hover_text(
+                "Load the complete beach preset and reset nearshore history, not just the terrain.",
+            )
             .clicked()
         {
             self.optics = OpticsConfig::beach_scene();
             *camera = Camera::beach(length);
         }
         if model
-            .on_hover_text("载入完整岩岸预设并重置近岸历史。")
+            .on_hover_text("Load the complete rocky coast preset and reset nearshore history.")
             .clicked()
         {
             self.optics = OpticsConfig::model_scene();
@@ -35,7 +37,7 @@ impl Gui {
         }
         if lake
             .on_hover_text(
-                "生成噪波不规则湖泊与岩石，运行参数化波纹并按强度叠加共享 FFT，不运行 SWE。",
+                "Generate a noise-shaped lake and rocks, run parametric ripples, and add the shared FFT at the selected strength. SWE is not used.",
             )
             .clicked()
         {
@@ -48,37 +50,37 @@ impl Gui {
             let [terrain, ripples] = action_row(
                 ui,
                 [
-                    PanelButton::new("打开湖泊地形"),
-                    PanelButton::new("打开动画 SDF 波纹"),
+                    PanelButton::new("Open Lake Terrain"),
+                    PanelButton::new("Open Animated SDF Ripples"),
                 ],
             );
             self.lake_panel.open |= terrain.clicked();
             self.lake_panel.open_ripples |= ripples.clicked();
             return;
         }
-        group(ui, "地形与水底", |ui| {
+        group(ui, "Terrain and Seabed", |ui| {
             if !self.optics.model.enabled {
-                toggle(ui, "倾斜沙滩", &mut self.optics.beach);
+                toggle(ui, "Sloping Beach", &mut self.optics.beach);
             }
             if self.optics.model.enabled {
                 parameter(
                     ui,
-                    "当前地形",
-                    "模型优先于沙坡。模型开关及变换在模型与区域面板显式应用。",
-                    |ui| ui.label("模型与补充海床"),
+                    "Current Terrain",
+                    "The model takes precedence over the sand slope. Enable and transform the model explicitly in the Model and Domain panel.",
+                    |ui| ui.label("Model and supplemental seabed"),
                 );
             }
             if self.optics.beach && !self.optics.model.enabled {
                 number(
                     ui,
-                    "沙滩坡度（高／宽）",
+                    "Beach Slope (height/width)",
                     &mut self.optics.beach_slope,
                     0.01..=0.5,
                     false,
                 );
                 number(
                     ui,
-                    "岸线 X（米）",
+                    "Shoreline X (m)",
                     &mut self.optics.shore_x,
                     -length..=length,
                     false,
@@ -87,24 +89,28 @@ impl Gui {
             if !self.optics.beach || self.optics.model.enabled {
                 number(
                     ui,
-                    "海底深度（米）",
+                    "Seabed Depth (m)",
                     &mut self.optics.depth,
                     0.25..=100.0,
                     true,
                 );
             }
         });
-        group(ui, "局部模拟", |ui| {
-            toggle(ui, "启用浅水模拟", &mut self.optics.shore.enabled);
+        group(ui, "Local Simulation", |ui| {
+            toggle(
+                ui,
+                "Enable Shallow Water Simulation",
+                &mut self.optics.shore.enabled,
+            );
             parameter(
                 ui,
-                "SWE 状态",
-                "仅沙滩或模型场景且启用浅水模拟时运行。",
+                "SWE Status",
+                "Runs only in beach or model scenes with shallow water simulation enabled.",
                 |ui| {
                     ui.label(if self.optics.swe_enabled() {
-                        "已启用"
+                        "Enabled"
                     } else {
-                        "需要海岸场景与 SWE"
+                        "Requires a coastal scene and SWE"
                     })
                 },
             );

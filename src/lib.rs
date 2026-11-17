@@ -1,4 +1,4 @@
-//! GPU 海洋模拟与渲染库；CPU 终端程序位于 tui-2d-prototype crate。
+//! GPU ocean simulation and rendering; CPU terminal demos live in the tui-2d-prototype crate.
 
 #[cfg(feature = "ocean")]
 pub mod ocean;

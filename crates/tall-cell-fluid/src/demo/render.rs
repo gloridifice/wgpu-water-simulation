@@ -1,5 +1,5 @@
-//! 独立 demo 的表面预览渲染器；输入完全来自实际提取的 SurfaceMesh。
-//! 水材质只用于观察几何，未实现透明、屏幕折射或体散射。
+//! Surface preview renderer for the standalone demo; input comes entirely from the extracted SurfaceMesh.
+//! The water material only visualizes geometry; transparency, screen refraction, and volume scattering are not implemented.
 
 use std::io::Write;
 use std::path::Path;
@@ -16,11 +16,11 @@ use crate::surface::SurfaceMesh;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {
-    /// 绕 y 轴旋转的弧度。
+    /// Rotation around the y axis, in radians.
     pub yaw: f32,
-    /// 仰角，弧度。
+    /// Elevation angle, in radians.
     pub pitch: f32,
-    /// 相机到目标的距离，米。
+    /// Distance from camera to target, in meters.
     pub distance: f32,
     pub target: [f32; 3],
 }
@@ -91,7 +91,7 @@ impl Renderer {
                 force_fallback_adapter: false,
             })
             .await
-            .map_err(|e| format!("无法创建窗口渲染适配器：{e}"))?;
+            .map_err(|e| format!("Cannot create window rendering adapter: {e}"))?;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("tall-cell standalone preview"),
@@ -103,7 +103,7 @@ impl Renderer {
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
-            .ok_or("窗口 surface 没有可用配置")?;
+            .ok_or("No configuration available for the window surface")?;
         let capabilities = surface.get_capabilities(&adapter);
         if let Some(format) = capabilities
             .formats
@@ -164,7 +164,7 @@ impl Renderer {
             wgpu::TextureFormat::Rgba8UnormSrgb,
         );
         if let Some(error) = validation_scope.pop().await {
-            return Err(format!("预览着色器初始化失败：{error}"));
+            return Err(format!("Preview shader initialization failed: {error}"));
         }
         let vertices = vertex_buffer(&device, "empty preview surface", &[]);
         let frame = vertex_buffer(&device, "empty tank frame", &[]);
@@ -209,7 +209,7 @@ impl Renderer {
         self.gui.handle_event(window, event)
     }
 
-    /// 只展开真实索引，为网格预览增加 barycentric 属性；不重建或合成水面。
+    /// Expand only actual indices to add barycentric attributes for mesh preview; do not reconstruct or synthesize the water surface.
     pub fn upload(&mut self, mesh: &SurfaceMesh, extent: [f32; 3]) -> Result<(), String> {
         if extent.iter().any(|x| !x.is_normal() || *x <= 0.0)
             || !mesh.indices.len().is_multiple_of(3)
@@ -217,21 +217,21 @@ impl Renderer {
             || mesh.indices.len() as u64 * size_of::<Vertex>() as u64
                 > self.device.limits().max_buffer_size
         {
-            return Err("预览尺寸、三角形索引数量或缓冲区大小无效".into());
+            return Err("Invalid preview dimensions, triangle index count, or buffer size".into());
         }
         let mut vertices = Vec::with_capacity(mesh.indices.len());
         for (n, &index) in mesh.indices.iter().enumerate() {
             let source = mesh
                 .vertices
                 .get(index as usize)
-                .ok_or("预览三角形索引越界")?;
+                .ok_or("Preview triangle index out of bounds")?;
             if source
                 .position
                 .iter()
                 .chain(&source.normal)
                 .any(|v| !v.is_finite())
             {
-                return Err("预览表面含非有限位置或法线".into());
+                return Err("Preview surface contains non-finite positions or normals".into());
             }
             let mut barycentric = [0.0; 3];
             barycentric[n % 3] = 1.0;
@@ -272,7 +272,7 @@ impl Renderer {
         if self.minimized {
             return Ok(Vec::new());
         }
-        // 在 egui 构建前读取最近已完成的样本；绝不把 CPU 绘制提交时间标成 GPU 耗时。
+        // Read the latest completed sample before building egui; never label CPU draw submission time as GPU time.
         self.timer.poll(&self.device);
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
@@ -292,7 +292,9 @@ impl Renderer {
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return Ok(Vec::new());
             }
-            wgpu::CurrentSurfaceTexture::Validation => return Err("预览 surface 校验失败".into()),
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err("Preview surface validation failed".into());
+            }
         };
         let timing = RenderTiming {
             supported: self.timer.supported,
@@ -302,7 +304,7 @@ impl Renderer {
         let gui_frame = self.gui.prepare(window, &self.device, data, timing);
         let [width, height] = self.gui.viewport_size;
         if width == 0 || height == 0 {
-            return Err("GUI 场景纹理尺寸不能为零".into());
+            return Err("GUI scene texture dimensions cannot be zero".into());
         }
         if self.depth.width() != width || self.depth.height() != height {
             self.depth = depth_texture(&self.device, width, height);
@@ -322,7 +324,7 @@ impl Renderer {
         if timed {
             self.timer.resolve(&mut encoder);
         }
-        // egui pass 位于计时结束之后，只把离屏场景合成到窗口。
+        // The egui pass follows the timing interval and only composites the offscreen scene into the window.
         let additional = self.gui.encode(
             window,
             &self.device,
@@ -340,7 +342,7 @@ impl Renderer {
         Ok(gui_frame.actions)
     }
 
-    /// 按当前预览尺寸离屏渲染同一网格和相机，PNG 路径必须不存在。
+    /// Render the same mesh and camera offscreen at the current preview size; the PNG path must not already exist.
     pub fn snapshot(&mut self, camera: Camera, mode: ViewMode, path: &Path) -> Result<(), String> {
         let width = self.config.width;
         let height = self.config.height;
@@ -349,9 +351,9 @@ impl Renderer {
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64;
         let byte_count = padded_row_bytes
             .checked_mul(height as u64)
-            .ok_or("截图大小溢出")?;
+            .ok_or("Screenshot size overflow")?;
         if byte_count > self.device.limits().max_buffer_size {
-            return Err("截图超过 GPU 回读缓冲区上限".into());
+            return Err("Screenshot exceeds GPU readback buffer limit".into());
         }
         self.update_uniform(camera, mode, width, height)?;
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -426,7 +428,7 @@ impl Renderer {
         drop(mapped);
         readback.unmap();
         let file = std::fs::File::create_new(path)
-            .map_err(|e| format!("无法创建截图 {}：{e}", path.display()))?;
+            .map_err(|e| format!("Cannot create screenshot {}: {e}", path.display()))?;
         let mut output = std::io::BufWriter::new(file);
         let mut encoder = png::Encoder::new(&mut output, width, height);
         encoder.set_color(png::ColorType::Rgba);
@@ -452,7 +454,7 @@ impl Renderer {
             || camera.distance <= 0.0
             || camera.target.iter().any(|v| !v.is_finite())
         {
-            return Err("预览相机参数不是有限有效值".into());
+            return Err("Preview camera parameters are not finite valid values".into());
         }
         let pitch = camera.pitch.clamp(-1.5, 1.5);
         let target = Vec3::from_array(camera.target);
@@ -474,7 +476,7 @@ impl Renderer {
         let view_projection = projection * view;
         let inverse = view_projection.inverse();
         if !view_projection.is_finite() || !inverse.is_finite() {
-            return Err("预览相机矩阵不可表示".into());
+            return Err("Preview camera matrix is not representable".into());
         }
         let uniform = Uniforms {
             view_projection: view_projection.to_cols_array_2d(),

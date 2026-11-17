@@ -1,66 +1,66 @@
 <!-- doco:lifecycle v=1 created-at=2026-10-28T08:08:07Z completed-at=2026-10-29T06:25:42Z archived-at=2026-10-29T06:25:50Z -->
-# GPU Ocean 五分类 Dock 工作区
+# GPU Ocean Five-Category Dock Workspaces
 
 ## Purpose
 
-当前 GPU Ocean 用一份 Dock 布局把参数分散在场景两侧。SWE 页签混合了求解、泡沫生成与输送、材质、地形等职责；强相关参数分散，模式不生效时仍显示大量置灰或可编辑但无作用的控件。
+GPU Ocean currently uses one Dock layout with parameters scattered on both sides of the scene. The SWE tab mixes solver, foam generation and transport, material and terrain responsibilities; closely related parameters are scattered, and many disabled or editable but ineffective controls remain visible when a mode does not apply.
 
-本变更将导航和 Dock 分离：最左侧固定分类按钮，右侧按分类切换独立的 Dock 工作区。保留用户重新停靠面板的能力，同时按参数实际作用重新分组。
+This change separates navigation from Dock: fixed category buttons on the far left switch independent category-specific Dock workspaces on the right. Users can still redock panels, while parameters are regrouped by their actual effects.
 
 ## Scope and acceptance
 
-### 工作区与参数归属
+### Workspaces and parameter ownership
 
-一级分类按以下顺序固定为五个，按钮为 38×38 pt 正方形，只显示统一风格的 SVG icon，hover 显示中文名称，不参与 Dock；未选中时背景透明、无边框，选中态保留主题高亮：
+Five top-level categories are fixed in the following order. Buttons are 38×38 pt squares showing only consistently styled SVG icons with Chinese names on hover, outside Dock; unselected backgrounds are transparent and borderless, while selection retains the theme highlight:
 
-| 工作区 | 主要内容 |
+| Workspace | Main contents |
 | --- | --- |
-| 场景 | 场景入口、沙滩地形、模型变换与水位、计算区域、边界、碰撞体 |
-| 浅水 | SWE 网格和求解器、FFT → SWE 增益／短波过滤／混合水深、近岸泡沫生成／输送／衰减、湿沙历史、浪花生成与运动 |
-| 远海 | FFT 波谱、范围与采样、波高与水平挤浪、远海泡沫生成与衰减 |
-| 着色 | 水体与天空光学、反射、泡沫显示／颜色／材质／高度、法线细节、沙地材质、浪花尺寸与软交界 |
-| 配置 | 现有配置选择、新建、保存、重命名和删除 |
+| Scene | Scene entry, beach terrain, model transform and water level, computation domain, boundaries, colliders |
+| Shallow Water | SWE grid and solver, FFT → SWE gain/short-wave filtering/blend depth, nearshore foam generation/transport/decay, wet sand history, spray generation and motion |
+| Offshore | FFT spectrum, extent and sampling, wave height and horizontal choppiness, offshore foam generation and decay |
+| Shading | Water and sky optics, reflection, foam display/color/material/height, normal detail, sand material, spray size and soft intersections |
+| Configurations | Existing configuration selection, creation, saving, renaming and deletion |
 
-合并一级入口不代表合并所有参数成一个长表。各工作区内仍按职责拆成多个 Dock 面板；FFT → SWE 耦合明确归浅水，不放远海。调试入口放在所属功能面板。播放、时间倍率、计时和相机操作常驻工具栏；性能是可在任意工作区添加的通用 Dock 面板，不新增一级分类。常驻工具栏横跨整个窗口宽度，导航从其下方开始；操作按钮左对齐，FPS、CPU 帧处理时间、GPU 主帧时间靠右对齐；窄窗口放不下时摘要另起一行右对齐；实际开启 SWE 时再显示 SWE GPU 时间。GPU 指标使用异步真实时间戳，不支持／失败／等待采样时明确显示状态，不以 CPU 耗时冒充。
+Combining top-level entries does not mean combining all parameters into one long list. Each workspace retains multiple Dock panels by responsibility; FFT → SWE coupling belongs explicitly to Shallow Water, not Offshore. Debug entries belong to their feature panels. Playback, time scale, timing and camera operations remain in the permanent toolbar; performance is a general Dock panel available in any workspace, not a new top-level category. The permanent toolbar spans the window, with navigation below it; action buttons align left and FPS, CPU frame processing time and GPU main-frame time align right. In narrow windows the summary moves to a separate right-aligned row; SWE GPU time appears only when SWE is enabled. GPU metrics use asynchronous real timestamps and explicitly show unsupported, failure or pending status rather than presenting CPU time as GPU time.
 
-### 布局与共享状态
+### Layout and shared state
 
-- 每个分类拥有独立的 Dock 布局。默认左参数、右侧大面积 Viewport；场景／浅水／远海／着色的参数侧分上下两区，配置保持单区。区内保留相关页签，不把所有面板堆在一栏。新版默认只用于无保存布局或显式重置，不覆盖已有个人布局。
-- 允许在当前工作区拖动页签、调整分隔线，以及通过“添加面板”加入其他工作区的可用面板。沿用单窗口，不新增浮动系统窗口。
-- 每套布局保留且仅保留一个不可关闭的 Viewport 页签，所有工作区共享同一场景、相机和模拟状态。
-- 切换分类恢复该工作区上次的布局，不载入场景预设，不改变参数、不清空历史、不重置计时或相机；允许因显示尺寸改变而正常重建渲染目标。
-- 各布局及当前分类可跨启动恢复；“重置当前布局”只恢复当前工作区的默认布局。
-- 布局保存独立于模拟参数和命名配置；载入或覆盖命名配置不修改工作区布局。遵守 `--no-settings` 和只读 `--config` 的无隐式写入约束。
+- Each category has an independent Dock layout. By default parameters are on the left and a large Render View on the right; the parameter side of Scene, Shallow Water, Offshore and Shading has upper and lower areas, while Configurations has one. Keep related tabs in each area rather than stacking all panels in one column. New defaults apply only without a saved layout or on explicit reset, never over existing personal layouts.
+- Allow dragging tabs, resizing dividers and adding available panels from other workspaces via “Add Panel”. Retain a single window without floating system windows.
+- Each layout retains exactly one non-closable Render View tab; all workspaces share the scene, camera and simulation state.
+- Switching categories restores that workspace's last layout without loading a scene preset, changing parameters, clearing history or resetting timing or camera; render targets may be rebuilt normally when display size changes.
+- Layouts and the active category can be restored across launches; “Reset Current Layout” resets only the current workspace.
+- Layout saving is independent of simulation parameters and named configurations; loading or overwriting named configurations does not change workspace layouts. Respect the no-implicit-write constraints of `--no-settings` and read-only `--config`.
 
-### 参数交互
+### Parameter interaction
 
-- 保留所有现有参数、合法范围、默认值、单位、hover 说明和实际应用／重置语义；波谱及模型草稿仍需显式应用。
-- 每个逻辑组使用共享两列表格，扣除列间距后名称占 42%、控件占 58%；长名称换行，控件不能撑宽列。组标题为普通字号的加粗 Label。
-- 当前场景／模式不可用的参数行、空分组和纯不可用面板不显示，而不是整片置灰。保留重新启用入口、纠正无效配置的编辑入口、必要状态与错误提示；隐藏不清空保存值。
-- 隐藏面板保留恢复位置；不可用时不出现在“添加面板”菜单中。五个一级入口保持固定，避免导航跳动，并使启用入口可达。
-- 不把只读性能状态视为不可用，不因关闭泡沫显示而隐藏仍在运行的生成／输送参数，不因关闭天空散射而隐藏仍影响背景和反射的天空颜色／强度。
-- 固定的两到三项枚举使用水平互斥按钮，如求解阶数、泡沫输送阶数、碰撞体形状、天空积分步数、远海泡沫视图。四项及以上或动态列表默认保留下拉／列表；启停开关仍用复选框。用短标签和 hover 保持窄栏内横排，不强行撑大参数列。
+- Preserve all existing parameters, valid ranges, defaults, units, hover descriptions and application/reset semantics; spectrum and model drafts still require explicit application.
+- Each logical group shares a two-column grid: after spacing, names occupy 42% and controls 58%; long names wrap and controls must not widen columns. Group headings are bold labels at normal text size.
+- Hide parameter rows, empty groups and entirely unavailable panels when the current scene/mode does not support them, rather than graying out whole areas. Retain re-enable and invalid-configuration correction entries, necessary status and error messages; hiding does not clear saved values.
+- Hidden panels retain their restore positions and do not appear in “Add Panel” while unavailable. Keep the five top-level entries fixed to avoid navigation movement and make enable controls accessible.
+- Do not treat read-only performance status as unavailable, hide still-running foam generation/transport parameters when foam display is disabled, or hide sky colors/intensity still affecting background and reflections when sky scattering is disabled.
+- Use horizontal mutually exclusive buttons for fixed two- or three-option enums, such as solver order, foam transport order, collider shape, sky integration steps and offshore foam view. Four or more options or dynamic lists normally retain dropdowns/lists; enable switches remain checkboxes. Use short labels and hover help to fit narrow columns without forcing them wider.
 
-### 可观察验收
+### Observable acceptance
 
-1. 五个一级入口始终位于 Dock 外；切换只影响右侧布局，各分类默认参数归属与上表一致。
-2. 在浅水中移动面板、调宽，再切到远海并切回，恢复浅水布局；重启后恢复最后工作区和各自布局。重置一个布局不影响另四个。
-3. 切换、停靠和隐藏面板不改变模拟参数、草稿、时间、暂停状态、相机或物理历史。相同参数在跨工作区添加的面板中保持一致。
-4. 关闭过滤、拖曳、SWE 或切换双浓度／脊线／材质路径时，只显示实际可用的参数；重新启用后恢复原值，错误与启用入口仍可达。
-5. 小选项枚举具有明确互斥选中态；小窗口、缩放和长中文名称下无控件越界或列边界漂移。
-6. 旧参数配置不因缺少布局数据而失效；损坏的布局不会丢弃模拟参数或命名配置。无保存／只读模式不创建或覆盖个人布局文件。
-7. 五个可编辑 SVG 源文件可在 20／24／32 像素下辨认，浅水与远海的语义不同；临时 HTML 可查看实际尺寸、选中态和侧栏组合。图标仍需用户视觉确认，不把预览当成 egui 已接入。
+1. Five top-level entries always remain outside Dock; switching affects only the right-hand layout, with default parameter ownership as above.
+2. Move and resize a panel in Shallow Water, switch to Offshore and back, and recover the Shallow Water layout; restarting restores the last workspace and each layout. Resetting one layout does not affect the other four.
+3. Switching, docking and hiding panels do not change simulation parameters, drafts, time, pause state, camera or physical history. The same parameters remain consistent in panels added across workspaces.
+4. When filtering, drag or SWE is disabled, or dual-concentration/ridge/material paths are switched, show only actually available parameters; re-enabling restores original values, with error and enable entries still accessible.
+5. Small enums have clear mutually exclusive selection states; controls do not overflow or shift column boundaries with small windows, scaling or long Chinese names.
+6. Old parameter configurations remain valid without layout data; corrupt layouts do not discard simulation parameters or named configurations. No-save/read-only modes do not create or overwrite personal layout files.
+7. Five editable SVG sources remain recognizable at 20/24/32 pixels, with distinct Shallow Water and Offshore semantics; temporary HTML shows actual sizes, selection and sidebar composition. Icons still require user visual confirmation; a preview is not proof of egui integration.
 
-### 非目标与交付边界
+### Non-goals and delivery boundary
 
-不修改求解器、WGSL、模拟或着色算法、默认参数、配置预设语义、CLI 入口，不影响无 ocean feature 的 CPU 程序。不扩展到独立 foam-weight-lab 工具，不新增图标生成服务或多窗口管理。
+Do not change solver, WGSL, simulation or shading algorithms, default parameters, configuration preset semantics or CLI entry points, and do not affect the CPU program without the ocean feature. Do not extend the independent foam-weight-lab tool or add an icon generation service or multi-window management.
 
-用户已确认图标预览并授权执行 egui 重构、布局持久化，同时补充工具栏性能指标需求。预览不是需求源，不将临时截图或生成参考图加入版本管理。
+The user confirmed the icon preview and authorized the egui refactor and layout persistence, additionally requesting toolbar performance metrics. The preview is not a requirements source; do not add temporary screenshots or generated reference images to version control.
 
-交付实现后，需同步当前架构、界面规范、使用说明及 [AGENTS.md](../../../../AGENTS.md) 中旧的两侧布局约定；创建阶段不把目标描述为已实现功能。
+After delivery, update the current architecture, UI specification, usage guide and outdated two-sided layout conventions in [AGENTS.md](../../../../AGENTS.md); do not present the target as implemented during creation.
 
 ## Result
 
-已交付五分类固定 SVG 导航、独立 Dock 工作区、参数重组与条件隐藏、独立布局 sidecar，以及常驻工具栏性能摘要。各工作区共享模拟、草稿与相机；布局与模拟会话、命名配置分离。当前合约见 [工作区界面规范](../../../specs/workspace-ui.md)，使用方式见 [Ocean 指南](../../../guides/ocean.md#dock-参数工作区)。
+Delivered fixed five-category SVG navigation, independent Dock workspaces, parameter regrouping and conditional hiding, a separate layout sidecar and a permanent toolbar performance summary. Workspaces share simulation, drafts and camera; layouts are separate from simulation sessions and named configurations. See the [workspace UI specification](../../../specs/workspace-ui.md) for the current contract and the [Ocean guide](../../../guides/ocean.md#dock-parameter-workspaces) for usage.
 
-用户明确确认本变更已经完成，授权全部任务标记完成并归档。本次核对现有导航、工作区、布局保存和异步 GPU 计时代码并同步当前文档；后续模块重组的既有记录包含默认工作区窗口冒烟和回归通过。本次未重跑构建、测试或逐项 GUI 交互验收，不把用户完成确认或机械检查等同于新增运行验证。
+The user explicitly confirmed completion and authorized marking all tasks complete and archiving. This review checked existing navigation, workspaces, layout saving and asynchronous GPU timing code and synchronized current documentation; an existing record of the subsequent module reorganization includes a passing default workspace window smoke test and regression checks. Builds, tests and individual GUI interaction acceptance were not rerun for this review; user confirmation and mechanical checks are not presented as new runtime verification.

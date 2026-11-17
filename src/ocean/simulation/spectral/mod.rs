@@ -129,7 +129,7 @@ impl FftWaves {
         let mut stages = Vec::new();
         for axis in 0..2 {
             for bit in 1..=bits {
-                // 每一级有独立且不变的参数，避免提交前反复写同一个 uniform。
+                // Each stage has its own immutable parameters, avoiding repeated writes to one uniform before submission.
                 let params = buffer(
                     device,
                     "FFT stage",
@@ -144,7 +144,7 @@ impl FftWaves {
                 stages.push(bind(device, &fft, &[input, output, &params]));
             }
         }
-        // 总共 2*log2(N) 级，最终结果总是落回 fields。
+        // With 2*log2(N) stages, the final result always lands back in fields.
         Ok(Self {
             config,
             height_bound,
@@ -194,7 +194,7 @@ impl FftWaves {
             pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
         }
         for stage in &self.stages {
-            // 每个 pass 结束后，wgpu 插入所需的存储读写屏障。
+            // wgpu inserts the required storage read/write barriers after each pass.
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("IFFT stage"),
                 timestamp_writes: None,
@@ -207,7 +207,7 @@ impl FftWaves {
 
     pub fn read_fields(&self, gpu: &Gpu) -> Result<Vec<[f32; 2]>, Error> {
         let bytes = gpu.read_buffer(&self.fields, self.fields.size())?;
-        // 不依赖 Vec<u8> 的对齐保证。
+        // Do not rely on the alignment of Vec<u8>.
         Ok(bytes
             .as_chunks::<8>()
             .0

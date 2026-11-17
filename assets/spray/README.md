@@ -1,30 +1,30 @@
-# 浪花粒子纹理
+# Spray particle texture
 
-## 来源与许可
+## Source and license
 
-当前使用 **Pierre's Effects vol.1** 中的 `Pierre01/Texture/Splash.png`，作者 **日陰者ピエール（Pierre / HikagePierreACV）**，由 Effekseer 官方样例页面发布。原图是 512×512 RGBA 的 2×2 图集，包含四种水片／飞溅形状；它不是四帧动画，本项目按粒子随机选取一种。
+The current texture is `Pierre01/Texture/Splash.png` from **Pierre's Effects vol.1**, by **日陰者ピエール (Pierre / HikagePierreACV)**, published on the official Effekseer sample page. The original is a 512×512 RGBA 2×2 atlas of four water-sheet/splash shapes; it is not a four-frame animation. This project randomly selects a shape per particle.
 
-- 作者与下载页：https://effekseer.github.io/en/contributes/Pierre01/index.html
-- 官方 1.30 压缩包：https://effekseer.github.io/contributes/Pierre01_130.zip
-- 官方许可说明：https://effekseer.github.io/en/contribute.html （Pierre 样例位于 CC0 部分，不是旧许可部分）
-- 许可：**CC0 1.0 Universal**，允许修改和再分发；保留作者署名作为来源记录。
-- 完整许可：[pierre/LICENSE-CC0.txt](pierre/LICENSE-CC0.txt)，原文来自 https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt 。
-- 仓库原图：[pierre/Splash.png](pierre/Splash.png)，与上述官方压缩包中的文件逐字节一致。
-- 原图 SHA-256：`7ab4960575a41594a8c933a5bc6763b04a6420e322b33ea038404fb7a822c06e`。
+- Author and download: https://effekseer.github.io/en/contributes/Pierre01/index.html
+- Official 1.30 archive: https://effekseer.github.io/contributes/Pierre01_130.zip
+- Official license information: https://effekseer.github.io/en/contribute.html (the Pierre sample is in the CC0 section, not the old license section)
+- License: **CC0 1.0 Universal**, permitting modification and redistribution; author attribution is retained as a source record.
+- Full license: [pierre/LICENSE-CC0.txt](pierre/LICENSE-CC0.txt), originally from https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt.
+- Repository original: [pierre/Splash.png](pierre/Splash.png), byte-for-byte identical to the file in the official archive above.
+- Original SHA-256: `7ab4960575a41594a8c933a5bc6763b04a6420e322b33ea038404fb7a822c06e`.
 
-检索时也查看了 OpenGameArt 的 Water Drop Particle 和小尺寸 Splash 动画；前者偏独立水球、后者偏像素风，未用于本项目。
+OpenGameArt's Water Drop Particle and a small Splash animation were also considered; the former resembles individual water droplets and the latter has a pixel-art style. Neither is used here.
 
-## 本项目的处理
+## Project processing
 
-`bake.py` 从原图提取 **Alpha 通道**，不是取白色 RGB 轮廓。按左上、右上、左下、右下拆分，缩为 224×224 后居中放入 256×256 图层，四边留 16 像素透明边。各层独立生成 9 级 mip，避免图集相邻形状渗色和远距离闪烁。没有修改原图。
+`bake.py` extracts the original's **alpha channel**, not its white RGB outline. It splits the atlas in top-left, top-right, bottom-left, bottom-right order, resizes each to 224×224, and centers it in a 256×256 layer with a 16-pixel transparent border. Nine mip levels are generated independently for each layer to avoid bleeding between atlas shapes and distant flicker. The original is unchanged.
 
-产物 `splash-mips.r8` 为线性 R8 数据，按 mip → layer → row 排列，包含四层，共 349,524 字节。SHA-256：`29d279b448b1dc2e1ebab2c8df9784048f1e23059610bdfab632400a1a37dbbe`。
+The output `splash-mips.r8` is linear R8 data ordered mip → layer → row, with four layers and 349,524 bytes total. SHA-256: `29d279b448b1dc2e1ebab2c8df9784048f1e23059610bdfab632400a1a37dbbe`.
 
-离线重建：
+Offline rebuild:
 
 ```powershell
 python -m pip install Pillow
 python assets/spray/bake.py
 ```
 
-正常 Rust 构建和运行不需要 Python、Pillow 或联网。渲染使用 `texture_2d_array`，每个粒子出生时固定一个随机图层；四边形自身旋转，不旋转 UV 后裁切图案。颜色由着色器提供，继续使用预乘透明度和深度软交界，不采用加法发光。发射强度调试使用独立圆形标记，不受美术纹理形状影响。
+Normal Rust builds and execution need neither Python, Pillow, nor network access. Rendering uses `texture_2d_array`, assigning a fixed random layer at particle birth; the quad rotates without rotating UVs and clipping the shape. Color comes from the shader, with premultiplied transparency and soft depth intersections rather than additive glow. Emission intensity debugging uses a separate circular marker unaffected by the artwork's shape.

@@ -1,8 +1,8 @@
-//! 后台 GPU 模拟和表面提取；窗口线程只消费最新完整快照。
+//! Background GPU simulation and surface extraction; the window thread consumes only the latest complete snapshot.
 //!
-//! `simulation_ms`（ms/step）与 `mesh_ms`（ms/mesh update）分别记录模拟子步和
-//! 表面生成的 CPU 墙钟耗时，均包含 GPU 工作、同步和回读等待；并非 GPU timestamp。
-//! `elapsed_ms` 是两者之和，不计设备/场景初始化，也不用于推算物理时间。
+//! `simulation_ms` (ms/step) and `mesh_ms` (ms/mesh update) record CPU wall-clock time for simulation substeps and
+//! surface generation respectively, including GPU work, synchronization, and readback waits; these are not GPU timestamps.
+//! `elapsed_ms` is their sum, excluding device/scene initialization, and is not used to infer physical time.
 
 use crate::gpu::{GpuContext, GpuSimulation, default_config, extract_surface};
 use crate::surface::{SurfaceLimits, SurfaceMesh};
@@ -19,7 +19,7 @@ pub enum Scene {
 
 #[derive(Clone, Copy, Debug)]
 pub struct DemoConfig {
-    /// 每轴单元数；演示域固定为 2 米立方体。
+    /// Cells per axis; the demo domain is fixed at a 2-meter cube.
     pub resolution: usize,
     pub scene: Scene,
     pub paused: bool,
@@ -37,21 +37,21 @@ impl Default for DemoConfig {
 
 #[derive(Clone, Debug)]
 pub struct Frame {
-    /// 每次 Reset 尝试递增，包括重置失败的情况。
+    /// Incremented for every Reset attempt, including failed resets.
     pub generation: u64,
     pub mesh: SurfaceMesh,
     pub extent: [f32; 3],
     pub time: f64,
     pub steps: usize,
     pub report: Option<StepReport>,
-    /// 本步推进前计算的 CFL 步长上限；初始帧与重置帧为 None。
+    /// CFL time step limit computed before this step; None for initial and reset frames.
     pub stable_dt: Option<f64>,
-    /// 最后一个模拟子步的 CPU 墙钟耗时（ms/step），包含 CFL 计算、GPU 工作与回读等待。
-    /// 初始帧和重置帧为 None；初始化耗时不充当模拟子步样本。
+    /// CPU wall-clock time of the last simulation substep (ms/step), including CFL computation, GPU work, and readback waits.
+    /// None for initial and reset frames; initialization time is not used as a substep sample.
     pub simulation_ms: Option<f64>,
-    /// 最后一次表面更新的 CPU 墙钟耗时（ms/mesh update）：halo、GPU 提取与回读整理。
+    /// CPU wall-clock time of the last surface update (ms/mesh update): halo, GPU extraction, and readback processing.
     pub mesh_ms: f64,
-    /// simulation_ms.unwrap_or(0) + mesh_ms；暂停确认沿用最近样本，不新增零耗时样本。
+    /// simulation_ms.unwrap_or(0) + mesh_ms; pause confirmation retains the latest sample without adding a zero-duration sample.
     pub elapsed_ms: f64,
     pub adapter: String,
     pub paused: bool,
@@ -60,7 +60,7 @@ pub struct Frame {
 #[derive(Clone, Copy, Debug)]
 pub enum Command {
     SetPaused(bool),
-    /// 仅暂停时推进一个实际模拟子步。
+    /// Advance one actual simulation substep only while paused.
     Step,
     Reset(Scene),
     Stop,
@@ -81,10 +81,10 @@ pub struct Worker {
 }
 
 impl Worker {
-    /// GPU 初始化也在后台执行；设备错误以 WorkerEvent::Error 发布。
+    /// GPU initialization also runs in the background; device errors are published as WorkerEvent::Error.
     pub fn spawn(config: DemoConfig) -> Result<Self, String> {
         if !(8..=40).contains(&config.resolution) {
-            return Err("演示分辨率必须在 8～40 之间（每轴单元数）".into());
+            return Err("Demo resolution must be between 8 and 40 (cells per axis)".into());
         }
         let (sender, receiver) = mpsc::channel();
         let latest = Arc::new(Mutex::new(None));
@@ -107,14 +107,14 @@ impl Worker {
                             .downcast_ref::<String>()
                             .map(String::as_str)
                             .or_else(|| payload.downcast_ref::<&str>().copied())
-                            .unwrap_or("未知 panic");
-                        let error = format!("模拟后台线程异常：{detail}");
+                            .unwrap_or("unknown panic");
+                        let error = format!("Simulation worker thread panicked: {detail}");
                         publish(&output, WorkerEvent::Error(error.clone()));
                         Err(error)
                     }
                 }
             })
-            .map_err(|e| format!("无法创建模拟后台线程：{e}"))?;
+            .map_err(|e| format!("Cannot create simulation worker thread: {e}"))?;
         Ok(Self {
             sender,
             latest,
@@ -126,12 +126,12 @@ impl Worker {
         if self.sender.send(command).is_err() {
             publish(
                 &self.latest,
-                WorkerEvent::Error("模拟后台线程已退出".into()),
+                WorkerEvent::Error("Simulation worker thread has exited".into()),
             );
         }
     }
 
-    /// 取走最新事件。较旧快照被新快照替换，不累计大型三角形数组。
+    /// Take the latest event. New snapshots replace older ones, avoiding accumulation of large triangle arrays.
     pub fn take_latest(&self) -> Option<WorkerEvent> {
         self.latest
             .lock()
@@ -139,13 +139,13 @@ impl Worker {
             .take()
     }
 
-    /// 请求停止并等待当前 GPU 阶段结束，只回收本 Worker 创建的线程。
+    /// Request a stop and wait for the current GPU stage, joining only the thread created by this Worker.
     pub fn finish(mut self) -> Result<(), String> {
         let _ = self.sender.send(Command::Stop);
         match self.handle.take() {
             Some(handle) => handle
                 .join()
-                .map_err(|_| "模拟后台线程 join 失败".to_owned())?,
+                .map_err(|_| "Failed to join simulation worker thread".to_owned())?,
             None => Ok(()),
         }
     }
@@ -153,7 +153,7 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        // UI 意外提前退出时也请求停止；析构不阻塞窗口线程。
+        // Request a stop even if the UI exits unexpectedly; destruction does not block the window thread.
         let _ = self.sender.send(Command::Stop);
     }
 }
@@ -170,7 +170,7 @@ fn run(
     latest: &Latest,
 ) -> Result<(), String> {
     let mut generation = 0u64;
-    // 初始化失败仍保持命令通道存活，用户可 Reset 重试设备初始化。
+    // Keep the command channel alive after initialization failure so the user can Reset to retry device initialization.
     let context = loop {
         match pollster::block_on(GpuContext::new()) {
             Ok(context) => break context,
@@ -179,7 +179,9 @@ fn run(
         loop {
             match commands.recv() {
                 Ok(Command::Reset(scene)) => {
-                    generation = generation.checked_add(1).ok_or("重置代数溢出")?;
+                    generation = generation
+                        .checked_add(1)
+                        .ok_or("Reset generation overflow")?;
                     config.scene = scene;
                     break;
                 }
@@ -216,7 +218,9 @@ fn run(
                 continue;
             }
             Some(Command::Reset(scene)) => {
-                generation = generation.checked_add(1).ok_or("重置代数溢出")?;
+                generation = generation
+                    .checked_add(1)
+                    .ok_or("Reset generation overflow")?;
                 match make_simulation(&context, config.resolution, scene).and_then(|new| {
                     let frame = snapshot(&new, generation, paused, None, None, None)?;
                     Ok((new, frame))
@@ -230,7 +234,7 @@ fn run(
                     Err(error) => {
                         paused = true;
                         cached.paused = true;
-                        publish(latest, WorkerEvent::Error(format!("重置失败：{error}")));
+                        publish(latest, WorkerEvent::Error(format!("Reset failed: {error}")));
                     }
                 }
                 continue;
@@ -257,10 +261,13 @@ fn run(
                 publish(latest, WorkerEvent::Frame(Box::new(cached.clone())));
             }
             Err(error) => {
-                // 数值失败会暂停，保留最近成功快照，并允许用户重置场景。
+                // A numerical failure pauses, retains the latest successful snapshot, and allows the user to reset the scene.
                 paused = true;
                 cached.paused = true;
-                publish(latest, WorkerEvent::Error(format!("模拟已暂停：{error}")));
+                publish(
+                    latest,
+                    WorkerEvent::Error(format!("Simulation paused: {error}")),
+                );
             }
         }
     }
@@ -307,7 +314,7 @@ fn snapshot(
     simulation_ms: Option<f64>,
 ) -> Result<Frame, String> {
     let mesh_started = Instant::now();
-    // 仅渲染采样添加一层空气，封闭接触槽壁的水体侧面；不改变模拟 phi 或压力域。
+    // Add an air layer only for rendering samples, closing water sides against tank walls without changing simulation phi or the pressure domain.
     let surface_grid = surface_halo(&simulation.grid)?;
     let mesh = extract_surface(simulation.context, &surface_grid, SurfaceLimits::default())?;
     let mesh_ms = mesh_started.elapsed().as_secs_f64() * 1000.0;
@@ -337,8 +344,8 @@ fn surface_halo(grid: &Grid) -> Result<Grid, String> {
         let source =
             std::array::from_fn(|axis| p[axis].saturating_sub(1).min(grid.domain.size[axis] - 1));
         let value = grid.phi[grid.domain.index(source)];
-        // 只对渲染隐式表面与物理域求交。内侧边界距为负半格，外侧为正半格，
-        // 保证四面体斜边的零点也不会越过槽壁；单纯镜像 phi 会在斜边上外伸。
+        // Intersect only the rendered implicit surface with the physical domain. Boundary distances are negative half a cell inside and positive outside,
+        // keeping zero crossings on tetrahedron diagonals within the tank walls; simply mirroring phi would extend beyond them.
         let position = domain.center(p);
         let extent = grid.domain.extent();
         let boundary_distance = (0..3)
@@ -385,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "真实 GPU 的演示场景长时间稳定性验证"]
+    #[ignore = "Long-duration stability verification of demo scenes on a real GPU"]
     fn demo_scenes_run_half_second_on_gpu() {
         let context = pollster::block_on(GpuContext::new()).unwrap();
         for scene in [Scene::Drop, Scene::Dam] {

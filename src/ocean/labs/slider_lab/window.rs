@@ -161,7 +161,7 @@ impl ApplicationHandler for App {
             let window = Arc::new(
                 event_loop.create_window(
                     Window::default_attributes()
-                        .with_title("Slider Lab | 矩形滑块外观实验")
+                        .with_title("Slider Lab | Rectangular Slider Appearance")
                         .with_inner_size(winit::dpi::LogicalSize::new(1040.0, 720.0))
                         .with_min_inner_size(winit::dpi::LogicalSize::new(820.0, 560.0)),
                 )?,

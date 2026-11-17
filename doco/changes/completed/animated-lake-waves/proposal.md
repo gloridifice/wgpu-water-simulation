@@ -1,42 +1,42 @@
 <!-- doco:lifecycle v=1 created-at=2026-11-11T03:41:22Z completed-at=2026-11-11T06:48:47Z archived-at=- -->
-# 程序化湖泊动画波与单次反射
+# Procedural Lake Wave Animation and Single Reflection
 
 ## Purpose
 
-在现有 GPU Ocean 程序内提供不依赖 SWE 的平静湖泊动画：波纹沿传播场等值线朝边界推进，弧段中央较粗、两端较细，并在抵达反射线时生成较弱的反向波，逐渐消散。现有水面由 FFT 与近岸 SWE 组合，尚无该动画模式。
+Provide calm lake animation in the existing GPU Ocean program independently of SWE: ripples advance toward the boundary along propagation-field contours, with thicker centers and thinner ends, and produce a weaker reverse wave that gradually dissipates on reaching the reflection line. The existing surface combines FFT and nearshore SWE and does not yet have this animation mode.
 
-湖泊使用固定种子的噪波生成不规则岸线，摆放程序化岩石；波纹方向和角度范围仍以湖心的圆形角坐标描述。增加可切换的深度与 SDF 传播模式，便于比较等深线动画和考虑露出水面岩石边界的距离场动画。
+The lake uses fixed-seed noise for an irregular shoreline and places procedural rocks; ripple direction and angular range remain expressed in circular angular coordinates about the lake center. Add switchable depth and SDF propagation modes to compare depth-contour animation with distance-field animation accounting for exposed rock boundaries.
 
 ## Scope and acceptance
 
-### 范围与固定决策
+### Scope and fixed decisions
 
-- 在现有程序新增“湖泊场景”预设，不另建实验窗口。保留原沙滩与岩岸场景及其 FFT → SWE 行为；湖泊模式不推进 FFT、SWE、其泡沫或浪花。
-- 程序化生成围绕湖心的单连通外岸线、碗状湖底及若干岩石。外岸线采用有界、周期连续的径向噪波，不生成自交岸线；岩石可形成水域内孔洞。种子、尺寸和岩石设置可保存、重建。
-- 深度模式读取含岩石高度的静水深度；SDF 模式读取水域相对于外岸及露水岩石占地边界的二维有符号距离，水内为正。水下岩石影响深度，不作为 SDF 干燥障碍物。
-- 两种模式共用波实例与圆形角度包络。方向角标记波纹所在扇区，传播正负号单独保存；反射不把扇区转到对岸。模式切换显式应用并清空动画历史。
-- 每道波保存出生参数，以统一模拟时间解析推进；抵达传播场反射阈值时只生成一次更弱的反射波。短时间交叉淡化保证交接不突跳；反射波朝传播坐标增大的方向运动并衰减，不再反射。
-- 反射为等值线动画的反向播放，不承诺符合局部法线的镜面反射。SDF 是最近边界距离，不是绕障碍的传播时间场，不承诺绕射、遮挡后的波能输运或单一连通波前。
-- CPU 管理有界波事件池，GPU 评估波形与水面；正常帧无 GPU 状态同步回读。暂停、倍速、手动发波、清空与确定性种子均有明确语义。
-- 保持五分类 Dock，新增归属“场景”的“湖泊动画”面板；深度／SDF 用互斥选择器，岸边波反射不混入 SSR。现有着色面板复用有效项，无效功能显式禁用或隐藏。
-- 湖泊参数进入现有会话与命名配置，保持手动保存、只读与无保存规则；旧配置缺失新字段时仍进入原模式。活动波不持久化。
+- Add a “Lake Scene” preset to the existing program, not a separate experiment window. Preserve the original beach and rocky shore scenes and FFT → SWE behavior; lake mode does not advance FFT, SWE, their foam or spray.
+- Procedurally generate a simply connected outer shoreline around the lake center, a bowl-shaped bed and several rocks. Use bounded, periodically continuous radial noise for the outer shoreline without self-intersection; rocks may form holes in the water. Seed, size and rock settings can be saved and rebuilt.
+- Depth mode reads still-water depth including rock heights; SDF mode reads the two-dimensional signed distance of water from the outer shore and exposed rock footprints, positive in water. Submerged rocks affect depth but are not dry SDF obstacles.
+- Both modes share wave instances and the circular angular envelope. Direction angle marks the ripple sector; propagation sign is stored separately. Reflection does not move the sector to the opposite shore. Mode changes are explicitly applied and clear animation history.
+- Each wave stores its birth parameters and advances analytically using shared simulation time; reaching the propagation-field reflection threshold generates one weaker reflected wave. A short crossfade prevents a discontinuity; the reflected wave moves toward increasing propagation coordinate and decays without further reflection.
+- Reflection is reverse playback of contour animation, not a promise of specular reflection about local normals. SDF is distance to the nearest boundary, not a travel-time field around obstacles; diffraction, energy transport behind occlusion and a single connected wavefront are not promised.
+- The CPU manages a bounded wave event pool, and the GPU evaluates waveforms and the surface; normal frames do not synchronously read back GPU state. Pause, time scale, manual emission, clearing and deterministic seeds have explicit semantics.
+- Retain the five-category Dock and add a “Lake Animation” panel under Scene; depth/SDF use a mutually exclusive selector, and shore-wave reflection is not mixed with SSR. Reuse applicable existing shading controls and explicitly disable or hide unsupported features.
+- Store lake parameters in existing sessions and named configurations, retaining manual-save, read-only and no-save rules; old configurations missing new fields enter the original mode. Active waves are not persisted.
 
-### 非目标
+### Non-goals
 
-不实现 SWE 或其他守恒求解器、动态水位、流体反馈、多次反射、真实折射／绕射波传播、动态障碍物、洞穴／悬挑碰撞、多湖连通系统，也不改独立 CPU 包。首版不把静态距离场宣称为完整的岩石碰撞模拟。
+No SWE or other conservative solver, dynamic water level, fluid feedback, multiple reflections, true refractive/diffractive wave propagation, dynamic obstacles, cave/overhang collision or interconnected lakes; do not change the independent CPU package. Do not present the initial static distance field as a complete rock collision simulation.
 
-### 验收
+### Acceptance
 
-1. 相同种子生成相同不规则岸线、湖底和岩石；水面不覆盖陆地及露水岩石内部，深度与 SDF 可调试显示。
-2. 固定场景切换两种模式可观察到不同的等值线形状；深度模式包含水下岩石的影响，SDF 模式包含露水岩石边界，场值有限且符号正确。
-3. 波纹保持世界角度扇区，中央粗、端部细且平滑归零；跨 0°/360° 连续。入射与反射交接位置一致，反射更弱且仅触发一次，不跳至对岸。
-4. 暂停不推进、不重复生成；不同帧时间分割在相同模拟时刻得到一致事件与波位置（数值容差内）。清空、过期和池满均不误触发反射。
-5. 两种模式的真实 GPU 水面位移、法线及支持的光学读取一致；不支持的光学路径不得静默读取 FFT/SWE。原海洋模式完成相关回归。
-6. 真实窗口确认场景入口、模式应用、参数生效语义、面板隐藏恢复及五分类保持；快照不替代 UI 验收。旧配置加载、湖泊配置往返与只读模式通过验证。
-7. 更新当前架构、Ocean 指南及工作区 UI 合约，只记录已交付能力和已验证边界。
+1. The same seed generates the same irregular shoreline, bed and rocks; water does not cover land or exposed rock interiors, and depth and SDF have debug views.
+2. Switching modes in a fixed scene reveals different contour shapes; depth includes submerged rocks and SDF includes exposed rock boundaries, with finite field values and correct signs.
+3. Ripples retain their world-angle sector, with a thick center and ends smoothly tapering to zero, continuous across 0°/360°. Incident and reflected waves meet at the same position; reflection is weaker, triggers once and does not jump to the opposite shore.
+4. Pause does not advance or repeatedly generate waves; different frame-time partitions produce consistent events and wave positions at the same simulation time within numerical tolerance. Clear, expiry and a full pool do not spuriously trigger reflection.
+5. Real GPU surface displacement, normals and supported optics read consistently in both modes; unsupported optics paths must not silently read FFT/SWE. Original ocean mode passes relevant regressions.
+6. Confirm scene entry, mode application, parameter application semantics, panel hide/restore and five-category layout in a real window; snapshots do not replace UI acceptance. Verify old configuration loading, lake configuration round trips and read-only mode.
+7. Update current architecture, Ocean guide and workspace UI contract with only delivered capabilities and verified boundaries.
 
 ## Result
 
-已交付独立程序化湖泊模式：确定性不规则湖岸、湖底和岩石，深度／二维欧氏 SDF 传播，固定扇区的单波入射与一次较弱反射，GPU 高度／坡度合成及本地水面绘制。已接入五分类 Dock、场景入口、参数校验与配置兼容；湖泊不推进 FFT／SWE／泡沫／浪花，物理焦散和物理折射显式不可用，活动波不持久化。
+Delivered an independent procedural lake mode: deterministic irregular shores, bed and rocks, depth/two-dimensional Euclidean SDF propagation, single incident waves in fixed sectors and one weaker reflection, GPU height/slope composition and local surface rendering. Integrated with the five-category Dock, scene entry, parameter validation and configuration compatibility; the lake does not advance FFT/SWE/foam/spray, physical caustics and physical refraction are explicitly unavailable, and active waves are not persisted.
 
-验收包括配置和事件 CPU 测试、75 个 Ocean 库测试、真实 GPU 两模式／反射交接／角度跨界／512 秒重基准／光栅与原海洋回归，以及原生窗口模式应用、暂停发波和 Dock 拖动重启恢复。独立 MCP stdio 会话补充确认参数补丁、显式动作、暂停固定步进和波高诊断截帧。RTX 3070 上 256²、4／128 波的波场合成中位耗时约 0.018／0.102 ms，不代表其他硬件。湖泊交付时全仓格式、clippy 和完整 GPU 验证通过；后续工作区中的无关 Fog 格式／编译问题在当前验收记录中单独列明。
+Acceptance included configuration and event CPU tests, 75 Ocean library tests, real GPU tests of both modes, reflection handoff, angular wraparound, 512-second rebasing, rasterization and original ocean regressions, plus native window mode application, paused wave emission and Dock drag/restart restoration. An independent MCP stdio session additionally confirmed parameter patches, explicit actions, paused fixed stepping and wave-height diagnostic captures. On an RTX 3070, median 256² wave-field composition for 4/128 waves was approximately 0.018/0.102 ms; this does not represent other hardware. Repository-wide formatting, clippy and full GPU verification passed at lake delivery; unrelated Fog formatting/compilation issues in the later workspace are separately listed in the current acceptance record.

@@ -1,5 +1,5 @@
-//! GPU 上执行速度评价、沿柱积分、光学层 L1 膨胀和高度平滑。
-//! 阶段间允许同步回读以便离线验证；四叉树和稀疏压力基底由 CPU 整理。
+//! Evaluate velocity, integrate along columns, dilate the optical layer in L1, and smooth heights on the GPU.
+//! Synchronous readback between stages supports offline verification; the CPU organizes the quadtree and sparse pressure basis.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -36,9 +36,9 @@ struct Column {
     single_grounded: u32,
 }
 
-/// 构建自适应压力网格；数值评价和光学层均使用实际 WGSL 计算结果。
+/// Build an adaptive pressure grid using actual WGSL results for numerical metrics and the optical layer.
 ///
-/// GPU 使用 f32，CPU 参考使用 f64；精细化阈值恰好贴近舍入误差时，拓扑可能不同。
+/// The GPU uses f32 and the CPU reference uses f64; topology may differ when refinement thresholds are close to rounding error.
 pub fn build_adaptive(
     context: &GpuContext,
     grid: &Grid,
@@ -48,7 +48,7 @@ pub fn build_adaptive(
     config.validate()?;
     let optical_scale = config.optical_scale as f32;
     if !optical_scale.is_finite() {
-        return Err("光学层比例无法由 GPU f32 表示".into());
+        return Err("Optical layer scale cannot be represented as GPU f32".into());
     }
     let [nx, ny, nz] = grid.domain.size;
     let count = grid.domain.cell_count();
@@ -101,7 +101,7 @@ pub fn build_adaptive(
     let cell_groups = (count as u32).div_ceil(64);
     context.dispatch(&evaluate, &evaluate_bindings, column_groups);
 
-    // 回读只用于四叉树决策；没有 CPU 重算 q 或 I 的备用路径。
+    // Readback is only used for quadtree decisions; there is no CPU fallback to recompute q or I.
     let metrics = context.read::<Metric>(&metric_buffer, count)?;
     let columns = context.read::<Column>(&column_buffer, column_count)?;
     if metrics
@@ -109,7 +109,7 @@ pub fn build_adaptive(
         .any(|m| !m.local_error.is_finite() || !m.run_error.is_finite())
         || columns.iter().any(|c| !c.integrated_error.is_finite())
     {
-        return Err("GPU 水柱评价出现非有限数".into());
+        return Err("GPU column evaluation produced non-finite values".into());
     }
     let local_cost: Vec<f64> = metrics.iter().map(|m| f64::from(m.local_error)).collect();
     let integrated_cost: Vec<f64> = columns
@@ -215,7 +215,7 @@ mod tests {
     use crate::Domain;
 
     #[test]
-    #[ignore = "需要真实 wgpu 计算适配器；使用 --ignored 显式运行"]
+    #[ignore = "Requires a real wgpu compute adapter; run explicitly with --ignored"]
     fn gpu_column_error_matches_hand_calculation_and_empty_domain_is_valid() {
         let context = pollster::block_on(GpuContext::new()).unwrap();
         let mut grid = Grid::new(Domain::new([2, 8, 2], 1.0).unwrap());
@@ -228,7 +228,7 @@ mod tests {
         }
         let config = AdaptivityConfig::default();
         let result = build_adaptive(&context, &grid, &config).unwrap();
-        // [0,3,0] 线性最小二乘重建为 [1,1,1]；左右面各贡献一次。
+        // Linear least-squares reconstruction maps [0,3,0] to [1,1,1]; each of the left and right faces contributes once.
         for (y, expected) in [2.0, 4.0, 2.0].into_iter().enumerate() {
             assert!((result.local_cost[grid.domain.index([0, y, 0])] - expected).abs() < 1e-6);
         }

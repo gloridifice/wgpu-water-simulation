@@ -1,4 +1,4 @@
-// 按单元中心采样的六四面体等值面。水内 phi < 0，零样本归水外。
+// Six-tetrahedron isosurface sampled at cell centers. Water has phi < 0; zero samples are outside.
 struct Parameters {
     dimensions: vec4<u32>,
     origin_spacing: vec4<f32>,
@@ -54,7 +54,7 @@ fn gradient(p: vec3<u32>) -> vec3<f32> {
 fn intersection(base: vec3<u32>, ca: u32, cb: u32) -> Vertex {
     var a = base + corner_offset(ca);
     var b = base + corner_offset(cb);
-    // 固定边的采样次序，避免相邻四面体以不同端点顺序插值产生接缝。
+    // Fix the edge sample order to avoid seams from adjacent tetrahedra interpolating endpoints in different orders.
     if index(a) > index(b) {
         let old_a = a;
         a = b;

@@ -1,8 +1,8 @@
-//! 在 MAC 背景网格上构造一致的压力投影，再用线性基函数压缩压力自由度。
+//! Construct a consistent pressure projection on the background MAC grid, then compress pressure degrees of freedom with linear basis functions.
 //!
-//! `B` 将自适应压力插值到细单元，真正求解 `Bᵀ L B p = Bᵀ b`。
-//! 空气界面使用 ghost-fluid 零压条件，静态固体采用体素无穿透边界。
-//! 缩减系统收敛只约束投影后的散度；细网格散度仍需独立检查。
+//! `B` interpolates adaptive pressure to fine cells; the actual solve is `Bᵀ L B p = Bᵀ b`.
+//! Air interfaces use ghost-fluid zero-pressure conditions; static solids use voxel no-penetration boundaries.
+//! Reduced-system convergence only constrains projected divergence; fine-grid divergence must be checked separately.
 
 use crate::adaptivity::{AdaptiveGrid, PressureBasis};
 use crate::grid::Grid;
@@ -10,15 +10,15 @@ use crate::grid::Grid;
 #[derive(Clone, Debug)]
 pub struct PressureConfig {
     pub max_iterations: usize,
-    /// 代数残差相对初始右端项的容限。
+    /// Tolerance for the algebraic residual relative to the initial right-hand side.
     pub relative_tolerance: f64,
-    /// 代数残差二范数的绝对容限。
+    /// Absolute tolerance for the algebraic residual L2 norm.
     pub absolute_tolerance: f64,
-    /// 全细网格液体单元散度的 RMS 容限，单位 1/s。
+    /// RMS divergence tolerance over all fine-grid liquid cells, in 1/s.
     pub divergence_tolerance: f64,
-    /// 缩减基函数无法解析当前流动时，使用完整细网格重做压力投影。
+    /// Redo pressure projection on the full fine grid when the reduced basis cannot resolve the current flow.
     pub fine_fallback: bool,
-    /// 水面到液体中心的距离下限，以格距比例计。
+    /// Minimum distance from the water surface to the liquid center, as a fraction of grid spacing.
     pub minimum_interface_fraction: f64,
 }
 
@@ -38,22 +38,22 @@ impl Default for PressureConfig {
 impl PressureConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.max_iterations == 0 {
-            return Err("压力迭代次数必须为正".into());
+            return Err("Pressure iteration count must be positive".into());
         }
         for (name, value) in [
-            ("相对残差容限", self.relative_tolerance),
-            ("绝对残差容限", self.absolute_tolerance),
-            ("散度容限", self.divergence_tolerance),
+            ("Relative residual tolerance", self.relative_tolerance),
+            ("Absolute residual tolerance", self.absolute_tolerance),
+            ("Divergence tolerance", self.divergence_tolerance),
         ] {
             if !value.is_finite() || value <= 0.0 {
-                return Err(format!("{name}必须为有限正数"));
+                return Err(format!("{name} must be finite and positive"));
             }
         }
         if !self.minimum_interface_fraction.is_finite()
             || self.minimum_interface_fraction <= 0.0
             || self.minimum_interface_fraction > 1.0
         {
-            return Err("水面距离比例下限必须在 (0, 1] 内".into());
+            return Err("Minimum surface distance fraction must be in (0, 1]".into());
         }
         Ok(())
     }
@@ -61,27 +61,27 @@ impl PressureConfig {
 
 #[derive(Clone, Debug, Default)]
 pub struct ProjectionReport {
-    /// 代数求解收敛且最终细网格散度满足要求。
+    /// The algebraic solve converged and final fine-grid divergence meets the requirement.
     pub converged: bool,
-    /// 包括缩减求解和可能的完整细网格重试。
+    /// Includes the reduced solve and any full fine-grid retry.
     pub iterations: usize,
     pub adaptive_iterations: usize,
-    /// 最终采用的压力自由度数；启用回退后可能等于液体细单元数。
+    /// Final pressure degrees of freedom; may equal the number of fine liquid cells after fallback.
     pub pressure_dofs: usize,
     pub adaptive_pressure_dofs: usize,
     pub fallback_used: bool,
-    /// 各散度均为细网格液体单元的 RMS，单位 1/s。
+    /// All divergences are RMS over fine-grid liquid cells, in 1/s.
     pub divergence_before: f64,
     pub divergence_after: f64,
     pub adaptive_divergence: f64,
-    /// 最终系统的真实代数残差二范数，而非散度。
+    /// True algebraic residual L2 norm of the final system, not divergence.
     pub residual_norm: f64,
     pub adaptive_residual_norm: f64,
 }
 
-/// 更新 `grid.pressure` 和面速度，不输送液体界面。
+/// Update `grid.pressure` and face velocities without advecting the liquid interface.
 ///
-/// 完整细网格回退从同一个临时速度重新开始，因此报告中的最终压力与最终速度一致。
+/// Full fine-grid fallback restarts from the same intermediate velocity, so the reported final pressure matches the final velocity.
 pub fn project(
     grid: &mut Grid,
     adaptive: &AdaptiveGrid,
@@ -92,10 +92,10 @@ pub fn project(
     config.validate()?;
     grid.validate()?;
     if !dt.is_finite() || dt <= 0.0 || !density.is_finite() || density <= 0.0 {
-        return Err("压力投影的时间步和密度必须为有限正数".into());
+        return Err("Pressure projection time step and density must be finite and positive".into());
     }
     if !(density / dt).is_finite() || !(dt / density).is_finite() {
-        return Err("压力投影的密度与时间步比例溢出".into());
+        return Err("Pressure projection density-to-time-step ratio overflow".into());
     }
     validate_basis(grid, adaptive)?;
     grid.enforce_boundaries();
@@ -139,7 +139,7 @@ fn validate_basis(grid: &Grid, adaptive: &AdaptiveGrid) -> Result<(), String> {
     if adaptive.basis.len() != grid.domain.cell_count()
         || adaptive.dof_count > 2 * grid.domain.cell_count()
     {
-        return Err("自适应压力基函数尺寸不匹配".into());
+        return Err("Adaptive pressure basis dimensions do not match".into());
     }
     for (cell, basis) in adaptive.basis.iter().enumerate() {
         let fluid = grid.is_fluid(grid.domain.coord(cell));
@@ -147,18 +147,20 @@ fn validate_basis(grid: &Grid, adaptive: &AdaptiveGrid) -> Result<(), String> {
         if basis.weights.iter().any(|w| !w.is_finite() || *w < 0.0)
             || (sum - if fluid { 1.0 } else { 0.0 }).abs() > 1e-10
         {
-            return Err("压力基函数必须有限非负，且在液体单元处保持常量".into());
+            return Err("Pressure basis functions must be finite and nonnegative and preserve constants in liquid cells".into());
         }
         for (&index, &weight) in basis.indices.iter().zip(&basis.weights) {
             if weight != 0.0 && index >= adaptive.dof_count {
-                return Err("压力基函数引用了越界自由度".into());
+                return Err(
+                    "Pressure basis function references an out-of-bounds degree of freedom".into(),
+                );
             }
         }
     }
     Ok(())
 }
 
-/// 一个开放 MAC 面；空气侧的压力为零。没有固体面或计算域外侧面。
+/// An open MAC face; pressure on the air side is zero. Excludes solid and domain boundary faces.
 struct FluidEdge {
     axis: usize,
     face: [usize; 3],
@@ -208,7 +210,7 @@ fn fluid_edges(grid: &Grid, minimum_fraction: f64) -> Vec<FluidEdge> {
     edges
 }
 
-/// 每条细面贡献一个正半定秩一项，最多关联四个缩减压力样本。
+/// Each fine face contributes a positive semidefinite rank-one term involving at most four reduced pressure samples.
 struct RankOne {
     entries: Vec<(usize, f64)>,
     coefficient: f64,
@@ -285,7 +287,7 @@ impl ReducedSystem {
         let mut has_gauge = vec![false; n];
         for index in 0..n {
             let root = components.root(index);
-            // 每个纯 Neumann 连通分量固定一个参考压力；无能量自由度也固定为零。
+            // Pin one reference pressure per pure Neumann connected component; zero-energy degrees of freedom are also pinned to zero.
             if diagonal[index] == 0.0 || (!anchored[root] && !has_gauge[root]) {
                 pinned[index] = true;
                 has_gauge[root] = true;
@@ -340,8 +342,9 @@ fn solve_and_correct(
     config: &PressureConfig,
 ) -> SolveResult {
     let system = ReducedSystem::build(grid, adaptive, edges, Some(density / dt));
-    // 对完整细基，残差与散度成比例。固定的 Neumann 行误差可等于其余行误差之和，
-    // 因此不再按 sqrt(单元数) 放宽二范数容限；预留余量供参考行及舍入误差。
+    // For the full fine basis, residual is proportional to divergence. The pinned Neumann row
+    // error can equal the sum of the other row errors, so do not relax the L2 tolerance by
+    // sqrt(cell count); leave margin for the reference row and rounding errors.
     let divergence_residual = config.divergence_tolerance * density / dt * 0.1;
     let result = pcg(&system, config, divergence_residual);
     for (cell, basis) in adaptive.basis.iter().enumerate() {
@@ -398,7 +401,7 @@ fn pcg(system: &ReducedSystem, config: &PressureConfig, divergence_residual: f64
             residual[index] -= alpha * product[index];
         }
         iterations += 1;
-        // 递推残差可能漂移；定期及候选收敛时重新计算真实残差并重启方向。
+        // The recursive residual may drift; recompute the true residual and restart the direction periodically and at candidate convergence.
         let refresh = iterations % 50 == 0 || dot(&residual, &residual).sqrt() <= tolerance;
         if refresh {
             system.apply(&pressure, &mut product);
@@ -444,7 +447,7 @@ struct Components {
     parent: Vec<usize>,
 }
 
-/// GPU 只复用 CPU 拓扑组装；右端项、迭代、归约、速度修正均由 GPU 后端计算。
+/// The GPU reuses only CPU topology assembly; the GPU backend computes the RHS, iterations, reductions, and velocity correction.
 #[cfg(feature = "gpu")]
 pub(crate) struct GpuPressureStructure {
     pub rows: Vec<u32>,
@@ -464,7 +467,7 @@ pub(crate) fn gpu_structure(
     use std::collections::BTreeMap;
     validate_basis(grid, adaptive)?;
     let edges = fluid_edges(grid, minimum_fraction);
-    // None 明确跳过 CPU 散度和 RHS 装配。
+    // None explicitly skips CPU divergence and RHS assembly.
     let system = ReducedSystem::build(grid, adaptive, &edges, None);
     let mut sparse = vec![BTreeMap::<usize, f64>::new(); adaptive.dof_count];
     for term in &system.terms {
@@ -488,11 +491,12 @@ pub(crate) fn gpu_structure(
         }
         for (&column, &value) in entries.iter() {
             if value != 0.0 {
-                columns.push(u32::try_from(column).map_err(|_| "GPU 压力列下标溢出")?);
+                columns
+                    .push(u32::try_from(column).map_err(|_| "GPU pressure column index overflow")?);
                 values.push(value as f32);
             }
         }
-        rows.push(u32::try_from(columns.len()).map_err(|_| "GPU 压力非零元数量溢出")?);
+        rows.push(u32::try_from(columns.len()).map_err(|_| "GPU pressure nonzero count overflow")?);
     }
     let nx = grid.velocity.faces[0].len();
     let ny = grid.velocity.faces[1].len();
@@ -510,7 +514,7 @@ pub(crate) fn gpu_structure(
         .any(|v| !v.is_finite())
         || diagonal.iter().any(|&v| v <= 0.0)
     {
-        return Err("GPU 压力矩阵不能由有限 f32 表示".into());
+        return Err("GPU pressure matrix cannot be represented by finite f32 values".into());
     }
     Ok(GpuPressureStructure {
         rows,
@@ -579,7 +583,7 @@ mod tests {
         assert!(result.divergence_after < 1e-6, "{result:?}");
         assert!(!result.fallback_used);
         assert!(grid.pressure.iter().all(|x| x.is_finite()));
-        assert_eq!(grid.pressure[0], 0.0); // 一个闭合连通分量的参考压力。
+        assert_eq!(grid.pressure[0], 0.0); // Reference pressure for one closed connected component.
     }
 
     #[test]

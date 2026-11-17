@@ -1,6 +1,6 @@
-//! 独立 wgpu 计算后端。数值更新由 WGSL 执行，CPU 整理自适应拓扑和调度。
+//! Independent wgpu compute backend. WGSL performs numerical updates; the CPU organizes adaptive topology and scheduling.
 //!
-//! 当前阶段之间同步回读，适合离线验证；不承诺实时性能或完全 GPU 驻留。
+//! Stages currently use synchronous readback, suitable for offline verification; real-time performance and full GPU residency are not guaranteed.
 
 mod adaptivity;
 mod pressure;
@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use wgpu::util::DeviceExt;
 
-/// 无窗口的计算设备；没有适配器时显式报错，绝不静默退回 CPU 求解。
+/// Headless compute device; explicitly reports a missing adapter and never silently falls back to CPU solving.
 pub struct GpuContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -36,7 +36,7 @@ impl GpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .map_err(|e| format!("找不到计算适配器：{e}"))?;
+            .map_err(|e| format!("Cannot find compute adapter: {e}"))?;
         let info = adapter.get_info();
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -44,7 +44,7 @@ impl GpuContext {
                 ..Default::default()
             })
             .await
-            .map_err(|e| format!("创建设备失败：{e}"))?;
+            .map_err(|e| format!("Failed to create device: {e}"))?;
         Ok(Self {
             device,
             queue,
@@ -173,9 +173,9 @@ impl GpuContext {
         }
         let size = count
             .checked_mul(std::mem::size_of::<T>())
-            .ok_or("回读大小溢出")? as u64;
+            .ok_or("Readback size overflow")? as u64;
         if size > buffer.size() || !size.is_multiple_of(4) {
-            return Err("回读范围或对齐不合法".into());
+            return Err("Invalid readback range or alignment".into());
         }
         let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("offline GPU readback"),
@@ -198,7 +198,7 @@ impl GpuContext {
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
         let mapped = staging.slice(..).get_mapped_range();
-        // 不依赖 Vec<u8> 的分配对齐。
+        // Do not rely on the allocation alignment of Vec<u8>.
         let values = mapped
             .chunks_exact(std::mem::size_of::<T>())
             .map(bytemuck::pod_read_unaligned)
@@ -217,7 +217,7 @@ impl GpuContext {
             || (count as u64 * 4) > limits.max_storage_buffer_binding_size
             || count.div_ceil(64) > limits.max_compute_workgroups_per_dimension as usize
         {
-            return Err("网格超过当前 GPU 单缓冲区/dispatch 上限".into());
+            return Err("Grid exceeds the current GPU single-buffer/dispatch limit".into());
         }
         let h = grid.domain.cell_size as f32;
         if !h.is_normal()
@@ -238,7 +238,7 @@ impl GpuContext {
                     !(*v as f32).is_finite() || (*v != 0.0 && (*v as f32).abs() < f32::MIN_POSITIVE)
                 })
         {
-            return Err("网格数值无法由 GPU f32 有效表示".into());
+            return Err("Grid values cannot be represented validly as GPU f32".into());
         }
         Ok(())
     }

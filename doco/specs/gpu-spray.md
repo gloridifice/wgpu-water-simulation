@@ -1,40 +1,40 @@
-# 近岸 GPU 浪花
+# Nearshore GPU Spray
 
-## 范围
+## Scope
 
-近岸 SWE 驱动的纹理飞溅效果，与水面泡沫和沙滩湿润状态分离。不求解三维流体、翻卷水片、远海飞沫或粒子反作用。只在纯 SWE 区域生成；FFT 混合带不作为首版发射区域。
+A textured splash effect driven by nearshore SWE, separate from surface foam and beach wetness. It does not solve three-dimensional fluid, overturning sheets, offshore spray, or particle feedback. Emission occurs only in the pure SWE region; the FFT blend zone is not an emission region in the initial version.
 
-## GPU 信号与消费约束
+## GPU signals and consumption
 
-- 每个 SWE 单元对应一个 32 字节信号：两个四分量向量，依次记录按预期粒子数加权的世界坐标及总量、加权初速度及保留零值。
-- 预期量为发射密度（粒子/平方米/模拟秒）乘单元面积、实际子步时长及独立的坡度/正上升/有效水深门控。不使用累积泡沫密度作为发射信号。
-- 每个完成的 SWE 子步生产一次，二阶预测阶段不额外计量。只有有效模拟帧清零并重新积分；暂停保留调试信号，但消费步长为零。
-- 粒子系统读取 storage buffer，在 GPU 上维护小数余量和出生序号；不再次乘面积或时间。未饱和、出生位置仍有效时，每单元累计整数发射量和积分量之差小于一个粒子（允许浮点误差）。
-- 发射信号、粒子状态和活跃数量不得回读至 CPU 来决定运行时发射、更新或绘制。CPU 只负责参数上传、资源生命周期及有序 pass 调度。独立验证程序允许末尾读回。
+- Each SWE cell has a 32-byte signal: two four-component vectors containing world position weighted by expected particle count and total count, followed by weighted initial velocity and a reserved zero.
+- Expected count is emission density (particles per square meter per simulated second) multiplied by cell area, actual substep duration, and independent slope, positive rise, and effective water depth gates. Accumulated foam density is not used as an emission signal.
+- Each completed SWE substep produces one signal; the second-order prediction stage is not counted separately. Signals are cleared and reintegrated only on valid simulation frames. Pausing preserves the debug signal, but the consumption timestep is zero.
+- The particle system reads the storage buffer and maintains fractional remainders and birth sequence numbers on the GPU; it does not multiply by area or time again. When unsaturated and birth positions remain valid, the difference between cumulative integer emissions and the integral per cell is less than one particle, subject to floating-point error.
+- Emission signals, particle state, and active counts must not be read back to the CPU to decide runtime emission, updates, or drawing. The CPU only uploads parameters, manages resource lifetimes, and schedules passes in order. Standalone verification may read back at the end.
 
-## 生命周期与绘制
+## Lifecycle and rendering
 
-- 固定容量为 65,536 个粒子；每帧先更新并压紧存活粒子，再填充空余槽。容量满时丢弃新增整数请求，不覆盖存活粒子，不积欠补发。
-- 粒子只受初速度、重力和静止空气阻力驱动。年龄按实际模拟时间推进；落水、触地、出域、到期或非有限位置时剔除。水面泡沫的视觉抬高不影响粒子运动。
-- 暂停不发射、不运动、不改变年龄；禁用释放源和粒子资源。时间重置、域/网格/波谱重建及碰撞体编辑清除旧状态。
-- 使用有明确来源和许可的外部 Splash 纹理；每粒子固定随机选择四个 Alpha 图层之一，各层单独留透明边并生成 mip。纹理选择不改变发射量或运动，调试标记不依赖美术纹理。
-- 新生粒子尺寸由 GPU 在可配置倍率区间均匀采样，再乘基础直径（0.01～2 米）。倍率上下限各为 0～2，要求下限不大于上限，相等时为固定尺寸；默认 0.65～1.35，兼容旧配置。修改只影响后续出生的粒子，不重置已有粒子；最终直径可超过 2 米。
-- GPU 写入 indirect 参数；渲染四边形使用预乘透明度。通过采样已保存的场景深度遮挡与软化交界，粒子 pass 不将同一深度绑定为可写附件；resize 重建相关绑定。
-- 首版透明重叠不排序，也不使用 OIT；粒子和真实三维模型的碰撞只服从已有高度场代理。
+- Capacity is fixed at 65,536 particles. Each frame first updates and compacts survivors, then fills vacant slots. At capacity, new integer requests are discarded; living particles are not overwritten and no backlog is carried forward.
+- Particles are driven only by initial velocity, gravity, and stationary air resistance. Age advances by actual simulation time; particles are removed on water or ground contact, leaving the domain, expiry, or non-finite position. The visual elevation of surface foam does not affect particle motion.
+- Pausing stops emission, motion, and aging; disabling releases source and particle resources. Time reset, domain/grid/spectrum rebuilds, and collider edits clear old state.
+- An external Splash texture with documented provenance and license is used. Each particle randomly selects one of four Alpha layers for its lifetime; each layer has its own transparent border and mip chain. Texture selection does not affect emission or motion; debug markers do not depend on art textures.
+- The GPU uniformly samples a configurable multiplier range for each new particle and multiplies it by the base diameter (0.01–2 meters). Both multiplier bounds are 0–2; the lower bound must not exceed the upper, and equal bounds give a fixed size. The default is 0.65–1.35, compatible with old configurations. Edits affect only subsequent births and do not reset existing particles; final diameter may exceed 2 meters.
+- The GPU writes indirect draw arguments; quads use premultiplied alpha. Sampling saved scene depth occludes particles and softens intersections; the particle pass does not bind that depth as a writable attachment. Resize rebuilds the relevant bindings.
+- The initial version does not sort transparent overlaps or use OIT. Particle collision with real 3D models is limited to the existing heightfield proxy.
 
-## 配置与失败行为
+## Configuration and failure behavior
 
-`OpticsConfig::spray` 默认关闭，旧文件缺字段时使用默认值且保留其他参数。会话与命名配置保存参数，不保存粒子列表；有限数与范围由配置校验负责。`--spray` 仅覆盖启用状态，`--spray-debug` 覆盖启用和调试状态，不重置已保存的其他浪花参数。
+`OpticsConfig::spray` is disabled by default. Old files missing the field use defaults while retaining other parameters. Sessions and named configurations save parameters, not particle lists; configuration validation checks finite values and ranges. `--spray` overrides only enabled state; `--spray-debug` overrides enabled and debug state without resetting other saved spray parameters.
 
-设备存储限制或资源创建失败时，禁用浪花并报告错误，不能以 CPU 发射作为降级路径。交互程序继续保留原海洋模式；明确请求浪花的快照在资源失败时返回错误。
+If device storage limits or resource creation fail, spray is disabled and an error is reported; CPU emission is not a fallback. The interactive application retains the original ocean mode; a snapshot explicitly requesting spray returns an error on resource failure.
 
-## 验收场景
+## Acceptance scenarios
 
-- 给定静水、干地、平坦回流场：源量为零；给定上升陡坡：源量、世界位置与初速度的加权结果符合定义。
-- 相同源强按不同时间分割或面积输入：积分量与小数余量保持一致，不重复发射二阶预测阶段。
-- 配置尺寸及随机倍率后，实际 GPU 新生粒子处于指定范围内；非退化区间具有尺寸变化，相等上下限产生固定尺寸。
-- 满池继续提供源：存活粒子不被新生粒子替换；寿命到期后容量复用，无旧整数积欠。
-- 暂停、重置及禁用/再启用：没有旧信号重复消费；开启浪花前后水体、泡沫状态一致，一阶和二阶均适用。
-- 已知粒子与已知深度平面：前方实体完全遮挡，接近平面逐渐淡出，远离平面恢复纹理覆盖；改变渲染尺寸后仍满足这些关系。
+- Given still water, dry ground, or a flat return flow, the source is zero. Given a rising steep slope, source amount and weighted world position and initial velocity meet their definitions.
+- With the same source intensity split across different timesteps or area inputs, the integral and fractional remainder remain consistent, without duplicate emission during second-order prediction.
+- With configured size and random multipliers, actual GPU births fall within the specified range; a nondegenerate interval produces size variation, and equal bounds produce a fixed size.
+- With a full pool and continued source input, new particles do not replace survivors. Capacity is reused after expiry without an old integer backlog.
+- Pausing, resetting, and disabling/re-enabling do not consume old signals twice. Water and foam states agree with and without spray, for both first and second order.
+- Given known particles and a known depth plane, an object in front fully occludes them; coverage fades near the plane and returns away from it. These relationships persist after resizing.
 
-行为验证由 `src/ocean/simulation/spray/verification.rs` 通过完整 `ocean --verify` 执行；配置和 CLI 覆盖由库测试负责。实际视觉检查不以编译成功代替。
+`src/ocean/simulation/spray/verification.rs` performs behavioral verification through the full `ocean --verify`; library tests cover configuration and CLI overrides. Compilation does not substitute for visual inspection.

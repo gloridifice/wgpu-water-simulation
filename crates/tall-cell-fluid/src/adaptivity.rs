@@ -1,8 +1,10 @@
-//! 水平四叉树、速度重建误差与自适应光学层的 CPU 参考实现。
+//! CPU reference implementation of horizontal quadtrees, velocity reconstruction error, and adaptive optical layers.
 //!
-//! 局部评价在六个 MAC 面上累加速度重建的绝对误差；水平速度沿水柱线性
-//! 最小二乘拟合，竖直速度取平均。压力使用细网格上的分片常量/竖直线性基底，
-//! 供 Galerkin 投影使用，并非论文专用虚拟面和变分单元结构的逐项复现。
+//! The local metric sums absolute velocity reconstruction errors over six MAC faces;
+//! horizontal velocities are fitted linearly by least squares along the water column,
+//! and vertical velocity is averaged. Pressure uses piecewise-constant/vertically linear
+//! bases on the fine grid for Galerkin projection, not a feature-by-feature reproduction
+//! of the paper's specialized virtual faces and variational cell structure.
 
 use std::collections::BinaryHeap;
 
@@ -10,17 +12,17 @@ use crate::grid::{Domain, Grid};
 
 #[derive(Clone, Debug)]
 pub struct AdaptivityConfig {
-    /// 水平叶子最大宽度，以最细网格单元数计；不要求为二的幂。
+    /// Maximum horizontal leaf width in finest-grid cells; need not be a power of two.
     pub max_leaf_width: usize,
-    /// 同一水平叶子内允许的自由表面高度差，单位为最细网格格数。
+    /// Allowed free-surface height difference within a horizontal leaf, in finest-grid cells.
     pub surface_height_tolerance: f64,
-    /// 六面速度重建绝对误差之和超过此值时细分，单位 m/s。
+    /// Subdivide when the sum of absolute velocity reconstruction errors on six faces exceeds this value, in m/s.
     pub velocity_residual_tolerance: f64,
-    /// 将水柱累积评价转换为扩张距离的系数，单位 格/(m/s)。
+    /// Factor converting the integrated water-column metric to a dilation distance, in cells/(m/s).
     pub optical_scale: f64,
-    /// 不与底部/静态固体相接的液体使用的固定扩张距离，单位格。
+    /// Fixed dilation distance for liquid not touching the bottom or static solids, in cells.
     pub airborne_layers: usize,
-    /// 限制相邻光学层下边界高度跳变的扫描次数；只扩大精细区域。
+    /// Number of passes limiting jumps in neighboring optical-layer lower boundary heights; only expands the fine region.
     pub smoothing_passes: usize,
 }
 
@@ -40,7 +42,7 @@ impl Default for AdaptivityConfig {
 impl AdaptivityConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.max_leaf_width == 0 || self.airborne_layers == 0 {
-            return Err("水平叶子宽度和独立液体扩张距离必须至少为一格".into());
+            return Err("Horizontal leaf width and detached liquid dilation distance must be at least one cell".into());
         }
         if [
             self.surface_height_tolerance,
@@ -50,14 +52,16 @@ impl AdaptivityConfig {
         .iter()
         .any(|v| !v.is_finite() || *v < 0.0)
         {
-            return Err("自适应阈值和光学层比例必须为有限非负数".into());
+            return Err(
+                "Adaptive thresholds and optical layer scale must be finite and nonnegative".into(),
+            );
         }
         Ok(())
     }
 }
 
-/// 水平矩形叶子，坐标顺序为 x、z；max 是排他上界。
-/// 计算域边缘会裁剪正方形，因此非二次幂尺寸也能完整覆盖。
+/// Horizontal rectangular leaf, with coordinates in x, z order; max is exclusive.
+/// Squares are clipped at domain edges, so non-power-of-two dimensions are fully covered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QuadLeaf {
     pub min: [usize; 2],
@@ -72,15 +76,15 @@ impl QuadLeaf {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CellKind {
-    /// 水平叶子内的一层单元，用一个压力自由度表示。
+    /// A layer of cells within a horizontal leaf, represented by one pressure degree of freedom.
     Regular,
-    /// 连续深水柱段，用上下两个压力自由度线性插值。
+    /// A continuous deep water-column segment, linearly interpolated from upper and lower pressure degrees of freedom.
     Tall,
 }
 
 #[derive(Clone, Debug)]
 pub struct AdaptiveCell {
-    /// 最细网格坐标下的包围盒，max 为排他上界。
+    /// Bounding box in finest-grid coordinates; max is exclusive.
     pub min: [usize; 3],
     pub max: [usize; 3],
     pub kind: CellKind,
@@ -88,8 +92,8 @@ pub struct AdaptiveCell {
     pub pressure_count: usize,
 }
 
-/// 每个细网格中心至压缩压力向量的 prolongation 行。
-/// 两个权重非负，液体格权重和为一；非液体格权重均为零。
+/// Prolongation row from each fine-grid center to the compressed pressure vector.
+/// Both weights are nonnegative and sum to one in liquid cells; both are zero elsewhere.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PressureBasis {
     pub indices: [usize; 2],
@@ -98,11 +102,11 @@ pub struct PressureBasis {
 
 #[derive(Clone, Debug)]
 pub struct AdaptiveGrid {
-    /// 六面重建误差之和，长度为最细网格单元数，单位 m/s。
+    /// Sum of six-face reconstruction errors, one per finest-grid cell, in m/s.
     pub local_cost: Vec<f64>,
-    /// 沿水柱求和后除以 Ny；下标为 x + Nx*z，单位 m/s。
+    /// Summed along the water column and divided by Ny; indexed by x + Nx*z, in m/s.
     pub integrated_cost: Vec<f64>,
-    /// L1 膨胀和高度平滑后的精细区域，包括被膨胀覆盖的空气格。
+    /// Fine region after L1 dilation and height smoothing, including air cells covered by dilation.
     pub optical_mask: Vec<bool>,
     pub leaves: Vec<QuadLeaf>,
     pub cells: Vec<AdaptiveCell>,
@@ -119,7 +123,7 @@ struct FluidRun {
 }
 
 impl AdaptiveGrid {
-    /// 仅根据已求得的局部评价构建 CPU 水平拓扑；GPU 路径不会在此重算评价。
+    /// Build CPU horizontal topology using only previously computed local metrics; the GPU path does not recompute them here.
     #[cfg(feature = "gpu")]
     pub(crate) fn leaves_from_cost(
         grid: &Grid,
@@ -142,7 +146,7 @@ impl AdaptiveGrid {
         leaves
     }
 
-    /// GPU 回读后的拓扑整理。只构造单元和压力基底，不进行任何评价/光学层计算。
+    /// Arrange topology after GPU readback. Only builds cells and pressure bases, without metric or optical-layer calculations.
     #[cfg(feature = "gpu")]
     pub(crate) fn from_metrics(
         grid: &Grid,
@@ -164,7 +168,7 @@ impl AdaptiveGrid {
         result
     }
 
-    /// 调用方应先通过 Grid::validate 和 AdaptivityConfig::validate 校验输入。
+    /// Callers should first validate inputs with Grid::validate and AdaptivityConfig::validate.
     pub fn build(grid: &Grid, config: &AdaptivityConfig) -> Self {
         let domain = grid.domain;
         let [nx, ny, nz] = domain.size;
@@ -234,8 +238,9 @@ impl AdaptiveGrid {
                 let column = x + nx * z;
                 for run in &columns[column] {
                     let radius = if run.grounded {
-                        // 论文的上下限在小测试域内可能颠倒。此处提升上限以保留
-                        // 最低精细层，并将最低距离限制在域高以内，避免非法 clamp。
+                        // The paper's bounds may be reversed in small test domains. Raise the
+                        // upper bound to retain the minimum fine layer and cap the minimum
+                        // distance at the domain height to avoid an invalid clamp.
                         let lower = leaf_width[column].saturating_mul(2).max(4).min(ny);
                         let upper = (ny / 8).max(lower);
                         (config.optical_scale * run.cost)
@@ -267,9 +272,10 @@ impl AdaptiveGrid {
     }
 
     fn build_basis(&mut self, domain: Domain, columns: &[Vec<FluidRun>]) {
-        // 光学层从细网格映射到水平叶子时采用保守规则：只要叶子内任一格
-        // 需要精细表示，该高度整层都保留，不采用论文的过半数判据。
-        // 这样不会因粗化丢掉薄的精细区域，代价是压力未知量可能更多。
+        // Map the optical layer from the fine grid to horizontal leaves conservatively:
+        // retain the entire layer at a height if any cell in the leaf needs fine representation,
+        // rather than using the paper's majority criterion. This avoids losing thin fine
+        // regions to coarsening, at the cost of potentially more pressure unknowns.
         for leaf_index in 0..self.leaves.len() {
             let leaf = self.leaves[leaf_index];
             let runs = &columns[leaf.min[0] + domain.size[0] * leaf.min[1]];
@@ -298,7 +304,7 @@ impl AdaptiveGrid {
         }
     }
 
-    /// 完全细分的压力基底，用于参考验证及压缩投影误差过大时的回退。
+    /// Fully refined pressure basis for reference validation and fallback when compressed projection error is too large.
     pub fn uniform(grid: &Grid) -> Self {
         let domain = grid.domain;
         let [nx, ny, nz] = domain.size;
@@ -344,7 +350,7 @@ impl AdaptiveGrid {
         for z in leaf.min[1]..leaf.max[1] {
             for x in leaf.min[0]..leaf.max[0] {
                 for y in start..end {
-                    // 等距网格下等价于在两端单元中心的物理高度之间插值。
+                    // On a uniform grid, equivalent to interpolating between the physical heights of the endpoint cell centers.
                     let t = if pressure_count == 2 {
                         (y - start) as f64 / (end - start - 1) as f64
                     } else {
@@ -396,7 +402,7 @@ fn topology_columns(grid: &Grid) -> Vec<Vec<FluidRun>> {
     columns
 }
 
-/// 水柱两侧的四条水平速度采样列分别拟合，避免把横向速度差混入竖直拟合。
+/// Fit the four horizontal velocity sample columns on the water-column sides separately, avoiding lateral velocity differences in the vertical fit.
 fn evaluate_column(grid: &Grid, x: usize, z: usize, run: &FluidRun, cost: &mut [f64]) {
     let center = (run.start + run.end - 1) as f64 * 0.5;
     let count = (run.end - run.start) as f64;
@@ -460,7 +466,7 @@ fn subdivide(
     for z in leaf.min[1]..leaf.max[1] {
         for x in leaf.min[0]..leaf.max[0] {
             let runs = &columns[x + nx * z];
-            // 复杂拓扑保持水平最细，垂直方向也不会跨不连续液柱合并。
+            // Keep complex topology at the finest horizontal resolution and never merge across discontinuous liquid columns vertically.
             split |= runs.len() > 1
                 || runs.iter().any(|r| !r.grounded)
                 || runs.len() != reference.len()
@@ -468,7 +474,7 @@ fn subdivide(
                     .iter()
                     .zip(reference)
                     .any(|(a, b)| a.start != b.start || a.end != b.end || a.grounded != b.grounded);
-            // 相同液柱区间也可能一侧顶着固体、另一侧接空气；保留这种边界区别。
+            // Even identical liquid-column intervals may touch solid on one side and air on the other; preserve this boundary distinction.
             for y in 0..ny {
                 let a = grid.domain.index([x, y, z]);
                 let b = grid.domain.index([min[0], y, min[1]]);
@@ -536,7 +542,7 @@ fn touches_air(grid: &Grid, p: [usize; 3]) -> bool {
     })
 }
 
-/// 最大剩余半径传播，等价于变半径种子的 L1 球并集，避免逐种子遍历立方体。
+/// Propagate maximum remaining radius, equivalent to the union of variable-radius seed L1 balls, without traversing a cube per seed.
 fn dilate(domain: Domain, seeds: &[(usize, usize)]) -> Vec<bool> {
     let mut distance: Vec<Option<usize>> = vec![None; domain.cell_count()];
     let mut queue = BinaryHeap::new();
@@ -645,7 +651,7 @@ mod tests {
     #[test]
     fn linear_horizontal_velocity_and_constant_vertical_have_zero_cost() {
         let mut grid = tank([5, 32, 7], 24.0);
-        // 不调用封闭墙面条件；测试的是可精确重建的解析速度场。
+        // Do not apply closed-wall conditions; this tests an analytically reconstructible velocity field.
         set_velocity(&mut grid, |axis, p| match axis {
             0 => 0.2 * p[1] + 3.0,
             1 => 1.5,
@@ -738,7 +744,7 @@ mod tests {
     #[test]
     fn solid_shelves_and_air_gaps_are_never_merged() {
         let mut grid = tank([4, 64, 4], 48.0);
-        // 一层固体平台，上下均有水；另一列中间留空气洞。
+        // A solid shelf with water above and below; another column has an air gap in the middle.
         for n in 0..grid.domain.cell_count() {
             let p = grid.domain.coord(n);
             if p[1] == 20 {
@@ -797,11 +803,11 @@ mod tests {
             }
         });
         let adaptive = AdaptiveGrid::build(&grid, &AdaptivityConfig::default());
-        // 每条 x 面列 [0,3,0] 最小二乘重建为 [1,1,1]，左右两面各贡献一次。
+        // Each x-face column [0,3,0] reconstructs to [1,1,1] by least squares; each side contributes once.
         for (y, expected) in [2.0, 4.0, 2.0].into_iter().enumerate() {
             assert!((adaptive.local_cost[grid.domain.index([0, y, 0])] - expected).abs() < 1e-12);
         }
-        // 除以整个域的8层，不是液柱的3层。
+        // Divide by the entire domain's 8 layers, not the liquid column's 3 layers.
         assert!((adaptive.integrated_cost[0] - 1.0).abs() < 1e-12);
     }
 

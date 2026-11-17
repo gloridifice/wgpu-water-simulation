@@ -158,7 +158,7 @@ impl<'a> Transport<'a> {
         );
         self.context.queue.submit([encoder.finish()]);
         self.run(4);
-        // Jacobi 波前最多跨越整个域的 L1 直径。CPU 参考后端用 fast sweeping。
+        // The Jacobi wavefront spans at most the L1 diameter of the domain. The CPU reference backend uses fast sweeping.
         for _ in 0..self.params.dims[..3].iter().sum::<u32>() {
             self.run(5);
         }
@@ -170,7 +170,7 @@ impl<'a> Transport<'a> {
             .context
             .read(&self.states[self.current], self.params.offsets[3] as usize)?;
         if packed.iter().any(|v| !v.is_finite()) {
-            return Err("GPU 输送产生非有限数".into());
+            return Err("GPU transport produced non-finite values".into());
         }
         let mut output = grid.clone();
         output.phi = packed[..grid.phi.len()]
@@ -234,7 +234,7 @@ mod tests {
     use crate::Domain;
 
     #[test]
-    #[ignore = "需要实际 GPU；通过 --ignored 显式执行"]
+    #[ignore = "Requires a real GPU; run explicitly with --ignored"]
     fn gpu_advects_plane_reinitializes_distance_and_enforces_solids() {
         let context = pollster::block_on(GpuContext::new()).unwrap();
         let mut grid = Grid::new(Domain::new([12, 8, 8], 0.1).unwrap());
@@ -347,8 +347,8 @@ mod tests {
                     cpu.phi[n]
                 );
                 let c = grid.domain.coord(n);
-                // 只在有过零邻居的种子处要求精确平面法向距离；
-                // 域边界外的垂足及远区一阶 Eikonal 离散不满足此解析约束。
+                // Require exact plane-normal distance only at seeds with a zero-crossing neighbor;
+                // projections outside the domain and first-order far-field Eikonal discretization do not satisfy this analytic constraint.
                 let seed = (0..3).any(|axis| {
                     [-1_isize, 1].into_iter().any(|direction| {
                         let j = c[axis] as isize + direction;

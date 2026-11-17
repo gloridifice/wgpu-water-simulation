@@ -1,43 +1,43 @@
 <!-- doco:lifecycle v=1 created-at=2026-10-29T04:22:36Z completed-at=2026-10-29T06:25:42Z archived-at=2026-10-29T06:25:50Z -->
-# 降低二阶 SWE 的重复计算成本
+# Reduce Repeated Computation in Second-Order SWE
 
 ## Purpose
 
-当前水体 MUSCL 按四个面分别重构，床面源项再次重构中心；模型单元中心床面查询反复转换世界坐标并做双线性采样；非输入带也读取 FFT 入射波。RTX 3070 / Vulkan 的固定输入基准中，256² 二阶水体＋一阶泡沫在沙滩、合成模型和八障碍物场景分别约为 0.594、0.603～0.613、1.505～1.510 毫秒／完整子步，明显高于仅增加第二阶段的成本。
+The water MUSCL reconstruction currently runs separately for four faces, with the center reconstructed again for the bed source; model cell-center bed queries repeatedly transform world coordinates and sample bilinearly; FFT incident waves are also read outside the input band. In a fixed-input RTX 3070 / Vulkan benchmark, 256² second-order water with first-order foam took approximately 0.594, 0.603–0.613 and 1.505–1.510 ms per full substep for the beach, synthetic model and eight-obstacle scenes respectively, substantially more than the cost of merely adding a second stage.
 
-降低同网格、同步长下的实际 GPU 成本，不通过降低精度、减少模拟推进量或关闭当前泡沫／浪花效果获得加速。用户要求避免过度防御：采用直接的数据复用，不预建通用优化框架或重复边界保护。
+Reduce actual GPU cost at the same grid and time step without sacrificing precision, reducing simulation advancement or disabling existing foam/spray effects. The user requested avoiding excessive defensive design: reuse data directly rather than building a generic optimization framework or duplicating boundary protection.
 
 ## Scope and acceptance
 
-### 范围
+### Scope
 
-首批三个内核优化已交付：水体按轴复用五格邻域与重构、模型单元中心床面直接索引、正常推进时仅在 FFT 松弛带采样入射波。固定输入基准覆盖模型双浓度泡沫、发射及非零 FFT 输入；复用生产 GPU 验证确认数值行为。
+The first three kernel optimizations were delivered: reuse five-cell neighborhoods and reconstructions by axis for water, directly index model cell-center bed heights, and sample incident waves only in the FFT relaxation band during normal advancement. Fixed-input benchmarks cover dual-concentration model foam, emission and nonzero FFT input; production GPU verification checks numerical behavior.
 
-用户要求提交当前修改后逐项尝试后续优化，首批已提交为 055172c（包含用户个人配置修改）。第二轮先独立实验双浓度回溯复用、预测阶段无消费者输出裁剪；有可重复收益且行为验证通过才保留。完整状态仍使用原五块布局，不扩大到状态轮换或自适应网格。
+The user requested committing the current changes before trying subsequent optimizations individually. The first batch was committed as 055172c (including the user's personal configuration changes). The second round independently experiments with reuse of dual-concentration backtracing and removal of predictor outputs with no consumers; retain them only with repeatable gains and passing behavior checks. Full state retains its original five-block layout, without expanding into state rotation or adaptive grids.
 
-保留 MUSCL＋SSP-RK2、原一阶路径、限制器和干湿退阶、床面源项与压力修正、CFL=0.2、12 m/s 速度约束及 FFT → SWE 方向。配置、默认值、状态布局和阶段数不变；浪花仍每完成子步计量一次。第三轮仅允许在上述数值约束下调整内部绑定／复制与参数传递。
+Retain MUSCL + SSP-RK2, the original first-order path, limiter and wet/dry order fallback, bed source and pressure correction, CFL=0.2, the 12 m/s velocity constraint and FFT → SWE direction. Configuration, defaults, state layout and stage count remain unchanged; spray is still measured once per completed substep. The third round may change only internal bindings/copies and parameter passing under those numerical constraints.
 
-用户随后要求继续直至逐项评估完成。第三轮增加只读配置的离屏生产路径剖析，依次评估局部水面索引复用、子步缓冲角色交替减少复制、uniform 调度和干区裁剪；每项 A/B 后决定保留或撤回。缓冲角色可在单帧内部交替，但帧末仍同步公共 field 和 previous，保持渲染、碰撞体编辑及既有库消费者不变；浪花源随当前／初始角色绑定。
+The user subsequently requested continuing until every candidate had been evaluated. The third round adds offscreen production-path profiling with read-only configuration and evaluates local water surface index reuse, alternating substep buffer roles to reduce copies, uniform scheduling and dry-region culling in turn; retain or withdraw each after A/B comparison. Buffer roles may alternate within a frame, but public field and previous remain synchronized at frame end so rendering, collider editing and existing library consumers are unchanged; spray sources bind according to current/initial roles.
 
-不改变数值精度、CFL、默认效果或材质。不实施共享内存 tile、通量中间缓冲、通用缓存框架、UI 或自适应网格。四叉树仅作适用性评估，除非当前规模与稀疏收益能够支持改写求解器，否则不强行实现。
+Do not change numerical precision, CFL, default effects or materials. Do not implement shared-memory tiles, intermediate flux buffers, a generic cache framework, UI or adaptive grids. Evaluate quadtree applicability only; do not force a solver rewrite unless the current scale and sparsity gains justify it.
 
-### 验收
+### Acceptance
 
-1. 256²／512² 固定输入、步长和设备一致，预热后重复采样 GPU timestamp，报告中位数和每模拟秒成本。至少在二阶模型或障碍物路径获得可重复收益；不把噪声级差异或不同子步数宣称为加速。
-2. 跨版本输出比较覆盖水深、动量、单／双浓度泡沫、湿润和纹理状态。用既有生产 GPU 验证保护静水、守恒、非负水深、湿干、波传播、FFT 初始化／输入、碰撞体编辑和浪花不反作用；不放宽原验证阈值来接受优化。
-3. 整数床面读取只用于求解网格中心；任意世界坐标渲染采样仍使用原插值。模型坐标非整数、矩形域及开放边界均可用。
-4. 重置仍从当前 FFT 初始化整个区域；正常阶段只省略权重为零的入射波计算，不改变水位／匹配动量、增益、安全限制和时间插值。
-5. 不增加运行时 GPU 回读、同步等待、新配置或个人设置写入；保留独立 CPU 包边界。完整 GPU 验证、库测试、格式和静态检查通过，无法验证部分明确列出。
-6. 文档准确区分固定输入内核基准与包含状态复制、浪花源的生产 SWE 时间；不将本轮基准等同于个人模型实景 FPS。
+1. Use fixed inputs at 256²/512² with consistent time steps and device; repeatedly sample GPU timestamps after warmup and report medians and cost per simulated second. Achieve repeatable gains in at least the second-order model or obstacle path; do not claim noise-level differences or different substep counts as speedups.
+2. Compare outputs across versions for water depth, momentum, single/dual-concentration foam, wetness and texture state. Use existing production GPU verification to protect still water, conservation, nonnegative depth, wet/dry behavior, wave propagation, FFT initialization/input, collider editing and the absence of spray feedback; do not relax existing thresholds to accept an optimization.
+3. Integer bed reads apply only at solver grid centers; rendering samples at arbitrary world coordinates retain interpolation. Noninteger model coordinates, rectangular domains and open boundaries work.
+4. Reset still initializes the entire domain from the current FFT; normal stages only omit incident-wave calculations at zero weight, without changing water level/matching momentum, gain, safety limits or time interpolation.
+5. Add no runtime GPU readback, synchronous waits, new configuration or writes to personal settings; preserve the independent CPU package boundary. Full GPU verification, library tests, formatting and static checks pass; clearly list anything not verified.
+6. Documentation distinguishes fixed-input kernel benchmarks from production SWE time including state copies and spray sources; do not equate these benchmarks with personal model scene FPS.
 
 ## Result
 
-已完成三轮候选评估与验证，执行任务全部完成，用户已明确授权完成及归档。首批已提交，第二／三轮尚未提交；归档不提交或推送代码。以下为既有验证结论，本次未重跑运行验证。
+All three rounds of candidate evaluation and verification and all execution tasks were completed; the user explicitly authorized completion and archiving. The first batch was committed, while the second and third rounds remained uncommitted; archiving does not commit or push code. These are existing verification results, not a new runtime run.
 
-RTX 3070 / Vulkan 固定输入复跑中，256² 二阶模型单浓度从约 0.596 降至 0.096 ms／子步，模型双浓度＋入射波从约 0.565 降至 0.121 ms／子步。五块单步状态最大缩放差异 2.384e-7，完整 GPU 验证、64 项库测试、格式与 Clippy 均通过。未改变数值阈值、步长、ABI 或调度；上述结果不是个人实景 FPS，其他设备尚未验证。
+In repeated fixed-input RTX 3070 / Vulkan measurements, 256² second-order model single-concentration time fell from about 0.596 to 0.096 ms/substep, and dual-concentration model plus incident waves from about 0.565 to 0.121 ms/substep. Maximum scaled difference across the five single-step state blocks was 2.384e-7; full GPU verification, 64 library tests, formatting and Clippy passed. Numerical thresholds, time step, ABI and scheduling were unchanged; these results are not personal scene FPS and other devices were not verified.
 
-第二轮在同设备重新建立 055172c 基线，两项叠加后模型双浓度二阶的 256² 子步从 0.1215～0.1222 降至 0.1015～0.1019 ms，512² 从 0.4109～0.4185 降至 0.3257～0.3333 ms。全部 30 组最终状态逐位一致；完整 GPU 验证、64 项库测试、离线诊断入口和静态检查通过。第二轮未改变生产调度、CFL 或状态分配大小。
+The second round re-established the 055172c baseline on the same device. With both changes combined, 256² second-order dual-concentration model substeps fell from 0.1215–0.1222 to 0.1015–0.1019 ms, and 512² from 0.4109–0.4185 to 0.3257–0.3333 ms. All 30 final states were bit-identical; full GPU verification, 64 library tests, the offline diagnostic entry point and static checks passed. Production scheduling, CFL and state allocation size were unchanged.
 
-第三轮保留局部水面索引复用和完整子步角色交替，新增只读配置的 ocean-profile 工具。当前模型配置的完整 SWE（含复制和浪花源）在 256² 由约 2.46～2.53 降至 2.01～2.02 ms／固定时间帧，512² 由 15.57 降至 11.60～11.62 ms；绘制分别由约 3.70～3.72 降至 3.53、6.26 降至 5.75 ms。连续演化最终状态逐位一致，关闭浪花的最终像素逐字节一致。完整 GPU 验证、64 项海洋库测试、33 项 CPU 测试和静态检查通过。
+The third round retained local water surface index reuse and alternating full-substep roles, and added the read-only ocean-profile tool. In the current model configuration, full SWE including copies and spray sources fell at 256² from about 2.46–2.53 to 2.01–2.02 ms per fixed-time frame, and at 512² from 15.57 to 11.60–11.62 ms; drawing fell respectively from about 3.70–3.72 to 3.53 and from 6.26 to 5.75 ms. Continuously evolved final states were bit-identical, and final pixels with spray disabled were byte-identical. Full GPU verification, 64 ocean library tests, 33 CPU tests and static checks passed.
 
-参数槽缓存收益不足以抵偿新增管理成本，干邻域捷径未证明净收益，两项已撤回。固定活跃块／四叉树因当前可裁剪面积有限且需要额外调度／数值边界处理，不实施。保留默认值、精度、CFL、源项和材质；性能仅在 RTX 3070 / Vulkan 离屏固定时间下确认，不代表窗口 FPS，也不表示已经没有进一步优化空间。
+Parameter-slot caching gains did not justify the added management cost, and the dry-neighborhood shortcut did not demonstrate a net gain; both were withdrawn. Fixed active blocks/quadtree were not implemented because the currently cullable area is limited and extra scheduling/numerical boundary handling would be required. Defaults, precision, CFL, sources and materials were retained; performance was confirmed only for RTX 3070 / Vulkan offscreen fixed-time runs, not window FPS, and does not imply there is no room for further optimization.

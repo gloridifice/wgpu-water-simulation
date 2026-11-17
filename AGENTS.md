@@ -1,120 +1,120 @@
-# 项目协作说明
+# Project collaboration guidelines
 
-本文件适用于整个仓库。与用户使用中文交流；以当前代码和用户最新要求为准，不将讨论中的设想描述为已实现功能。
+This file applies to the entire repository. Communicate with the user in Chinese; keep project UI, documentation, and comments in English. Treat the current code and the user's latest requirements as authoritative; do not describe proposed ideas as implemented features.
 
-## 项目与入口
+## Project and entry points
 
-- 项目使用 Rust 2024 edition。
-- 根包 `cargo run` 默认启动 GPU Ocean；CPU 二维 PIC 终端程序与一维浅水模式独立位于 workspace 成员 `crates/tui-2d-prototype/`。
-- 默认启用的 `ocean` feature 提供 wgpu 三维海洋：远海 FFT、近岸局部二维 SWE、泡沫、沙滩与水体光学，以及 egui_dock 参数面板。
-- 修改 GPU 海洋时，保留独立 CPU 包的可用性，不向其引入 GPU 依赖；`crates/tall-cell-fluid/` 保持独立 workspace。
-- 使用说明集中在 `doco/guides/`，入口见 `README.md`；架构与精确合约分别在 `doco/architecture.md`、`doco/specs/`。修改用户可见行为、参数或启动方式时，同步相关说明。
+- The project uses Rust 2024 edition.
+- The root package's `cargo run` starts GPU Ocean by default; the CPU 2D PIC terminal program and 1D shallow-water mode are separate, in workspace member `crates/tui-2d-prototype/`.
+- The default `ocean` feature provides a wgpu 3D ocean: offshore FFT, local nearshore 2D SWE, foam, beach and water optics, and an egui_dock parameter panel.
+- When changing GPU Ocean, preserve the independent CPU package and do not introduce GPU dependencies into it; keep `crates/tall-cell-fluid/` an independent workspace.
+- Usage guides live in `doco/guides/`, indexed by `README.md`; architecture and precise contracts live in `doco/architecture.md` and `doco/specs/`. Update relevant documentation when user-visible behavior, parameters, or startup changes.
 
-## 代码位置
+## Code locations
 
-| 位置 | 职责 |
+| Location | Responsibility |
 | --- | --- |
-| `crates/tui-2d-prototype/src/{main.rs,pic/,tui/}` | CPU PIC 入口、求解与终端交互 |
-| `crates/tui-2d-prototype/src/{solver.rs,shallow_tui/}` | 一维浅水求解与终端交互 |
-| `src/bin/ocean.rs` | GPU 海洋入口及命令行参数 |
-| `crates/common/src/` | 公共窗口循环、GPU、egui/视口、Dock 布局、配置保存与相机数学；不得依赖模拟业务 |
-| `src/ocean/app/`、`camera.rs` | 海洋帧调度、快照、业务输入及兼容相机配置／GPU 布局 |
-| `src/ocean/gpu/` | common 设备兼容入口与海洋计时元数据适配 |
-| `src/ocean/parameters/` | 参数定义、默认值与校验，不依赖窗口或 GPU 资源 |
-| `src/ocean/simulation/spectral/` | 海洋与程序水共用的波谱、GPU FFT、周期采样及所属着色器 |
-| `src/ocean/simulation/offshore/` | 远海泡沫、海洋耦合验证及旧 FFT 路径兼容导出 |
-| `src/ocean/simulation/nearshore/` | SWE、FFT 输入、近岸泡沫、状态读取及验证 |
-| `src/ocean/simulation/spray/` | 近岸浪花源、粒子及所属着色器 |
-| `src/ocean/scene/` | 模型几何、地形高度场与碰撞体 |
-| `src/ocean/render/` | 水面、海底、模型、天空光学、纹理及所属着色器；`water/` 为海洋与程序水共用的光学合成 |
-| `src/ocean/ui/` | Dock、业务面板、颜色编辑、应用字体与布局保存 |
-| crates.io `yummy_egui` | 通用 egui 控件、参数／选择列表与默认主题；本仓库不保留库源码或主题配置 |
-| `src/ocean/settings/`、`ui/panels/configuration.rs` | 会话、命名配置库、原子保存及配置管理界面 |
-| `src/ocean/verify.rs`、各领域的 `verification/` 或 `verification.rs` | 真实 GPU 验证总入口与所属行为检查 |
-| `src/ocean/labs/foam_weight_lab/` | 独立泡沫权重实验 |
+| `crates/tui-2d-prototype/src/{main.rs,pic/,tui/}` | CPU PIC entry, solver, and terminal interaction |
+| `crates/tui-2d-prototype/src/{solver.rs,shallow_tui/}` | 1D shallow-water solver and terminal interaction |
+| `src/bin/ocean.rs` | GPU Ocean entry and CLI arguments |
+| `crates/common/src/` | Shared window loop, GPU, egui/viewport, Dock layout, configuration persistence, and camera math; must not depend on simulation business logic |
+| `src/ocean/app/`, `camera.rs` | Ocean frame scheduling, snapshots, business input, and compatible camera configuration/GPU layout |
+| `src/ocean/gpu/` | Common device compatibility entry and Ocean timing metadata adapter |
+| `src/ocean/parameters/` | Parameter definitions, defaults, and validation, independent of window or GPU resources |
+| `src/ocean/simulation/spectral/` | Shared ocean/procedural-water spectra, GPU FFT, periodic sampling, and associated shaders |
+| `src/ocean/simulation/offshore/` | Offshore foam, ocean coupling verification, and legacy FFT compatibility exports |
+| `src/ocean/simulation/nearshore/` | SWE, FFT input, nearshore foam, state readback, and verification |
+| `src/ocean/simulation/spray/` | Nearshore spray sources, particles, and associated shaders |
+| `src/ocean/scene/` | Model geometry, terrain heightfields, and colliders |
+| `src/ocean/render/` | Water surface, seabed, models, sky optics, textures, and associated shaders; `water/` provides shared ocean/procedural-water optical composition |
+| `src/ocean/ui/` | Dock, business panels, color editing, application fonts, and layout persistence |
+| crates.io `yummy_egui` | Shared egui controls, parameter/selection lists, and default theme; this repository does not retain library source or theme configuration |
+| `src/ocean/settings/`, `ui/panels/configuration.rs` | Session, named configuration library, atomic saves, and configuration management UI |
+| `src/ocean/verify.rs`, domain `verification/` or `verification.rs` | Real GPU verification entry and domain behavior checks |
+| `src/ocean/labs/foam_weight_lab/` | Independent foam weight experiment |
 
-## 常用命令与验证
+## Common commands and validation
 
-在仓库根目录执行：
+Run from the repository root:
 
 ```powershell
-# 启动 GPU 海洋；恢复个人参数时不要额外指定场景预设。
+# Start GPU Ocean; omit scene presets to restore personal settings.
 cargo run
-# 优化构建用于观察性能。
+# Optimized build for performance observation.
 cargo run --release
 
-# 启动原有 CPU 程序。
+# Start the original CPU program.
 cargo run --release -p tui-2d-prototype
 
-# 格式、静态检查与包含海洋模块的单元测试。
+# Formatting, static checks, and unit tests including Ocean modules.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --features ocean --lib
-# CPU 包测试；--workspace 可同时覆盖根包与 CPU 包。
+# CPU package tests; --workspace also covers the root and CPU packages.
 cargo test -p tui-2d-prototype
 
-# 构建并验证实际 GPU 路径。
+# Build and verify the real GPU path.
 cargo build --release --features ocean --bin ocean
 target\release\ocean.exe --verify
 
-# 有限帧数的界面冒烟运行，不覆盖个人配置。
+# Finite-frame UI smoke run without overwriting personal settings.
 target\release\ocean.exe --beach --no-settings --frames 600
 ```
 
-- 根据修改范围选择验证。纯文档修改不需要构建；纯布局修改不必重复完整物理验证。
-- `cargo test --features ocean --bin ocean` 不能替代库测试；海洋模块的测试应使用 `--lib`。
-- Rust 编译通过不代表 WGSL 正确。修改着色器、绑定或缓冲区布局时，应运行相关 GPU 验证；无法运行时明确说明。
-- 修改 CPU 包或 workspace 边界时，用 `cargo test -p tui-2d-prototype` 和 `cargo clippy -p tui-2d-prototype --all-targets -- -D warnings` 验证 CPU 路径；启动指定 `-p tui-2d-prototype`。目录名和 Cargo 包名均为 `tui-2d-prototype`。根包 `--no-default-features` 不再选择 CPU 程序。
-- 比较视觉结果时固定相机、时间、随机种子、波谱与求解阶数。`--snapshot` 输出渲染画面，不能用于验证参数面板布局。
-- 不为可逆的小型界面修改添加仅复述实现的测试。数值边界、配置兼容、质量输送等行为需要有意义的验证。
+- Choose validation appropriate to the change. Documentation-only changes need no build; layout-only changes need not repeat full physics verification.
+- `cargo test --features ocean --bin ocean` is not a substitute for library tests; use `--lib` for Ocean module tests.
+- Rust compilation does not validate WGSL. Run relevant GPU verification after changing shaders, bindings, or buffer layouts; state explicitly if unavailable.
+- For CPU package or workspace boundary changes, validate with `cargo test -p tui-2d-prototype` and `cargo clippy -p tui-2d-prototype --all-targets -- -D warnings`; start with `-p tui-2d-prototype`. Both directory and Cargo package are named `tui-2d-prototype`. Root `--no-default-features` no longer selects the CPU program.
+- Fix camera, time, random seed, spectrum, and solver order when comparing visuals. `--snapshot` renders the scene and cannot verify parameter-panel layout.
+- Do not add tests that merely restate reversible small UI changes. Numerical boundaries, configuration compatibility, mass transport, and similar behavior need meaningful verification.
 
-## 模拟与 GPU 约定
+## Simulation and GPU conventions
 
-- WGSL 文件放在所属模块的 `shaders/` 子目录，使用相对源文件的 `include_str!` / `include_bytes!` 编译期嵌入；跨模块复用时引用实际所属模块，不复制文件。
-- 海洋内部使用职责路径；`ocean/mod.rs` 和 `gpu/mod.rs` 中的旧路径重导出仅用于兼容现有库调用，不把它们当作内部依赖入口。
-- 保留远海 FFT 与近岸 SWE 的分工；当前耦合方向为 FFT → SWE。不要无意中重新引入独立近岸造波器。
-- FFT 输入涉及水位和匹配动量；调整过滤、增益或初始化时，同时检查两者，避免重复应用增益。
-- 保留一阶、二阶 SWE 切换。修改求解器时检查静水平衡、干湿边界、稳定步长及非负水深。
-- 水上泡沫密度、沙地残留泡沫、沙滩湿润历史和远海 FFT 泡沫是不同状态，不要混用其阈值、颜色或衰减参数。
-- 近岸水上泡沫考虑生成、输送、汇聚和衰减。密度不等同于显示透明度；不要为显示方便把模拟密度直接截断到 0～1。
-- 保守输送已能表达汇聚和稀释；新增压缩增强项前，检查是否重复计算同一效果。
-- 保留密度调试视图，便于独立验证密度与着色。孔隙纹理和小波改进按用户明确要求推进，不自行扩大任务范围。
-- Rust uniform/storage 数据结构、WGSL 定义、对齐、绑定、复制大小和子步偏移必须一致。新增字段需检查全部相关着色器。
-- SWE GPU 耗时使用真实 GPU timestamp，兼容不支持该功能的设备；不能把 CPU 提交耗时标为 GPU 耗时，也不要为计时每帧阻塞等待 GPU。
-- 参数注明单位。区分毫米与米、模拟时间与现实时间、无量纲阈值与变化率。解释公式时先说明中文名称和含义，避免未定义字母。
+- Put WGSL files in the owning module's `shaders/` directory and embed them at compile time using source-relative `include_str!` / `include_bytes!`; cross-module reuse must reference the owning module, not duplicate files.
+- Use responsibility-based paths inside Ocean; legacy re-exports in `ocean/mod.rs` and `gpu/mod.rs` are only for existing library callers, not internal dependencies.
+- Preserve the offshore FFT / nearshore SWE division; current coupling is FFT → SWE. Do not inadvertently reintroduce an independent nearshore wave generator.
+- FFT input includes water level and matching momentum; check both when adjusting filtering, gain, or initialization, avoiding double application of gain.
+- Keep first- and second-order SWE switching. Solver changes must check still-water balance, wet/dry boundaries, stable time steps, and nonnegative depth.
+- Waterborne foam density, foam residue on sand, beach wetness history, and offshore FFT foam are distinct states; do not mix their thresholds, colors, or decay parameters.
+- Nearshore waterborne foam includes generation, transport, convergence, and decay. Density is not display opacity; do not clamp simulation density directly to 0–1 for display convenience.
+- Conservative transport already expresses convergence and dilution; check for double counting before adding compression enhancement.
+- Preserve the density debug view so density and shading can be verified independently. Advance pore textures and wavelet improvements only when explicitly requested, without expanding scope.
+- Rust uniform/storage structures and WGSL definitions, alignment, bindings, copy sizes, and substep offsets must agree. Check all relevant shaders when adding fields.
+- SWE GPU timing must use real GPU timestamps and support devices without them; never label CPU submission time as GPU time or block on the GPU every frame for timing.
+- State parameter units. Distinguish millimeters from meters, simulation from wall-clock time, and dimensionless thresholds from rates of change. Explain a formula's name and meaning before using undefined symbols.
 
-## 参数面板约定
+## Parameter panel conventions
 
-- 使用 egui_dock；左侧固定“场景、浅水、远海、动画 SDF 波纹、着色、配置”六分类导航，各分类有独立 Dock 布局。默认参数靠左、渲染视图靠右；顶部工具栏常驻。切换只改 UI，不重置模拟、草稿或相机。
-- 各布局保留一个不可关闭的渲染视图；参数面板可关闭、跨分类添加。布局 sidecar 独立于模拟会话与命名配置，遵守只读／无保存模式；界面合约见 `doco/specs/workspace-ui.md`。
-- 通用组件与主题使用 crates.io 的 `yummy_egui` 0.1 系列（最低 0.1.2），搭配 egui 0.34、egui_dock 0.19 与 wgpu 29；海洋业务面板直接依赖该库，不复制控件实现。本仓库不存储、加载或保存主题配置，使用库的 `Theme::default()`，Dock 使用其 `dock_style()`；MiSans 由主程序安装，主题应用不得覆盖字体。
-- 每个逻辑参数组使用一个共享的两列网格，让同组多行实际对齐；不要每行创建独立网格。
-- 左列为名称，右列为参数控件；复用统一布局辅助方法。扣除列间距后，名称列占 42%，参数列占 58%。
-- 长名称允许换行；控件不得撑大列宽，导致不同参数组的列边界错位。
-- 分组标题和普通强调文字统一使用 `yummy_egui::h3`（默认 14 pt、高对比色、不加粗）；更高层级可用 h1（20 pt、加粗）与 h2（16 pt、加粗）。标题自带上下 margin，分组不重复叠加；错误／警告保留语义颜色。
-- 参数解释放在名称的 hover 提示中，不常驻显示介绍小字。保留必要的操作按钮、当前状态及错误提示。
-- 参数提示说明作用、单位、范围，以及修改后实时生效还是重置模拟。
-- 只调整面板时，不顺带修改模拟、着色或参数默认值。
+- Use egui_dock with six fixed left navigation workspaces: Scene, Shallow Water, Offshore, Animated SDF Ripples, Shading, and Configurations, each with an independent Dock layout. Default parameters are on the left and Render View on the right; the top toolbar remains visible. Switching changes only UI, not simulation, drafts, or camera.
+- Each layout retains one non-closable Render View; parameter panels can be closed and added across categories. Layout sidecars are independent of sessions and named configurations and respect read-only/no-save mode; see `doco/specs/workspace-ui.md`.
+- Use crates.io `yummy_egui` 0.1 series (minimum 0.1.2) with egui 0.34, egui_dock 0.19, and wgpu 29 for shared controls and themes; Ocean business panels depend directly on the library, without copying controls. Do not store, load, or save theme configuration in this repository. Use `Theme::default()` and its `dock_style()` for Dock; the application installs MiSans and theme application must not override fonts.
+- Use one shared two-column grid per logical parameter group so rows align; do not create an independent grid for each row.
+- Put names on the left and controls on the right using shared layout helpers. After column spacing, the name column takes 42% and controls 58%.
+- Allow long names to wrap; controls must not expand column widths and misalign group boundaries.
+- Use `yummy_egui::h3` for group headings and ordinary emphasized text (default 14 pt, high contrast, not bold); higher levels may use h1 (20 pt, bold) and h2 (16 pt, bold). Headings already have vertical margin; do not duplicate it. Keep semantic colors for errors and warnings.
+- Put parameter explanations in name hover tooltips, not persistent explanatory small text. Keep necessary action buttons, current status, and errors.
+- Tooltips explain purpose, units, range, and whether changes apply live or reset the simulation.
+- When only adjusting panels, do not also change simulation, shading, or parameter defaults.
 
-## 配置与参数接入
+## Configuration and parameter integration
 
-- 新增参数检查完整链路：默认值、合法范围、有限数校验、序列化兼容、面板、CPU → GPU 传递、WGSL 使用点，以及必要的重置或重建条件。
-- 加字段时让旧配置能够使用默认值加载；不要仅因旧文件缺少新字段就丢弃整份配置。
-- 分清当前工作状态手动保存、命名配置快照覆盖和 Dock 布局自动保存。仅顶部保存／Ctrl+S 或配置面板保存配置写会话；编辑、载入、失焦和退出不写会话，失败需手动重试。不能仅保存模拟参数就声称保存了面板布局。
-- 当前参数保存入口在 `settings/store.rs`，默认路径由 `default_path()` 决定。不要硬编码开发者机器上的绝对路径。
-- 命名配置通过配置库管理。保持默认配置快照、另存和显式覆盖语义；顶部保存／Ctrl+S 记录工作状态和配置库，不将当前参数意外覆盖到命名快照。新建、删除及重命名确认后仍需手动保存写盘。
-- 排查“保存后恢复不一致”时，检查读取路径、保存错误、CLI 覆盖和 `--no-settings`。尤其注意当前 `--beach` 会应用场景预设并覆盖部分已保存状态。
-- 自动验证和预览尽量使用 `--no-settings` 或专用测试文件，不覆盖用户正在调试的个人配置。
+- Check the entire chain for new parameters: defaults, allowed range, finite-value validation, serialization compatibility, panel, CPU → GPU transfer, WGSL usage, and any required reset or rebuild.
+- Give new fields defaults so old configurations load; do not discard an entire configuration merely because a new field is absent.
+- Distinguish manual working-state saves, named snapshot overwrites, and automatic Dock layout saves. Only toolbar Save / Ctrl+S or Save Configuration in the configuration panel writes the session; editing, loading, focus loss, and exit do not. Failures require a manual retry. Saving simulation parameters alone does not save panel layout.
+- The current parameter save entry is `settings/store.rs`; `default_path()` determines the default path. Do not hardcode developer-machine absolute paths.
+- Manage named configurations through the configuration library. Preserve default snapshot, save-as, and explicit overwrite semantics; toolbar Save / Ctrl+S records working state and library without accidentally overwriting a named snapshot with current parameters. Confirmed creation, deletion, and rename still require manual saving to disk.
+- For inconsistent restore after saving, check read path, save errors, CLI overrides, and `--no-settings`. In particular, `--beach` currently applies a scene preset and overrides part of saved state.
+- Prefer `--no-settings` or dedicated test files for automated verification and previews; do not overwrite personal configuration under investigation.
 
-## 工作区与交付
+## Workspace and delivery
 
-- 修改前查看工作区状态和相关代码。保留用户已有的未提交修改，不还原、不覆盖、不混入无关重构。
-- 不擅自提交或推送；用户要求提交时，检查差异并只提交约定范围。
-- Windows 上运行中的程序可能锁定可执行文件。不要为了构建终止用户正在运行的程序；可使用其他构建产物或说明阻碍。
-- 预览程序优先限制帧数；如需清理，只操作本次任务明确启动的进程。
-- 不把构建产物、截图、临时配置或调试日志加入版本管理，除非用户明确要求。
-- 参考外部项目时核查资源许可与来源，按需保留署名；复制资源后使用仓库内路径，不依赖个人下载目录。
-- 完成后简述改动、验证结果及未验证的限制。不要把代码检查、编译通过或截图推断说成实际运行确认。
+- Inspect worktree status and relevant code before modifying. Preserve existing uncommitted user changes; do not revert, overwrite, or mix in unrelated refactoring.
+- Do not commit or push without request; when asked to commit, inspect the diff and commit only the agreed scope.
+- On Windows, a running program may lock its executable. Do not terminate the user's running program to build; use a different build artifact or explain the obstruction.
+- Prefer finite-frame previews; if cleanup is necessary, only operate on processes explicitly started for this task.
+- Do not version build outputs, screenshots, temporary configurations, or debug logs unless explicitly requested.
+- Check licenses and origins when referencing external projects, retaining attribution as needed; copied assets must use repository-local paths, not personal download directories.
+- Summarize changes, validation, and unverified limitations upon completion. Do not claim code inspection, compilation, or screenshot inference as actual runtime confirmation.
 
 <!-- DOCO:START -->
 <!-- doco:entry template=v2 -->

@@ -23,7 +23,7 @@ impl ModelPanel {
             self.draft = optics.model;
             self.applied = Some(optics.model);
         }
-        if ui.add(PanelButton::new("载入岩岸模型场景")).clicked() {
+        if ui.add(PanelButton::new("Load Rocky Coast Scene")).clicked() {
             *optics = OpticsConfig::model_scene();
             *camera = Camera::model(length);
             self.draft = optics.model;
@@ -34,34 +34,34 @@ impl ModelPanel {
         parameter_table(ui, "model asset status", |ui| {
             parameter(
                 ui,
-                "高度场状态",
-                "从 assets/models/challaborough_pillbox.sweh 加载预烘焙高度和覆盖标记。缺失时先运行 terrain-bake；不会在帧循环中遍历三角形。",
+                "Heightfield Status",
+                "Loads prebaked heights and coverage flags from assets/models/challaborough_pillbox.sweh. If missing, run terrain-bake first; triangles are not traversed in the frame loop.",
                 |ui| {
                     ui.label(if self.source_bounds.is_some() {
-                        "已加载磁盘资产"
+                        "Disk asset loaded"
                     } else {
-                        "尚未加载"
+                        "Not loaded"
                     })
                 },
             );
             parameter(
                 ui,
-                "启用模型",
-                "应用后切换模型场景并重置近岸历史；关闭后恢复原沙坡／平面。",
+                "Enable Model",
+                "Applying switches to the model scene and resets nearshore history; disabling restores the original sand slope or flat bed.",
                 |ui| ui.checkbox(&mut self.draft.enabled, ""),
             );
         });
         if self.draft.enabled {
-            yummy_egui::h3(ui, "模型变换与水位");
+            yummy_egui::h3(ui, "Model Transform and Water Level");
             parameter_table(ui, "model transform", |ui| {
-                for (a, name) in ["位置 X（米）", "位置 Y（米）", "位置 Z（米）"]
+                for (a, name) in ["Position X (m)", "Position Y (m)", "Position Z (m)"]
                     .into_iter()
                     .enumerate()
                 {
                     parameter(
                         ui,
                         name,
-                        "模型平移，-2000～2000 米。Y 与海平面使用同一高程基准；应用后重采样床面并重置近岸历史。",
+                        "Model translation, -2000–2000 m. Y shares the sea level elevation datum; applying resamples the bed and resets nearshore history.",
                         |ui| {
                             ui.add(
                                 ParameterSlider::new(&mut self.draft.position[a], -2000.0..=2000.0)
@@ -73,8 +73,8 @@ impl ModelPanel {
                 }
                 parameter(
                     ui,
-                    "统一比例",
-                    "米／模型单位，0.01～100；扫描比例未经实测校准。应用后重采样，不重新烘焙原资产。",
+                    "Uniform Scale",
+                    "Meters per model unit, 0.01–100; the scan scale has not been calibrated against measurements. Applying resamples without rebaking the source asset.",
                     |ui| {
                         ui.add(
                             ParameterSlider::new(&mut self.draft.scale, 0.01..=100.0)
@@ -86,8 +86,8 @@ impl ModelPanel {
                 );
                 parameter(
                     ui,
-                    "旋转 Y（度）",
-                    "绕竖直轴旋转，-180～180 度。应用后重采样并重置；俯仰／翻滚需要重新烘焙，不在此提供。",
+                    "Y Rotation (degrees)",
+                    "Rotation around the vertical axis, -180–180 degrees. Applying resamples and resets; pitch and roll require rebaking and are not available here.",
                     |ui| {
                         ui.add(
                             ParameterSlider::new(&mut self.draft.yaw_deg, -180.0..=180.0)
@@ -98,8 +98,8 @@ impl ModelPanel {
                 );
                 parameter(
                     ui,
-                    "海平面高程（米）",
-                    "-2000～2000 米。渲染和求解以此水位为 Y=0；提高此值相当于涨潮，应用后重置，不是动态潮汐输入。",
+                    "Sea Level Elevation (m)",
+                    "-2000–2000 m. Rendering and solving use this level as Y=0; raising it is equivalent to a higher tide. Applying resets the simulation; this is not a dynamic tidal input.",
                     |ui| {
                         ui.add(
                             ParameterSlider::new(&mut self.draft.sea_level, -2000.0..=2000.0)
@@ -109,16 +109,16 @@ impl ModelPanel {
                     },
                 );
             });
-            yummy_egui::h3(ui, "SWE 包围盒");
+            yummy_egui::h3(ui, "SWE Bounds");
             parameter_table(ui, "model domain", |ui| {
-                for (a, name) in ["中心 X（米）", "中心 Y（米）", "中心 Z（米）"]
+                for (a, name) in ["Center X (m)", "Center Y (m)", "Center Z (m)"]
                     .into_iter()
                     .enumerate()
                 {
                     parameter(
                         ui,
                         name,
-                        "-2000～2000 米。XZ 决定计算域，应用后重建；Y 仅显示和范围检查，不移动水面、不裁切地形。",
+                        "-2000–2000 m. XZ determines the computational domain and is rebuilt on apply; Y is only used for display and bounds checks, and does not move the water or clip terrain.",
                         |ui| {
                             ui.add(
                                 ParameterSlider::new(&mut self.draft.center[a], -2000.0..=2000.0)
@@ -128,14 +128,14 @@ impl ModelPanel {
                         },
                     );
                 }
-                for (a, name) in ["尺寸 X（米）", "尺寸 Y（米）", "尺寸 Z（米）"]
+                for (a, name) in ["Size X (m)", "Size Y (m)", "Size Z (m)"]
                     .into_iter()
                     .enumerate()
                 {
                     parameter(
                         ui,
                         name,
-                        "4～2048 米。XZ 决定计算域，Y 仅可视化，顶部不是封闭顶盖。应用后 XZ 修改会清空近岸历史；Y 修改不会。",
+                        "4–2048 m. XZ determines the computational domain; Y is visual only, and the top is not a closed lid. Applying XZ changes clears nearshore history; Y changes do not.",
                         |ui| {
                             ui.add(
                                 ParameterSlider::new(&mut self.draft.size[a], 4.0..=2048.0)
@@ -148,14 +148,14 @@ impl ModelPanel {
                 }
                 parameter(
                     ui,
-                    "显示包围盒",
-                    "应用后显示橙色三维线框。仅外观，不重置模拟。",
+                    "Show Bounds",
+                    "Show an orange 3D wireframe after applying. Visual only; does not reset the simulation.",
                     |ui| ui.checkbox(&mut self.draft.show_bounds, ""),
                 );
                 parameter(
                     ui,
-                    "待应用格距 X/Z",
-                    "单位米；每轴网格数在 SWE 面板选择。重要通道建议至少跨越 3～5 格，源高度场太粗时提高此分辨率不会恢复细节。",
+                    "Pending Grid Spacing X/Z",
+                    "In meters; select the grid count per axis in the SWE panel. Important channels should span at least 3–5 cells. Increasing resolution cannot restore detail missing from a coarse source heightfield.",
                     |ui| {
                         ui.label(format!(
                             "{:.3} / {:.3}",
@@ -168,29 +168,29 @@ impl ModelPanel {
             if ui
                 .add_enabled(
                     self.source_bounds.is_some(),
-                    PanelButton::new("按模型范围自动覆盖"),
+                    PanelButton::new("Fit to Model Bounds"),
                 )
                 .clicked()
             {
                 self.draft.fit(self.source_bounds.unwrap());
             }
-            yummy_egui::h3(ui, "边界与补充海床");
+            yummy_egui::h3(ui, "Boundaries and Supplemental Seabed");
             parameter_table(ui, "model boundaries", |ui| {
-                for (a, name) in ["−X 开放", "+X 开放", "−Z 开放", "+Z 开放"]
+                for (a, name) in ["−X Open", "+X Open", "−Z Open", "+Z Open"]
                     .into_iter()
                     .enumerate()
                 {
                     parameter(
                         ui,
                         name,
-                        "开启：FFT 来浪与出流边界，配合松弛带；关闭：反射墙。应用后重置近岸历史。FFT 是唯一外部波浪源。",
+                        "On: FFT incoming waves and outflow boundary with a relaxation zone. Off: reflective wall. Applying resets nearshore history. FFT is the only external wave source.",
                         |ui| ui.checkbox(&mut self.draft.open_edges[a], ""),
                     );
                 }
                 parameter(
                     ui,
-                    "松弛带宽（米）",
-                    "0.5～512 米，必须小于 X/Z 最小尺寸的一半。需要根据实际波长检查反射；应用后重置。",
+                    "Relaxation Width (m)",
+                    "0.5–512 m, less than half the smaller X/Z extent. Check reflections against the actual wavelength; applying resets the simulation.",
                     |ui| {
                         ui.add(
                             ParameterSlider::new(&mut self.draft.sponge_width, 0.5..=512.0)
@@ -202,8 +202,8 @@ impl ModelPanel {
                 );
                 parameter(
                     ui,
-                    "海床衔接宽度（米）",
-                    "0.5～256 米。扫描边缘在此距离内平滑过渡到场景与地形面板的海底深度；属于人为补充地形，不是实测海底。应用后重建并重置。应留在计算域和松弛带以内。",
+                    "Seabed Blend Width (m)",
+                    "0.5–256 m. The scan edge smoothly blends to the seabed depth from the Scene and Terrain panel over this distance. This is artificial supplemental terrain, not a measured seabed. Applying rebuilds and resets. Keep it inside the computational domain and relaxation zone.",
                     |ui| {
                         ui.add(
                             ParameterSlider::new(&mut self.draft.extension_width, 0.5..=256.0)
@@ -218,8 +218,8 @@ impl ModelPanel {
         let [apply, cancel] = action_row(
             ui,
             [
-                PanelButton::new("应用模型与区域"),
-                PanelButton::new("撤销待应用修改"),
+                PanelButton::new("Apply Model and Domain"),
+                PanelButton::new("Discard Pending Changes"),
             ],
         );
         if apply.clicked() {
@@ -237,7 +237,7 @@ impl ModelPanel {
             self.error = None;
         }
         if self.draft != optics.model {
-            ui.label("存在待应用修改");
+            ui.label("Unapplied changes");
         }
         if let Some(range) = self.bed_range {
             let low = optics.model.center[1] - optics.model.size[1] * 0.5 - optics.model.sea_level;
@@ -245,7 +245,7 @@ impl ModelPanel {
             if range[0] < low || range[1] > high {
                 ui.colored_label(
                     egui::Color32::YELLOW,
-                    "床面超出包围盒 Y 范围：仅提示，未裁切。",
+                    "Bed extends outside the bounds in Y: warning only; it is not clipped.",
                 );
             }
         }

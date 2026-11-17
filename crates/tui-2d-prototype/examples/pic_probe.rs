@@ -1,4 +1,4 @@
-//! 不依赖终端的 PIC 示例：cargo run --release -p tui-2d-prototype --example pic_probe -- 8 [frames.csv]
+//! Terminal-independent PIC example: cargo run --release -p tui-2d-prototype --example pic_probe -- 8 [frames.csv]
 use std::{
     fs::File,
     io::{BufWriter, Write},

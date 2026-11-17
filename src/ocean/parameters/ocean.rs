@@ -1,4 +1,4 @@
-/// 一个周期海面块，单位为米、秒。频率数组采用 FFT 的未移位顺序。
+/// A periodic ocean tile in meters and seconds. Frequency arrays use unshifted FFT ordering.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct OceanConfig {

@@ -1,4 +1,4 @@
-//! 与界面无关的二维 PIC 与一维浅水方程求解库。
+//! UI-independent two-dimensional PIC and one-dimensional shallow-water solvers.
 pub mod pic;
 pub mod solver;
 

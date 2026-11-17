@@ -1,5 +1,5 @@
-//! 二维侧视、单相不可压缩 PIC：粒子携带运动，MAC 网格求压力。
-//! 空气取零压力，不计算空气的惯性；所有尺寸以米、秒为单位。
+//! Two-dimensional side-view, single-phase incompressible PIC: particles carry motion and a MAC grid solves pressure.
+//! Air has zero pressure and no modeled inertia; dimensions use meters and seconds.
 mod grid;
 mod pressure;
 mod transfer;
@@ -22,7 +22,7 @@ pub struct Config {
     pub gravity: f64,
     pub cfl: f64,
     pub pressure_iterations: usize,
-    /// 挡板完整往复周期，前推占 1/4 周期，回退占 3/4。
+    /// Full paddle cycle: forward motion takes 1/4 and return takes 3/4.
     pub wave_period: f64,
     pub wave_stroke: f64,
     pub beach: bool,
@@ -94,7 +94,7 @@ pub struct Diagnostics {
     pub divergence_after: f64,
     pub pressure_iterations: usize,
     pub max_speed: f64,
-    /// 有水单元下方隔着空气、下部又有水的列数；是翻折/飞溅指标，不等于卷浪品质评分。
+    /// Number of columns with water below an air gap below another water cell; an overturning/splash indicator, not a wave quality score.
     pub overhang_columns: usize,
 }
 
@@ -192,7 +192,7 @@ impl Simulation {
     pub fn diagnostics(&self) -> Diagnostics {
         self.diagnostics
     }
-    /// 固定粒子代表面积；每步不生成/删除粒子。它不直接测量重建表面的体积误差。
+    /// Fixed area represented by particles; no particles are created or removed per step. This does not directly measure reconstructed surface volume error.
     pub fn volume(&self) -> f64 {
         self.particle_volume * self.particles.len() as f64
     }
@@ -228,7 +228,7 @@ impl Simulation {
             self.paddle_velocity = 0.0;
         }
         self.grid.mark_solids(self.paddle_x);
-        // 移动挡板先将被扫到的粒子推出，网格边界使用同一挡板速度。
+        // The moving paddle first pushes swept particles out; the grid boundary uses the same paddle velocity.
         for p in &mut self.particles {
             if p.x < self.paddle_x + 0.2 * self.config.cell_size {
                 p.x = self.paddle_x + 0.2 * self.config.cell_size;
@@ -283,7 +283,7 @@ impl Simulation {
         Ok(())
     }
 
-    /// 鼠标施加局部向上/向前速度脉冲，只改变动量，不新增水粒子。
+    /// Apply a local upward/forward velocity impulse with the mouse; changes momentum without adding particles.
     pub fn disturb(&mut self, x: f64, y: f64) -> Result<usize, String> {
         if !x.is_finite()
             || !y.is_finite()
@@ -313,8 +313,8 @@ impl Simulation {
         Ok(affected)
     }
 
-    /// 一次可重复的卷浪造浪脉冲：在坡面入口施加局部顺时针速度场。
-    /// 这是外部动量输入，不移动粒子位置；后续形态完全由 PIC 和重力推进。
+    /// Apply a repeatable breaking-wave impulse: a local clockwise velocity field at the slope entrance.
+    /// This external momentum input does not move particles; subsequent motion is driven entirely by PIC and gravity.
     pub fn wave_pulse(&mut self) {
         let radius = 0.12 * self.config.width();
         let center_x = 0.48 * self.config.width();

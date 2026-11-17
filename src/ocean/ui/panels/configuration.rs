@@ -64,7 +64,7 @@ impl ConfigurationPanel {
                         self.selected.is_none(),
                         DEFAULT_CONFIGURATION_NAME,
                     )
-                    .on_hover_text("只读默认配置。点击恢复全部参数并重置模拟历史。")
+                    .on_hover_text("Read-only default configuration. Click to restore all parameters and reset simulation history.")
                     .clicked()
                 {
                     clicked = Some(None);
@@ -72,13 +72,13 @@ impl ConfigurationPanel {
                 for (index, profile) in self.library.profiles().iter().enumerate() {
                     let response = list
                         .item(Some(index), self.selected == Some(index), profile.name())
-                        .on_hover_text("点击载入全部参数并重置模拟历史；右键可重命名。");
+                        .on_hover_text("Click to load all parameters and reset simulation history; right-click to rename.");
                     if response.clicked() {
                         clicked = Some(Some(index));
                     }
                     if persistence_enabled {
                         response.context_menu(|ui| {
-                            if ui.button("重命名").clicked() {
+                            if ui.button("Rename").clicked() {
                                 rename = Some(index);
                                 ui.close();
                             }
@@ -109,14 +109,14 @@ impl ConfigurationPanel {
         let [new, delete] = action_row(
             ui,
             [
-                PanelButton::new("新配置").enabled(persistence_enabled),
-                PanelButton::new("删除配置")
+                PanelButton::new("New configuration").enabled(persistence_enabled),
+                PanelButton::new("Delete configuration")
                     .enabled(persistence_enabled && self.selected.is_some()),
             ],
         );
         if new
-            .on_hover_text("将当前全部参数另存为新配置；再点击顶部保存或按 Ctrl+S 写入本地。")
-            .on_disabled_hover_text("本地保存已禁用")
+            .on_hover_text("Save all current parameters as a new configuration; then click Save at the top or press Ctrl+S to write it locally.")
+            .on_disabled_hover_text("Local saving is disabled")
             .clicked()
         {
             self.editor = Some(Editor::New);
@@ -126,9 +126,9 @@ impl ConfigurationPanel {
         }
         if delete
             .on_disabled_hover_text(if persistence_enabled {
-                "默认配置不可删除"
+                "The default configuration cannot be deleted"
             } else {
-                "本地保存已禁用"
+                "Local saving is disabled"
             })
             .clicked()
             && let Some(index) = self.selected
@@ -143,7 +143,7 @@ impl ConfigurationPanel {
                     Editor::New | Editor::Rename(_) => {
                         let input = ui.add(
                             egui::TextEdit::singleline(&mut self.name)
-                                .hint_text("配置名称")
+                                .hint_text("Configuration name")
                                 .desired_width(f32::INFINITY),
                         );
                         if std::mem::take(&mut self.focus_name) {
@@ -152,7 +152,7 @@ impl ConfigurationPanel {
                     }
                     Editor::Delete(index) => {
                         ui.label(format!(
-                            "是否删除当前配置“{}”？",
+                            "Delete the current configuration “{}”?",
                             self.library.profiles()[index].name()
                         ));
                     }
@@ -160,8 +160,8 @@ impl ConfigurationPanel {
                 let [confirm, cancel] = action_row(
                     ui,
                     [
-                        PanelButton::new("确定").enabled(persistence_enabled),
-                        PanelButton::new("取消"),
+                        PanelButton::new("Confirm").enabled(persistence_enabled),
+                        PanelButton::new("Cancel"),
                     ],
                 );
                 if confirm.clicked() {
@@ -198,13 +198,13 @@ impl ConfigurationPanel {
                     && self.selected.is_some()
                     && self.editor.is_none()
                     && load.is_none(),
-                PanelButton::new("保存配置"),
+                PanelButton::new("Save configuration"),
             )
-            .on_hover_text("用当前全部参数覆盖所选命名配置并写入本地；顶部保存或 Ctrl+S 只记录工作状态，不覆盖命名快照。")
+            .on_hover_text("Overwrite the selected named configuration with all current parameters and write it locally; Save at the top or Ctrl+S only records the working state and does not overwrite named snapshots.")
             .on_disabled_hover_text(if persistence_enabled {
-                "默认配置只读；请先新建或选择一个命名配置"
+                "The default configuration is read-only; create or select a named configuration first"
             } else {
-                "本地保存已禁用"
+                "Local saving is disabled"
             })
             .clicked()
         {
@@ -310,9 +310,9 @@ mod tests {
         }
 
         fn create(&mut self, name: &str) {
-            self.click("新配置");
+            self.click("New configuration");
             self.frame(vec![egui::Event::Text(name.into())]);
-            self.click("确定");
+            self.click("Confirm");
         }
     }
 
@@ -323,9 +323,9 @@ mod tests {
         h.current.optics.depth = 17.0;
         h.current.draft.seed = 123;
         h.frame(vec![]);
-        h.click("新配置");
+        h.click("New configuration");
         h.frame(vec![egui::Event::Text("放弃的配置".into())]);
-        h.click("取消");
+        h.click("Cancel");
         assert!(h.panel.library.profiles().is_empty());
 
         h.create("沙滩方案");
@@ -333,13 +333,13 @@ mod tests {
         assert!(!h.panel.save_now);
         h.current.speed = 0.5;
         h.frame(vec![]);
-        h.click("保存配置");
+        h.click("Save configuration");
         assert!(std::mem::take(&mut h.panel.save_now));
         let saved = h.current.clone();
         assert_eq!(h.panel.library.get(Some(0)).unwrap(), &saved);
 
         h.click_with("沙滩方案", egui::PointerButton::Secondary);
-        h.click("重命名");
+        h.click("Rename");
         h.frame(vec![
             egui::Event::Key {
                 key: egui::Key::A,
@@ -354,7 +354,7 @@ mod tests {
             },
             egui::Event::Text("浅水方案".into()),
         ]);
-        h.click("确定");
+        h.click("Confirm");
         assert_eq!(h.panel.library.profiles()[0].name(), "浅水方案");
         assert!(!h.panel.save_now);
 
@@ -366,12 +366,12 @@ mod tests {
         assert_eq!(h.panel.library.active(), Some(0));
         h.create("保留的配置");
         h.click("浅水方案");
-        h.click("删除配置");
-        h.click("取消");
+        h.click("Delete configuration");
+        h.click("Cancel");
         assert_eq!(h.panel.library.profiles().len(), 2);
         assert_eq!(h.current, saved);
-        h.click("删除配置");
-        h.click("确定");
+        h.click("Delete configuration");
+        h.click("Confirm");
         assert_eq!(h.panel.library.profiles().len(), 1);
         assert_eq!(h.panel.library.profiles()[0].name(), "保留的配置");
         assert_eq!(h.current, default);
@@ -397,7 +397,7 @@ mod tests {
         // A failed load leaves the persisted selection on the previous configuration.
         h.panel.previous_selection = Some(h.panel.selected);
         h.panel.selected = None;
-        h.panel.finish_load(Err("测试载入失败".into()));
+        h.panel.finish_load(Err("Test load failed".into()));
         assert_eq!(h.panel.selected, Some(index));
         assert_eq!(h.panel.library.active(), Some(index));
     }
@@ -407,17 +407,17 @@ mod tests {
         let mut h = Harness::new(false);
         h.current.optics.depth = 17.0;
         h.frame(vec![]);
-        h.click("新配置");
+        h.click("New configuration");
         assert!(h.panel.editor.is_none());
-        h.click("删除配置");
-        h.click("保存配置");
+        h.click("Delete configuration");
+        h.click("Save configuration");
         assert!(h.panel.library.profiles().is_empty());
         assert!(!h.panel.save_now);
         h.click(DEFAULT_CONFIGURATION_NAME);
         assert_eq!(h.loaded.take().unwrap(), SavedSettings::default());
         h.enabled = true;
-        h.click("删除配置");
-        h.click("保存配置");
+        h.click("Delete configuration");
+        h.click("Save configuration");
         assert!(h.panel.editor.is_none());
         assert!(!h.panel.save_now);
     }

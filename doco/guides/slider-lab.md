@@ -1,37 +1,37 @@
-# 矩形滑块外观实验
+# Rectangular Slider Appearance Lab
 
-独立窗口用于调整滑块外观，**交互预览与海洋参数面板共用控件**。实验参数只影响本窗口，不运行 FFT／SWE，不读取或保存个人配置、命名配置及 Dock 布局；关闭后丢弃实验参数。
+This independent window adjusts slider appearance; **the interactive preview shares its control with Ocean's parameter panels**. Lab settings affect only this window. It does not run FFT/SWE or read or save personal settings, named configurations, or Dock layouts; lab settings are discarded on exit.
 
 ```powershell
 cargo run --bin slider-lab
-# 有限帧窗口冒烟
+# Limited-frame window smoke test
 cargo run --bin slider-lab -- --frames 120
 ```
 
-## 使用
+## Usage
 
-- 左侧调整背景和竖条颜色／圆角、控件高度、数值框宽度、两端留白、常态竖条宽度／内缩、悬浮竖条宽度／外延及过渡时长；全部实时生效。
-- 右侧上方是真实交互示例，包含不同数值范围及两个端点；下方是固定常态／悬浮示意和原生 egui 滑块对照。原生对照与第一个自定义滑块共用数值。
-- 点击背景定位、拖动调整；右侧数值框可拖动或点击输入。Tab 聚焦后方向键微调，输入和编辑沿用 egui 原生 Slider，不另行定义 Home／End 等快捷键。
-- 鼠标移入整条背景即触发悬浮样式，拖动离开轨道后仍保持，释放并移出后恢复常态。移入右侧数值框不会触发轨道悬浮。
-- “恢复默认外观”只重置外观，不改变示例值。Esc（未被编辑控件消费时）或关闭窗口退出。
+- Adjust background and bar colors/radii, control height, value box width, end padding, normal bar width/inset, hover bar width/extension, and transition duration on the left. Changes apply immediately.
+- The upper right contains real interactive examples with different ranges and both endpoints; below are fixed normal/hover illustrations and a native egui slider comparison. The native comparison shares its value with the first custom slider.
+- Click the background to position or drag to adjust; drag or click the value box to enter a value. Once focused with Tab, use arrow keys for fine adjustment. Input and editing use the native egui Slider; no separate Home/End shortcuts are defined.
+- Hovering anywhere over the background triggers the hover style, which persists when dragging off the track and returns to normal after release and exit. Hovering over the value box does not trigger track hover.
+- “Reset appearance” resets appearance only, not example values. Esc (when not consumed by an editing control) or closing the window exits.
 
-## 当前基准
+## Current Baseline
 
-背景为统一颜色的无描边圆角矩形，不按数值填充，高度与右侧数值框一致。常态细竖条上下内缩，悬浮／拖动时上下伸出、增粗、变亮，均不绘制描边。
+The background is a uniform, unoutlined rounded rectangle, not filled according to value, with the same height as the value box. The normal thin bar is inset vertically; on hover/drag it extends vertically, widens, and brightens, without an outline.
 
-| 项目 | 基准 |
+| Item | Baseline |
 | --- | --- |
-| 控件高度／数值框宽度 | 实验初值 24／64 pt；正式面板高度沿用主题最小值 22 pt 与原生内边距 |
-| 左右内部留白 | 各 2 pt，按最宽竖条外缘计算 |
-| 背景／竖条圆角 | 2 pt，正式面板取主题控件半径；细竖条不超过半宽 |
-| 背景色 | `#151515` |
-| 常态竖条宽度／上下内缩 | 2／每侧 4.1 pt |
-| 常态竖条颜色 | `#8D8D8D` |
-| 悬浮竖条宽度／上下外延 | 4.8／每侧 0.5 pt |
-| 悬浮竖条颜色 | `#DFDFDF` |
-| 过渡时长 | 57 ms |
+| Control height / value box width | Lab initial values 24 / 64 pt; production panels retain the theme minimum height of 22 pt and native padding |
+| Left/right internal padding | 2 pt each, measured from the widest bar's outer edge |
+| Background / bar radius | 2 pt; production panels use the theme widget radius; thin bars are limited to half their width |
+| Background color | `#151515` |
+| Normal bar width / vertical inset | 2 / 4.1 pt per side |
+| Normal bar color | `#8D8D8D` |
+| Hover bar width / vertical extension | 4.8 / 0.5 pt per side |
+| Hover bar color | `#DFDFDF` |
+| Transition duration | 57 ms |
 
-颜色根据调参截图的实色块采样。pt 为逻辑像素，随系统 DPI 缩放。两端仍分别对应完整范围的最小值／最大值；行间预留外延空间，动画不改变数值映射或行布局。实验窗口通过滑块 `.height()` 显式调节高度，`.appearance()` 仅覆盖外观，不改变正式面板和主题；正式面板的滑块内数值框与独立数值框共用主题高度及 padding。实验圆角独立可调（0 为直角），颜色允许自由选择，不对悬浮颜色做自动亮度校正。
+Colors were sampled from solid areas of tuning screenshots. Points are logical pixels and scale with system DPI. The ends still represent the full minimum and maximum; rows reserve space for the extension, and animation does not change value mapping or row layout. The lab explicitly adjusts height through `.height()`; `.appearance()` overrides only appearance, not production panels or the theme. Production sliders' value boxes and standalone value boxes share theme height and padding. Lab corner radii are independently adjustable (0 is square); colors are freely selectable without automatic hover brightness correction.
 
-窗口位于 `src/ocean/labs/slider_lab/`，共用控件为 crates.io `yummy_egui` 的 `ParameterSlider`，窗口使用该库默认主题，本仓库不保存主题配置。后者保留原生 Slider 的输入、数值编辑、整数／步长、clamping 及非负对数刻度；只覆盖轨道与竖条绘制，不改模拟参数或配置格式。
+The window lives in `src/ocean/labs/slider_lab/`; the shared control is `ParameterSlider` from crates.io `yummy_egui`. The window uses the library's default theme, and this repository does not save theme configuration. The control retains native Slider input, numeric editing, integer/step, clamping, and nonnegative logarithmic scales; it overrides only track and bar drawing, not simulation parameters or configuration format.

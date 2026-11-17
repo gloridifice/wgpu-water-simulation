@@ -18,7 +18,7 @@ fn equal_states_give_the_physical_flux() {
 #[test]
 fn a_depth_jump_has_the_expected_diffusive_flux() {
     let flux = rusanov_flux(Cell { h: 1.0, hu: 0.0 }, Cell { h: 2.0, hu: 0.0 }, 9.81);
-    // 两边都静止时，高水位向低水位的数值质量通量应朝左。
+    // With both sides at rest, numerical mass flux should point left from high to low water.
     close(flux.mass, -0.5 * 19.62_f64.sqrt(), 1e-14);
     close(flux.momentum, 12.2625, 1e-14);
 }
@@ -118,7 +118,7 @@ fn energy(sim: &Simulation) -> f64 {
 
 #[test]
 fn wet_steep_mound_stays_finite_positive_and_bounded() {
-    // 比默认高斯凸起更陡；长期运行跨越多次反射，不引入干网格。
+    // Steeper than the default Gaussian bump; a long run spans multiple reflections without dry cells.
     for count in [41, 201] {
         let config = Config {
             cells: count,
@@ -167,7 +167,7 @@ fn small_waves_propagate_at_the_expected_speed() {
         .max_by(|(_, a), (_, b)| a.h.total_cmp(&b.h))
         .unwrap();
     let peak_x = (peak_index as f64 + 0.5) * sim.dx();
-    // 小振幅极限下，右行波峰约在 L/2 + sqrt(g h0) * t。
+    // In the small-amplitude limit, the right-moving crest is near L/2 + sqrt(g h0) * t.
     let expected = 0.5 * config.length + (config.gravity * config.rest_depth).sqrt() * sim.time();
     close(peak_x, expected, 0.15);
 }

@@ -1,76 +1,76 @@
-# GPU Ocean 工作区界面
+# GPU Ocean workspace UI
 
-## 范围与所有权
+## Scope and ownership
 
-交互窗口使用六分类导航和 egui_dock；不改变 FFT → SWE 耦合、物理／着色算法、参数默认值或命名配置语义。业务界面及海洋布局注册／版本迁移位于 `src/ocean/ui/`；通用布局状态与隐藏恢复在 `crates/common/src/ui/layout.rs`，通用布局存储策略在 `crates/common/src/settings/sidecar.rs`，`ui/workspace/` 保留海洋适配；通用控件、参数列表、选择列表及默认主题由 crates.io `yummy_egui` 提供，本仓库不保留组件库源码或主题配置。字体安装保留在主程序。
+The interactive window uses six-workspace navigation and egui_dock without changing FFT → SWE coupling, physics or shading algorithms, parameter defaults, or named-configuration semantics. Business UI and ocean layout registration/version migration live in `src/ocean/ui/`; generic layout state and hidden-position restoration are in `crates/common/src/ui/layout.rs`, generic layout storage policy in `crates/common/src/settings/sidecar.rs`, and ocean adapters remain in `ui/workspace/`. crates.io `yummy_egui` supplies common controls, parameter and selection lists, and the default theme; this repository retains neither the component library source nor theme configuration. Font installation remains in the main application.
 
-- 顶部工具栏横跨窗口；左侧固定“场景、浅水、远海、动画 SDF 波纹、着色、配置”六个入口，不参与停靠。导航采用 `yummy_egui::IconSegmentedControl::vertical()`，六段连续排列、仅整体上下两端圆角，无独立按钮间距或配置分隔线；每段 38×38 pt，保留 24 pt SVG 图标、中文 hover 和选中态。
-- 每个分类有独立布局；默认参数靠左、渲染视图靠右。场景／浅水／远海／着色的参数侧分上下区，动画 SDF 波纹和配置保持单区；新版默认不覆盖已保存布局。
-- 六个工作区共享模拟、相机、波谱／模型草稿和配置库。切换、拖动、关闭、添加面板只改 UI；不重置时间、历史或草稿。渲染尺寸改变可正常重建渲染目标。
-- 每套布局保留一个不可关闭、不可重复的渲染视图；参数面板可关闭并从顶部“面板”菜单恢复，也可添加其他分类的可用面板。不增加浮动系统窗口。“重置当前布局”不改变其余五套布局。
-- 渲染视图内左键拖动旋转，中键拖动在水平面平移相机与观察目标，滚轮缩放；中键不改变相机高度、朝向或观察距离，画面跟随拖动。相机拖动必须在视图内开始，开始后移出仍保持捕获，松开停止；参数面板内开始的拖动即使进入视图也不操纵相机。中键平移不受暂停或播放倍率影响，沿用相机位置的手动保存规则。
+- A toolbar spans the top; six fixed entries on the left, Scene, Shallow Water, Offshore, Animated SDF Ripples, Shading, and Configurations, do not participate in docking. Navigation uses `yummy_egui::IconSegmentedControl::vertical()`: six contiguous segments rounded only at the overall top and bottom, with no separate button spacing or configuration separator. Each segment is 38×38 pt with a 24 pt SVG icon, English hover text, and selected state.
+- Each workspace has an independent layout; by default parameters are on the left and Render View on the right. The parameter side of Scene, Shallow Water, Offshore, and Shading is split vertically; Animated SDF Ripples and Configurations use one area. New defaults do not overwrite saved layouts.
+- All six workspaces share simulation, camera, spectrum/model drafts, and configuration library. Switching, dragging, closing, or adding panels changes only UI; it does not reset time, history, or drafts. Render target rebuilding on viewport resize remains supported.
+- Each layout retains exactly one non-closable Render View. Parameter panels can be closed and restored from the top Panels menu, or available panels from other workspaces can be added. No floating system windows are added. Reset Current Layout does not change the other five layouts.
+- Left-drag in Render View rotates, middle-drag pans the camera and target horizontally, and the wheel zooms. Middle-drag does not change camera height, orientation, or viewing distance; the image follows the drag. Camera drags must start inside the view, remain captured outside it, and stop on release. Drags starting in a parameter panel do not manipulate the camera even if they enter the view. Middle-button panning is independent of pause or playback speed and follows manual camera-position saving rules.
 
-## 参数归属与显示
+## Parameter ownership and display
 
-| 工作区 | 默认职责 |
+| Workspace | Default responsibilities |
 | --- | --- |
-| 场景 | 场景与地形、湖泊地形与共享 FFT 强度、模型与计算区域、碰撞体 |
-| 浅水 | SWE 与 FFT 输入、近岸泡沫模拟、湿沙历史、浪花模拟 |
-| 远海 | 波谱与波形、远海泡沫模拟 |
-| 动画 SDF 波纹 | 深度／SDF 传播场与波纹种子、发射、波形、岸边反射、诊断及状态 |
-| 着色 | 水体与天空、焦散、折射、SSR、泡沫外观、表面与沙地、浪花外观 |
-| 配置 | 命名配置管理 |
+| Scene | Scene and terrain, Lake Terrain and shared FFT strength, model and simulation domain, colliders |
+| Shallow Water | SWE and FFT input, Nearshore Foam simulation, wet sand history, Spray simulation |
+| Offshore | Spectrum and waveform, offshore foam simulation |
+| Animated SDF Ripples | Depth/SDF propagation field and ripple seed, emission, waveform, shore reflection, diagnostics and status |
+| Shading | Water and Sky, caustics, refraction, SSR, foam appearance, surface and sand, Spray appearance |
+| Configurations | Named configuration management |
 
-湖泊模式的“湖泊地形”面板归场景分类，保留地形草稿和共享 FFT 强度；原 `lake` 面板标识不变，已有 sidecar 仍恢复其位置。“动画 SDF 波纹”使用独立侧边图标、工作区和同名面板；参数默认靠左、渲染视图靠右，非湖泊场景显示适用状态提示，点击分类本身不切换场景。两面板的地形与传播场／波纹种子分别显式应用，不夹带另一面板的未应用草稿。新工作区在旧 sidecar 缺少 `animated_sdf` 时使用默认布局，不改写其他分类；面板仍可从场景按钮或顶部面板菜单打开。模型、SWE、远海泡沫、近岸泡沫及沙地面板在湖泊模式临时隐藏并保留布局；共享“波谱与波形”面板保持可用，草稿显式应用，湖泊下显示 FFT 叠加强度而非海洋挤浪／拓扑控件；场景与光学纠错入口始终可达。深度｜SDF 只修改草稿，显式应用后重建并重置波，方向／波形／反射编辑只影响新波及后代；参数控件标明归一化坐标而非水平米制。岸边波反射不归 SSR。湖泊焦散面板显示不支持原因；物理折射选择保留但不运行，可显式选择快速折射。详见 [湖泊动画规范](animated-lake.md)。
+In lake mode, Lake Terrain belongs to Scene and retains the terrain draft and shared FFT strength. The original `lake` panel ID is unchanged and existing sidecars restore its position. Animated SDF Ripples has its own sidebar icon, workspace, and identically named panel, with parameters left and Render View right by default. Non-lake scenes show an applicability message; clicking the workspace does not switch scenes. Terrain and propagation-field/ripple-seed drafts are applied independently, without including the other panel's unapplied draft. Old sidecars missing `animated_sdf` use the new workspace's default layout without changing other workspaces; panels can still be opened from scene buttons or the top panel menu. Model, SWE, offshore foam, nearshore foam, and sand panels are temporarily hidden in lake mode with positions retained. The shared Spectrum and Waveform panel remains available with explicit draft application and shows FFT overlay strength rather than ocean choppiness/topology controls. Scene and optics correction remain accessible. Depth/SDF edits only the draft; explicit application rebuilds and resets waves. Direction, waveform, and reflection edits affect only new waves and descendants; controls specify normalized coordinates, not horizontal meters. Shore-wave reflection is not SSR. The lake caustics panel explains why it is unsupported; physical refraction remains selectable but does not run, and fast refraction can be selected explicitly. See [Lake animation specification](animated-lake.md).
 
-性能为通用面板；播放、时间倍率、时间／相机操作常驻顶部。FFT → SWE 增益、过滤和混合归浅水，不归远海；模拟密度与外观响应独立。
+Performance is a general panel; playback, speed, time, and camera controls remain in the toolbar. FFT → SWE gain, filtering, and blending belong to Shallow Water, not Offshore; simulation density and appearance response are independent.
 
-- 按实际场景和模式隐藏无作用的参数、空分组及纯依赖面板，不清空保存值；保留启用、纠错和错误入口。关闭显示不隐藏仍运行的生成／输送参数。
-- 单／双浓度、脊线、过滤、拖曳、材质及天空散射只显示当前有效依赖项；共用颜色、强度、恢复正常视图等入口不被错误门控。
-- 双浓度泡沫外观提供“新鲜泡沫 N 外观”组，使用共享 `segmented_control` 三选一切换“常数｜噪波｜纹理”，默认噪波。常数只显示常数阈值；噪波显示主／细空间频率及细层占比；纹理显示独立的 N 纹理来源（Shorewaves／Crest Foam／Crest Foam2 NSH，不含原灰度）、尺寸（米）、微法线强度、粗糙度和覆盖参考值。一个逻辑组共用两列网格；切换保留隐藏参数，实时生效、手动保存、不重置模拟或坐标历史。N 纹理不覆盖单浓度材质设置，不改变 N/R 浓度、几何高度、密度调试或 R 自身的外观；N 覆盖变化仍会改变合成时对 R 的遮挡。共用不透明度密度尺度和坐标设置仍明确放在共用组，不作为 N 独立参数。
-- 双浓度 N／R 各自的外观组提供独立的“浓度决定透明度”开关，默认关闭；开启后才显示本类的浓度范围（0～10，默认 1）与浓度幂值 p（0.1～5，默认 1）。附加因子为 `pow(clamp(自身浓度 / 浓度范围, 0, 1), p)`，同时缩放本类预乘颜色与不透明度，再按原顺序合成；范围为 0 时正浓度因子为 1、零浓度为 0。N 的三种渲染方式均可用；R 不借用 N 参数。关闭保留参数并恢复原外观；实时生效、手动保存、不重置模拟，不改变孔隙图案输入、几何高度或密度调试。
-- 临时隐藏与用户主动关闭分开处理：前者在规范布局中保留位置，恢复时不撤销其他布局编辑；不可用面板不出现在添加菜单中。
-- 逻辑组共用两列网格，名称／控件占扣除间距后的 42%／58%；长名称可换行，控件不撑宽列。名称与控件按整行垂直居中对齐，换行名称和较高控件不例外；绘制与交互区域位置一致。标题统一使用 `yummy_egui::h3`：默认 14 pt、高对比色、不加粗，上下 margin 为 8／4 pt；解释放名称 hover。
-- 浮点参数统一使用 `yummy_egui::ParameterSlider`，包括模型变换／计算域、碰撞体、光学系数与 RGB 精确值，以及顶部 0～3 的时间倍率。范围沿用参数合法边界；比例、正尺寸和光学系数等跨度大的参数使用对数刻度，有符号坐标和角度使用线性刻度；保留右侧精确输入。只在编辑时约束数值，不因显示面板改写已载入值；模型仍须显式应用，不改变重置和保存语义。
-- 参数滑块采用与数值框等高的统一圆角背景和实心细竖条，不显示进度填充。滑块内数值框与独立数值框沿用相同的主题最小交互高度（当前 22 pt）及按钮内边距，不单独强制高度；背景跟随实际高度。圆角沿用主题控件半径；悬浮／拖动时竖条变高、变粗、变亮，不显示描边。左右预留内部间距，完整最小／最大值仍可取到；右侧数值编辑、整数／步长、对数刻度及原有越界值编辑语义保留。不改模拟或参数默认值。
-- 焦散和折射各有独立 Tab，使用共享库 `segmented_control`。焦散提供“关闭｜物理”，折射提供“关闭｜快速｜物理”，保留模式参数且切换不重置模拟。各 Tab 的诊断入口共享同一渲染视图；折射率也共享。
-- 独立 SSR Tab提供开关、强度、反射距离、追踪步数、命中容差倍率与边缘淡出像素范围，使用 yummy_egui 的共享两列参数列表，并提供“正常／仅 SSR”调试切换。设置实时生效，关闭反射总开关时暂停 SSR 并保留参数。
-- “水体与天空”面板内的“**HDR 与 Bloom**”组保留默认关闭的 HDR 后处理总开关，开启时显示独立的“AgX 色调映射”、曝光补偿及“启用 Bloom”；Bloom 开启时才显示强度、高光阈值、阈值柔和度与泛光半径，关闭时保留参数。整个逻辑组共用两列网格。AgX／Bloom 子开关缺省均开启，仍受总开关约束；可单独使用曝光、映射或泛光。设置实时生效、不重置模拟，保存于光学配置；调试视图旁路全部后处理，GUI 不参与。不新增 Dock Tab 或改变已存布局。
-- 布局 sidecar v3 兼容读取 v1／v2；读取 v1 时向着色布局补入焦散／折射／SSR Tab，读取 v2 时仅补入 SSR Tab，保持其他分割和激活项。保存为 v3 后，用户关闭的新 Tab 不会在重启时被补回。只读／无保存模式仍不改写个人布局。
-- 两到三项固定枚举用水平互斥按钮；更多或动态选项默认用下拉／列表，启停用复选框。保留单位、范围、生效／重置语义及波谱／模型显式应用。
+- Hide ineffective parameters, empty groups, and purely dependent panels according to scene and mode without clearing saved values; retain enable, correction, and error access. Disabling display does not hide generation or transport parameters that still run.
+- Single/dual concentration, ridge, filtering, drag, material, and sky scattering show only currently effective dependencies. Shared color, strength, and restore-normal-view controls must not be incorrectly gated.
+- Dual-concentration foam appearance has a fresh foam N appearance group with the shared `segmented_control` offering constant, noise, and texture; noise is the default. Constant shows only its threshold; noise shows main/fine spatial frequencies and fine-layer share; texture shows independent N texture source (Shorewaves/Crest Foam/Crest Foam2 NSH, excluding original grayscale), size in meters, micro-normal strength, roughness, and coverage reference. One logical group shares a two-column grid. Switching preserves hidden parameters, applies live, uses manual saving, and does not reset simulation or coordinate history. N textures do not overwrite single-concentration material settings or change N/R concentrations, geometry height, density diagnostics, or R's own appearance; changes in N coverage can still change its occlusion of R in composition. Shared opacity density scale and coordinate settings remain clearly in the shared group, not as N-specific parameters.
+- The dual-concentration N and R appearance groups each provide an independent concentration-controls-opacity switch, disabled by default. Only when enabled are that component's concentration range (0–10, default 1) and concentration exponent p (0.1–5, default 1) shown. The additional factor `pow(clamp(own concentration / concentration range, 0, 1), p)` scales both premultiplied color and opacity before composition in the original order. At zero range, the factor is 1 for positive concentration and 0 for zero concentration. All three N rendering modes support it; R does not use N's parameters. Disabling retains parameters and restores the original appearance. Changes apply live, require manual saving, and do not reset simulation or change pore-pattern input, geometry height, or density diagnostics.
+- Temporary hiding is separate from user closure: the former retains position in the canonical layout and restoration does not undo other layout edits. Unavailable panels do not appear in the add menu.
+- Logical groups share a two-column grid with name/control widths of 42%/58% after spacing. Long names may wrap; controls do not widen columns. Names and controls align vertically at the center of the whole row, including wrapped names and taller controls; drawing and interaction regions coincide. Headings use `yummy_egui::h3`: 14 pt by default, high contrast, not bold, with 8/4 pt top/bottom margin. Explanations appear on name hover.
+- Floating-point parameters use `yummy_egui::ParameterSlider`, including model transforms/domain, colliders, optical coefficients and precise RGB values, and the toolbar's 0–3 playback multiplier. Ranges follow legal parameter bounds. Wide-span parameters such as ratios, positive sizes, and optical coefficients use logarithmic scales; signed coordinates and angles use linear scales. Precise entry remains on the right. Values are constrained only during editing, not rewritten merely by displaying a panel; models still require explicit application, with reset and save semantics unchanged.
+- Parameter sliders share a rounded background as tall as the value field and a solid thin vertical bar, without progress fill. Slider and standalone value fields retain the same theme minimum interaction height (currently 22 pt) and button padding without independently forcing height; backgrounds follow actual height. Corners use the theme control radius; hovering or dragging makes the bar taller, thicker, and brighter, without an outline. Internal spacing remains on both sides while full minimum and maximum remain reachable. Right-side numeric editing, integers/steps, logarithmic scale, and existing out-of-range editing semantics remain. Simulation and defaults are unchanged.
+- Caustics and refraction have separate tabs using the shared `segmented_control`. Caustics offers Off/Physical; refraction offers Off/Fast/Physical. Mode parameters are retained and switching does not reset simulation. Both tabs' diagnostic controls share Render View; refractive index is also shared.
+- An independent SSR tab offers enable, strength, reflection distance, trace steps, hit tolerance multiplier, and edge-fade pixel range using yummy_egui's shared two-column parameter list, plus Normal/SSR-only debugging. Settings apply live; disabling the master reflection switch pauses SSR while retaining its parameters.
+- The HDR and Bloom group in Water and Sky retains the HDR post-processing master switch, disabled by default. When enabled it shows independent AgX tone mapping, exposure compensation, and Enable Bloom controls; Bloom strength, highlight threshold, threshold softness, and bloom radius appear only when Bloom is enabled, with parameters retained when disabled. The entire group shares one two-column grid. AgX/Bloom sub-switches default to on but remain subject to the master switch; exposure, mapping, and bloom can be used independently. Settings apply live without resetting simulation and are saved in optics configuration. Debug views bypass all post-processing, and GUI is excluded. No Dock tab is added and saved layouts are unchanged.
+- Layout sidecar v3 reads v1/v2 compatibly. Reading v1 adds caustics/refraction/SSR tabs to the Shading layout; reading v2 adds only SSR, retaining other splits and active items. Once saved as v3, newly added tabs closed by the user are not restored on restart. Read-only/no-save modes still do not rewrite personal layouts.
+- Fixed enums of two or three options use horizontal mutually exclusive buttons; larger or dynamic selections default to dropdowns/lists, and enable switches use checkboxes. Units, ranges, application/reset semantics, and explicit spectrum/model application remain.
 
-## 组件与主题边界
+## Component and theme boundaries
 
-- `ParameterList` 每组共用一个网格，允许任意 egui 控件作为右列；不持有参数、执行单位换算或触发业务保存。默认 42%／58% 列宽及现有行对齐行为保持不变。
-- 标题由 RichText + Label 实现：h1 默认 20 pt、加粗，上下 margin 12／8 pt；h2 默认 16 pt、加粗，上下 margin 10／6 pt；h3 默认 14 pt、不加粗，上下 margin 8／4 pt。颜色跟随 egui 高对比文字色，横向工具栏中 margin 仍为竖直方向，margin 不属于文字交互区。字号／margin 使用上游库默认主题，本仓库不维护主题覆盖文件。
-- `SelectionList` 只负责容器、条目样式和交互响应，不持有配置或选中状态。点击已选项仍报告点击；调用方负责载入成功提交与失败回滚。无保存模式仍可选择配置，禁止的是新建、删除、覆盖与重命名。
-- Ocean 与两个界面实验使用 `yummy_egui::Theme::default()`；Dock 样式来自同一主题的 `dock_style()`，由 `dock` feature 接入。默认资源随上游包提供，样式按 Context 隔离。
-- 本仓库不存储、读取、监听或保存主题配置；不接入外部目录或字符串主题。显式安装库默认主题与 MiSans，主题不依赖运行目录。
-- 主题不属于模拟会话、命名配置或 Dock 布局；`Theme::apply` 不替换应用字体。滑块外观覆盖不隐式覆盖高度，实验窗口的高度独立设置。
+- `ParameterList` uses one grid per group and accepts arbitrary egui controls in the right column; it does not hold parameters, convert units, or trigger business saves. Default 42%/58% column widths and existing row alignment remain.
+- Headings use RichText + Label: h1 defaults to 20 pt bold with 12/8 pt vertical margins; h2 to 16 pt bold with 10/6 pt; h3 to 14 pt not bold with 8/4 pt. Color follows egui's high-contrast text color. Margins remain vertical in horizontal toolbars and are not part of text interaction regions. Font sizes and margins use the upstream default theme; this repository maintains no theme override file.
+- `SelectionList` handles only container, item styling, and interaction responses, not configuration or selection state. Clicking an already selected item still reports a click; callers commit successful loads and roll back failures. No-save mode still permits selection but prohibits creation, deletion, overwriting, and renaming.
+- Ocean and the two UI labs use `yummy_egui::Theme::default()`; Dock styling comes from its `dock_style()`, enabled by the `dock` feature. Default assets are supplied by the upstream package and styles are isolated by Context.
+- This repository does not store, read, watch, or save theme configuration or use external directories or string themes. It explicitly installs the library default theme and MiSans; the theme does not depend on the working directory.
+- The theme is not part of the simulation session, named configurations, or Dock layout; `Theme::apply` does not replace application fonts. Slider appearance overrides do not implicitly override height; lab windows set their own height.
 
-## 配置手动保存与反馈
+## Manual configuration saving and feedback
 
-- header 常驻“保存”按钮；Ctrl+S 在任意工作区及参数编辑时触发同一保存操作，不触发相机后退。
-- 普通参数编辑、配置切换、新建／重命名／删除的确认、停止编辑、窗口失焦及退出均不写会话文件；未保存的更改退出后丢失。新建／重命名／删除需再手动保存才能持久化。
-- 顶部保存／Ctrl+S 原子写入当前工作状态、配置库及最后选择，但不覆盖所选命名快照。配置面板“保存配置”仍显式覆盖所选命名快照并写盘；默认快照只读。
-- 顶部直接显示未保存状态及“保存成功”／“保存失败”；失败使用错误色，悬浮显示具体错误和目标路径。失败保留内存更改与旧文件，不自动重试，直到再次手动保存成功。
-- `--no-settings` 与只读 `--config` 禁用保存按钮和保存快捷键；不新建或改写会话。配置手动保存不改变布局 sidecar 的独立自动保存规则。
+- The header always shows Save. Ctrl+S triggers the same save operation in any workspace and while editing parameters, without moving the camera backward.
+- Ordinary parameter editing, configuration switching, confirming creation/rename/deletion, stopping editing, window focus loss, and exit do not write the session file; unsaved changes are lost on exit. Creation, rename, and deletion require a subsequent manual save to persist.
+- Toolbar Save/Ctrl+S atomically writes the current working state, configuration library, and last selection, but does not overwrite the selected named snapshot. Save Configuration in the Configurations panel still explicitly overwrites the selected named snapshot and writes to disk; the default snapshot is read-only.
+- The toolbar directly displays unsaved state and save success/failure. Failures use an error color and show the specific error and target path on hover. Failure retains in-memory changes and the old file; no automatic retry occurs before another successful manual save.
+- `--no-settings` and read-only `--config` disable save buttons and shortcut; they do not create or rewrite sessions. Manual configuration saving does not change the separate layout-sidecar automatic saving rules.
 
-## 布局持久化与失败行为
+## Layout persistence and failure behavior
 
-- 布局独立保存到可写会话路径旁的 `<会话文件 stem>.workspaces.json`，包含版本、当前分类及六套规范布局；不放入 `SavedSettings` 或命名配置。
-- 普通启动恢复各套布局及最后分类。没有布局文件时使用默认场景工作区；旧模拟配置仍可加载。
-- `--no-settings`、只读 `--config`、快照与验证不隐式读写布局。加载、覆盖命名配置不改布局。
-- 布局文件读取上限 1 MiB，树深度不超过 16、叶子不超过 64；分割比例必须有限且严格在 0～1 内。未知面板跳过、重复项去重、缺少渲染视图时补回。
-- 损坏或未知版本只影响布局，不丢弃模拟配置。个别无效工作区回退默认；错误可见，原文件保留，直到用户明确重置或确认修复才允许替换。
-- 布局稳定后节流保存，退出时刷新；使用同目录临时文件替换，保存失败保留内存状态并报告。不每帧写盘或等待 GPU。
+- Layouts are saved separately beside the writable session path as `<session file stem>.workspaces.json`, containing version, current workspace, and six canonical layouts; they are not stored in `SavedSettings` or named configurations.
+- Normal startup restores each layout and the last workspace. Without a layout file, the default Scene workspace is used; old simulation configurations still load.
+- `--no-settings`, read-only `--config`, snapshots, and verification do not implicitly read or write layouts. Loading or overwriting named configurations does not change layouts.
+- Layout files are limited to 1 MiB, tree depth 16, and 64 leaves; split ratios must be finite and strictly between 0 and 1. Unknown panels are skipped, duplicates removed, and missing Render Views restored.
+- Corruption or an unknown version affects only layout, not simulation configuration. Individual invalid workspaces fall back to defaults; errors are visible and the original file is retained until the user explicitly resets or confirms repair.
+- Saving is throttled after the layout stabilizes and flushed on exit, using a temporary file in the same directory for replacement. Failure retains in-memory state and reports the error. It neither writes every frame nor waits for the GPU.
 
-## 工具栏性能
+## Toolbar performance
 
-操作左对齐，FPS、CPU 帧处理时间与 GPU 主帧时间靠右，窄窗口另起一行。实际开启 SWE 才显示 SWE 时间；暂停显示其空闲状态。FPS／CPU 与性能面板共用采样口径。
+Actions align left; FPS, CPU frame processing time, and GPU main-frame time align right and wrap to another line in narrow windows. SWE time appears only when SWE is actually enabled and shows idle when paused. FPS/CPU use the same sampling basis as the performance panel.
 
-GPU 采用真实 timestamp 异步采样，一次最多一个在途读回；不支持、等待、失败必须明确显示，不能用 CPU 时间或零值伪装。主帧覆盖主命令缓冲中的模拟、场景和 GUI，不含呈现等待及额外回调缓冲。SWE 是其中子区间，不与主帧相加；具体求解计时边界见 [Ocean 指南](../guides/ocean.md#swe-一阶二阶与-gpu-计时)。
+GPU metrics use asynchronous real timestamp sampling with at most one readback in flight. Unsupported, pending, and failure states must be explicit; CPU time or zero must not masquerade as GPU time. The main frame covers simulation, scene, and GUI in the main command buffer, excluding presentation wait and additional callback buffers. SWE is a subinterval and is not added to the main frame; see the [Ocean guide](../guides/ocean.md#first-and-second-order-swe-and-gpu-timing) for solver timing boundaries.
 
-## 验收边界
+## Acceptance boundaries
 
-行为验收关注六分类切换、独立布局重启恢复、共享草稿与相机不变、条件隐藏恢复、窄栏对齐、损坏与只读配置隔离，以及 GPU 指标状态。真实 Dock 交互须由实际窗口检查；离屏 `--snapshot` 不包含 UI，不能代替界面验收。图标浏览器预览也不等同于 egui 验收。
+Behavioral acceptance covers six-workspace switching, independent layout restoration on restart, unchanged shared drafts and camera, conditional hiding and restoration, narrow-column alignment, corrupt/read-only configuration isolation, and GPU metric states. Real Dock interaction requires an actual window; offscreen `--snapshot` excludes the UI and cannot substitute for UI acceptance. An icon-browser preview is not equivalent to egui acceptance either.

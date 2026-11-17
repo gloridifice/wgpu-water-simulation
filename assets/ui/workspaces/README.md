@@ -1,18 +1,18 @@
-# 工作区图标
+# Workspace icons
 
-GPU Ocean 六分类导航的 SVG 资源，已接入 egui 的侧边图标分段选择器。
+SVG assets for GPU Ocean's six-category navigation, integrated into the egui sidebar icon segmented control.
 
-| 文件 | 分类 | 图形 |
+| File | Workspace | Graphic |
 | --- | --- | --- |
-| `scene.svg` | 场景 | 等轴空间方块 |
-| `shallow.svg` | 浅水 | 水面与近岸坡底截面 |
-| `offshore.svg` | 远海 | 单个卷浪 |
-| `animated-sdf.svg` | 动画 SDF 波纹 | 带传播方向的弧形等值线 |
-| `shading.svg` | 着色 | 半明半暗球体与光源 |
-| `configurations.svg` | 配置 | 带调节项的参数卡片 |
+| `scene.svg` | Scene | Isometric cube |
+| `shallow.svg` | Shallow Water | Water surface and nearshore slope cross-section |
+| `offshore.svg` | Offshore | Single curling wave |
+| `animated-sdf.svg` | Animated SDF Ripples | Curved contours with propagation direction |
+| `shading.svg` | Shading | Half-lit sphere and light source |
+| `configurations.svg` | Configurations | Parameter card with controls |
 
-全部使用 `viewBox="0 0 24 24"`、1.75 单位圆端描边及 `currentColor`，默认显示 24 px，透明背景。SVG 含可访问名称，无脚本、字体、外部资源或嵌入位图。
+All use `viewBox="0 0 24 24"`, 1.75-unit round-capped strokes and `currentColor`, displayed at 24 px by default on a transparent background. The SVGs have accessible names and no scripts, fonts, external resources, or embedded bitmaps.
 
-来源：原五个图标使用图像生成工具制作风格参考，再以简单矢量路径重新构造；新增动画 SDF 波纹图标直接以矢量路径绘制。均不是复制外部图标库，也未嵌入生成位图。参考图和浏览器预览仅保存在系统 Temp，不作为运行时依赖。
+Source: the original five icons used image-generation tools for style references and were reconstructed with simple vector paths; the Animated SDF Ripples icon was drawn directly as vector paths. None was copied from an external icon library or contains generated bitmaps. Reference images and browser previews are kept only in the system Temp directory and are not runtime dependencies.
 
-网页内联 SVG 可继承文本颜色；独立解码时需明确指定 `currentColor` 的颜色。egui 使用图像加载器缓存按缩放生成的显示资源，选中态与颜色跟随主题。浏览器预览不能替代实际 egui 窗口检查。
+Inline SVGs on web pages inherit text color; standalone decoding requires explicitly setting `currentColor`. egui's image loader caches display resources generated at the relevant scale; selection and color follow the theme. Browser previews do not replace checking the actual egui window.

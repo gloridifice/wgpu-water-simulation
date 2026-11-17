@@ -7,7 +7,7 @@ pub enum CellType {
     Solid,
 }
 
-/// MAC 网格：u 在竖直面，v 在水平面，压力和单元类型在格心。
+/// MAC grid: u on vertical faces, v on horizontal faces, pressure and cell type at cell centers.
 pub struct Grid {
     pub nx: usize,
     pub ny: usize,

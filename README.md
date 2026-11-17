@@ -4,12 +4,6 @@
 
 </div>
 
-<div align="center">
-
-English | [简体中文](readme/zh-CN.md) | [日本語](readme/ja-JP.md) | [Français](readme/fr-FR.md)
-
-</div>
-
 A Rust water simulation project combining a wgpu ocean renderer, FFT waves, and local shallow-water simulation, with separate CPU terminal demos.
 
 <p align="center">
@@ -76,8 +70,6 @@ See the [PIC guide](doco/guides/pic.md) and [1D shallow-water guide](doco/guides
 No project-level license is currently provided. Bundled assets have separate terms; see the [model notices](assets/models/NOTICE.md), [foam sources](assets/foam/SOURCES.md), [spray sources](assets/spray/README.md), and the upstream [yummy_egui license](https://github.com/gloridifice/yummy-egui/blob/main/LICENSE).
 
 ## Development
-
-Detailed guides are primarily in Chinese.
 
 - [Ocean usage and GPU verification](doco/guides/ocean.md)
 - [yummy_egui integration and default theme](doco/guides/yummy-egui.md)

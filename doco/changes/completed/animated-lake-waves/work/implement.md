@@ -1,113 +1,113 @@
-# 实现设计：程序化湖泊动画
+# Implementation Design: Procedural Lake Animation
 
-本文为执行依据；实现与验证状态见 [tasks.md](tasks.md)，未勾选验收不视为完成。需求与验收见 [proposal](../proposal.md)。
+This document is the implementation basis; see [tasks.md](tasks.md) for implementation and verification status. Unchecked acceptance items are not complete. See the [proposal](../proposal.md) for requirements and acceptance.
 
 ## Baseline and goals
 
-创建时 `git status --short` 为空，无需要合并的已有工作区修改。当前事实来自 [当前架构](../../../../architecture.md)、[UI 合约](../../../../specs/workspace-ui.md) 以及以下源码（源码链接相对本文件，新增文件则明确标记计划路径）：
+At creation `git status --short` was empty, with no existing workspace changes to merge. Current facts come from the [architecture](../../../../architecture.md), [UI contract](../../../../specs/workspace-ui.md) and the following source (links relative to this file; new files explicitly marked as planned paths):
 
-- [scene.rs](../../../../../src/ocean/ui/panels/scene.rs) 仅提供沙滩／岩岸预设，局部模拟入口基于 `OpticsConfig::swe_enabled()`。
-- [optics.rs](../../../../../src/ocean/parameters/optics.rs) 聚合模型、SWE、光学参数并以 serde 默认值兼容缺字段；当前没有 LakeConfig。
-- [surface.wgsl](../../../../../src/ocean/render/shaders/surface.wgsl) 的 `surface()` 叠加 FFT 与 Shore 高度，水平位移来自 FFT；光学也复用波面采样。
-- [terrain.rs](../../../../../src/ocean/scene/terrain.rs) 的 HeightField 为模型烘焙／重采样提供单层高度；不是现成的湖泊 SDF 系统。
-- [workspace/mod.rs](../../../../../src/ocean/ui/workspace/mod.rs) 管海洋面板注册与依赖；`Panel::Reflection` 是 SSR，不是波运动反射。
-- [session.rs](../../../../../src/ocean/settings/session.rs) 的 SavedSettings 已保存 optics、相机、倍速和暂停，命名配置复用参数快照。
-- 窗口调度位于 [viewer.rs](../../../../../src/ocean/app/viewer.rs)，离屏推进位于 [snapshot.rs](../../../../../src/ocean/app/snapshot.rs)；两条路径均需接入，不能仅使交互窗口有效。
+- [scene.rs](../../../../../src/ocean/ui/panels/scene.rs) provides only beach/rocky shore presets; the local simulation entry depends on `OpticsConfig::swe_enabled()`.
+- [optics.rs](../../../../../src/ocean/parameters/optics.rs) aggregates model, SWE and optical parameters and uses serde defaults for missing fields; it has no LakeConfig yet.
+- `surface()` in [surface.wgsl](../../../../../src/ocean/render/shaders/surface.wgsl) combines FFT and Shore heights, with horizontal displacement from FFT; optics also reuse surface sampling.
+- HeightField in [terrain.rs](../../../../../src/ocean/scene/terrain.rs) supplies single-layer heights for model baking/resampling, not an existing lake SDF system.
+- [workspace/mod.rs](../../../../../src/ocean/ui/workspace/mod.rs) manages ocean panel registration and dependencies; `Panel::Reflection` is SSR, not wave-motion reflection.
+- SavedSettings in [session.rs](../../../../../src/ocean/settings/session.rs) already stores optics, camera, time scale and pause; named configurations reuse parameter snapshots.
+- Window scheduling lives in [viewer.rs](../../../../../src/ocean/app/viewer.rs), and offscreen advancement in [snapshot.rs](../../../../../src/ocean/app/snapshot.rs); both paths must be integrated, not just the interactive window.
 
-不修改 common 的业务边界，不引入 CPU 包对 GPU 的依赖。
+Do not change common's business boundaries or introduce GPU dependencies into the CPU package.
 
 ## Overall approach
 
-拟新增（均为计划 API，不是已存在接口）：
+Proposed additions (all planned APIs, not existing interfaces):
 
-- [parameters/lake.rs](../../../../../src/ocean/parameters/lake.rs)：LakeConfig、PropagationMode::{Depth,Sdf} 与校验。由 OpticsConfig 的默认禁用 lake 字段聚合；湖泊启用时优先选择湖泊路径，保留但不使用原 beach/model/shore 值。原场景预设明确关闭 lake。
-- [scene/lake.rs](../../../../../src/ocean/scene/lake.rs)：LakeScene，拥有确定性的岸线、床面、岩石网格、静水深度、干湿遮罩和 SDF CPU 数据；生成一次后上传。不得借用 SWE 缓冲作为动画依赖。
-- [simulation/animated_lake/](../../../../../src/ocean/simulation/animated_lake/)：AnimatedLake，拥有 f64 模拟时钟、固定种子 PRNG、事件池与 GPU 发布资源；WGSL 放所属 shaders 目录。
-- [ui/panels/lake.rs](../../../../../src/ocean/ui/panels/lake.rs)：草稿与应用控制、发波／清空请求；不在绘制面板时直接推进模拟。
-- Renderer 持有湖泊绘制资源及 AnimatedLake，窗口／快照通过相同的业务更新入口调用。渲染器的海洋路径保持现有布局与行为，湖泊单独管线避免给所有 SWE shader 填无关字段。
+- [parameters/lake.rs](../../../../../src/ocean/parameters/lake.rs): LakeConfig, PropagationMode::{Depth,Sdf} and validation. Aggregate via a default-disabled lake field in OpticsConfig; when lake is enabled, prefer the lake path and retain but do not use the original beach/model/shore values. Original scene presets explicitly disable lake.
+- [scene/lake.rs](../../../../../src/ocean/scene/lake.rs): LakeScene, owning deterministic shoreline, bed, rock mesh, still-water depth, wet/dry mask and CPU SDF data; generate once and upload. Do not borrow SWE buffers as animation dependencies.
+- [simulation/animated_lake/](../../../../../src/ocean/simulation/animated_lake/): AnimatedLake, owning an f64 simulation clock, fixed-seed PRNG, event pool and GPU publication resources; place WGSL in its shaders directory.
+- [ui/panels/lake.rs](../../../../../src/ocean/ui/panels/lake.rs): draft/application controls and emit/clear requests; do not advance simulation directly while drawing the panel.
+- Renderer owns lake drawing resources and AnimatedLake; window and snapshot invoke the same business update entry point. Keep the ocean renderer path's layout and behavior; a separate lake pipeline avoids unrelated fields in every SWE shader.
 
-拟议接口职责：`LakeScene::build(&LakeConfig) -> Result<Self, Error>`；`AnimatedLake::advance(dt: f64, commands: &[LakeCommand])`；`AnimatedLake::encode(...)` 发布波场；`reset(seed)` 重置时钟与序列。具体 Rust 参数和资源封装允许实现时按既有 Renderer 借用结构调整，职责不能合并进 common。
+Proposed responsibilities: `LakeScene::build(&LakeConfig) -> Result<Self, Error>`; `AnimatedLake::advance(dt: f64, commands: &[LakeCommand])`; `AnimatedLake::encode(...)` publishes the wave field; `reset(seed)` resets the clock and sequence. Rust arguments and resource wrappers may be adjusted to the existing Renderer borrowing structure during implementation, but responsibilities must not move into common.
 
 ## Algorithms and rules
 
-### 程序化场景
+### Procedural scene
 
-1. 在湖心极坐标上生成周期连续的低频噪波半径 R(角度)。正基础半径乘有界扰动，限制振幅以保证 R 始终为正。该形式沿每条湖心射线只有一个外岸点，避免自交。
-2. 按归一化径向距离生成平滑碗状床面；叠加有界低幅噪波，保持外岸附近可预测且不产生意外外部水坑。水面静态高程为零。
-3. 用独立、由场景种子派生的随机序列摆放若干变形椭球／低多边形岩石。限制岩石数量与尺寸、保持默认场景存在足够开放水域；采样失败有固定尝试次数，报告实际放置数量，不无限重试。
-4. 岩石顶高与湖底合成单层床面。岩石渲染几何、水线占地及高度采样来自同一生成数据，允许网格分辨率量级误差，不允许使用不相关的圆盘碰撞代理。首版无悬挑。
-5. 静水深度 d=max(0,-bed_height)。露水岩石和湖外均为干域；完全水下岩石只改变 d。
-6. 在统一世界 XZ 网格计算到干湿边界的二维欧氏有符号距离 D，水内正、干域负，含外岸和露水岩石孔洞。使用确定性的距离变换并按网格间距转换为米，边界误差控制在网格尺度；不是曼哈顿距离，也不把径向距离误称为 SDF。
+1. Generate a periodically continuous low-frequency noise radius R(angle) in polar coordinates about the lake center. Multiply a positive base radius by bounded perturbation and limit amplitude to keep R positive. Each ray from the center has only one outer shore point, avoiding self-intersections.
+2. Generate a smooth bowl-shaped bed from normalized radial distance; add bounded low-amplitude noise, keeping the outer shore predictable and avoiding unintended external puddles. Static water elevation is zero.
+3. Place deformed ellipsoid/low-poly rocks using an independent random sequence derived from the scene seed. Bound rock count and size and retain sufficient open water in the default scene; use a fixed number of attempts on sampling failure, report actual placement count and never retry indefinitely.
+4. Combine rock top heights and lake bed into a single-layer bed. Rock render geometry, waterline footprints and height samples come from the same generated data, allowing grid-resolution-scale error but no unrelated disk collision proxies. No overhangs initially.
+5. Still-water depth is d=max(0,-bed_height). Exposed rocks and the exterior are dry; fully submerged rocks change only d.
+6. Compute two-dimensional Euclidean signed distance D to the wet/dry boundary on a shared world XZ grid, positive in water and negative in dry areas, including outer shores and exposed-rock holes. Use a deterministic distance transform and convert grid spacing to meters; boundary error is grid-scale. This is not Manhattan distance, and radial distance must not be called SDF.
 
-默认网格 256²，首版可选 128²/256²/512²，限制岩石至 32 个。场景应用时重建，正常帧不重算距离场。构建失败保留旧场景、参数和活动波，显示错误；成功后一次性交换资源并重置波。尺寸、种子、分辨率、岩石布局都走显式应用。
+Default grid 256², initial choices 128²/256²/512², at most 32 rocks. Rebuild on scene application; do not recompute the distance field during normal frames. On build failure retain the old scene, parameters and active waves and display an error; on success swap resources atomically and reset waves. Size, seed, resolution and rock layout all require explicit application.
 
-## 两种传播坐标
+## Two propagation coordinates
 
-统一采用“离边界的正向余量”，入射时减小、反射时增大：
+Use a common “positive distance remaining from the boundary”, decreasing for incidence and increasing for reflection:
 
-- 深度模式：C=d/d_max，d_max 为场景有效最大水深。
-- SDF 模式：C=max(D,0)/D_max，D_max 为场景水域最大正距离。
+- Depth mode: C=d/d_max, where d_max is the scene's effective maximum depth.
+- SDF mode: C=max(D,0)/D_max, where D_max is the maximum positive distance in the scene's water.
 
-C 无量纲，0 为对应边界。UI 速度明确标为“传播进度／秒”，波宽标为“传播坐标宽度”，不冒充水平米/秒或恒定世界宽度；两种模式提供独立的起始坐标、速度、宽度和反射坐标设置，切换不复用单位含义不同的原始水深值。显示可选的水深／岸距读数便于理解。
+C is dimensionless and 0 is the respective boundary. Label UI speed “propagation progress/second” and wave width “propagation coordinate width”; do not claim horizontal meters/second or constant world-space width. Give both modes independent starting coordinate, speed, width and reflection coordinate settings; switching must not reuse raw depth values with different unit meanings. Optional depth/shore-distance readouts aid understanding.
 
-校验 0 < reflection < start < 1，速度、宽度为正且有限，最大值有界；默认避开 C=0 与 C=1。深度平台与 SDF 中轴会改变等值线拓扑，不能保证单一弧段。采样到低梯度区域时平滑减弱显示，使用有界梯度法线，不除以趋零梯度以声称获得恒定世界速度。调试视图保留原 C，不能只展示平滑后的理想化结果。
+Validate 0 < reflection < start < 1, positive finite speed and width, and bounded maxima; defaults avoid C=0 and C=1. Depth plateaus and the SDF medial axis change contour topology, so a single arc is not guaranteed. Smoothly attenuate display in low-gradient regions and use bounded gradient normals; do not divide by a near-zero gradient to claim constant world speed. Debug views retain the original C rather than showing only a smoothed idealization.
 
-SDF 的局部等值线会包围岩石，在固定湖心扇区内可能出现多个波段，并在中轴合并。接受该程序化外观；不增加隐含的测地距离、逐点射线追踪或连通波前追踪。深度模式同样可以包含岩石，但仅在床面水深中表达其作用。这是两种外观选择，不是“支持／不支持岩石”的二分。
+Local SDF contours can surround rocks, producing multiple wave bands within a fixed lake-center sector and merging at the medial axis. Accept this procedural appearance; do not add implicit geodesic distance, per-point ray tracing or connected-wavefront tracking. Depth mode can also include rocks, but represents them only in bed depth. These are two appearance choices, not a binary distinction of rock support.
 
-## 波形与方向
+## Waveform and direction
 
-每道波固定湖心参考、世界方向角及角半宽。使用 atan2 或点积构造周期连续的最短角差，不使用直接角度相减；湖心附近以小半径平滑淡出避免方向未定义。
+Each wave fixes its lake-center reference, world direction angle and angular half-width. Use atan2 or a dot product to construct the periodic shortest angular difference, not direct angle subtraction; smoothly fade near the lake center to avoid undefined direction.
 
-角包络在中央为 1、两端平滑到 0，同时调制振幅及传播坐标宽度；宽度的端部比例严格大于零。沿 C-front 的局部紧支撑波峰／低谷曲线生成高度，边缘函数及一阶导数连续。反射继承扇区，不取反角方向。本设计按用户最新要求采用角范围描述，不再承诺弧段的固定世界横向长度。
+The angular envelope is 1 at the center and smoothly reaches 0 at the ends, modulating both amplitude and propagation-coordinate width; the tip width ratio is strictly positive. A locally compactly supported crest/trough curve along C-front produces height, with continuous edge function and first derivative. Reflection inherits the sector without reversing its angular direction. Following the user's latest request, this design uses angular range and no longer promises a fixed world-space lateral arc length.
 
-遮罩始终抑制干地及露水岩石内部；边界水深带平滑限制振幅，避免波谷穿底。仅做显示裁剪，不解释为水量守恒。水下岩石上方仍可显示水面。
+The mask always suppresses dry land and exposed-rock interiors; smoothly limit amplitude in the boundary depth band to prevent troughs penetrating the bed. This is display clipping, not volume conservation. Water remains visible above submerged rocks.
 
-## 时间、事件与反射
+## Time, events and reflection
 
-- CPU f64 时钟由顶部暂停／时间倍率驱动的模拟 dt 推进，窗口与快照一致；GPU 使用相对局部原点的 f32 时间，定期同时重基准当前时间与全部出生时间。
-- 每次发射冻结当时的方向、角宽、波形、速度、反射比例和衰减参数。编辑这些参数只影响后续入射波，已有波及其反射后代不改轨迹。
-- 入射 front=start-speed*age。精确抵岸时间为 birth+(start-reflection)/speed；事件遍历处理 `(previous_time,current_time]`，记录已触发标记。
-- 在该精确时刻生成反射记录，front=reflection+speed*reflected_age；入射在阈值处保持波峰并于过渡时间内淡出，反射从同一位置淡入，乘小于 1 的振幅比例并指数衰减。以连续权重避免高度跳变，不要求导数完全匹配。
-- 反射记录不允许再反射，远离边界至有效坐标上限或寿命结束时平滑消失。自然过期、清空、场景替换、池满丢弃均不是抵岸事件。
-- 固定总容量 128 条，反射与入射按事件时间、稳定 ID 排序处理。父波发射时预留一个反射名额（仅开启反射时），确保抵岸不因容量竞争丢失后代。没有足够名额则拒绝新入射并增加可见丢弃计数，不覆盖可见波。
-- 暂停时可手动发射并显示出生状态，但不自动推进／反复发射。清空同时清除待反射事件和占位，重置自动发射下一时刻，不在下一帧补发旧积压。
-- 常规 dt 全部处理，事件开销受最小发射间隔与池容量约束；自动生成采用整数序号推导出生时刻和随机值，避免 dt 分割改变序列。不得因单帧事件预算静默改变正常播放结果。
+- The CPU f64 clock advances with simulation dt driven by toolbar pause/time scale, consistently for window and snapshots; GPU f32 time is relative to a local origin, periodically rebasing current time and all birth times together.
+- Each emission freezes direction, angular width, waveform, speed, reflection ratio and decay parameters. Edits affect only subsequent incident waves, not existing waves or their reflected descendants.
+- Incident front=start-speed*age. Exact shore arrival is birth+(start-reflection)/speed; event traversal handles `(previous_time,current_time]` and records a triggered flag.
+- Generate the reflected record at that exact time, front=reflection+speed*reflected_age; hold the incident crest at the threshold and fade it out over the transition while fading in reflection at the same position, multiplied by an amplitude ratio below 1 and exponentially decayed. Continuous weights avoid a height jump; perfectly matched derivatives are not required.
+- Reflected records cannot reflect again and disappear smoothly upon reaching the effective upper coordinate bound or end of life. Natural expiry, clearing, scene replacement and full-pool rejection are not shore-arrival events.
+- Fixed total capacity is 128; process incident and reflected waves by event time and stable ID. Reserve one reflection slot when emitting a parent (only if reflection is enabled), ensuring its descendant cannot be lost to capacity contention on arrival. Reject a new incident wave and increment a visible dropped count if insufficient slots remain; never overwrite visible waves.
+- Paused users may manually emit and display the birth state, but automatic advancement/emission does not repeat. Clearing removes pending reflections and reservations and resets the next automatic emission time; do not make up old backlog next frame.
+- Process all normal dt; minimum emission interval and pool capacity bound event cost. Automatic births derive time and random values from integer sequence numbers so dt partitioning does not change the sequence. A per-frame event budget must not silently change normal playback results.
 
 ## APIs and data model
 
-单条发布记录使用五个 vec4<f32>，共 80 字节：
+Each published record uses five vec4<f32>, 80 bytes total:
 
-1. direction.xy、birth、lifetime。
-2. start_coordinate、signed_speed、coordinate_width、amplitude_m。
-3. center.xz、angular_half_width_rad、tip_width_ratio。
-4. fade_in_s、fade_out_s、decay_half_life_s、phase。
-5. front_min、front_max、hold_at_end_s、保留零。
+1. direction.xy, birth, lifetime.
+2. start_coordinate, signed_speed, coordinate_width, amplitude_m.
+3. center.xz, angular_half_width_rad, tip_width_ratio.
+4. fade_in_s, fade_out_s, decay_half_life_s, phase.
+5. front_min, front_max, hold_at_end_s, reserved zero.
 
-CPU 额外保存稳定 ID、反射预约／触发状态和冻结参数，不将 CPU 管理结构直接上传。Rust 使用匹配的五个 [f32;4]；长度、绑定、对齐和 WGSL 通过实际 GPU 检查。相位若首版单波形不需要则固定零，不添加无用途 UI。
+The CPU additionally stores stable ID, reflection reservation/trigger state and frozen parameters; do not upload the CPU management structure directly. Rust uses matching five [f32;4] values; check length, bindings, alignment and WGSL on a real GPU. If the initial single waveform does not need phase, fix it to zero rather than adding a useless UI control.
 
-初版 compute 在湖泊网格上合成高度，再从最终被遮罩后的高度计算一致坡度，输出供绘制与光学共享的高度／梯度纹理；不在每个屏幕像素遍历 128 波。独立两阶段读写避免邻域访问同一正在写入的纹理。公开湿度／床面／传播坐标纹理用于裁剪和诊断。
+Initial compute composes height on the lake grid, then computes consistent slopes from the final masked height and outputs height/gradient textures shared by rendering and optics; do not traverse 128 waves per screen pixel. Separate two-stage reads and writes avoid neighborhood access to a texture being written. Publish wetness/bed/propagation-coordinate textures for clipping and diagnostics.
 
-湖泊绘制只覆盖本地网格，关闭无限海洋平铺。复用水体颜色、天空、基础菲涅耳、HDR；SSR 与快速屏幕折射使用实际湖泊法线及程序化不透明场景。首版湖泊禁用现有依赖海洋床面追踪的物理焦散与物理折射（显示原因、保留参数），不静默读取 FFT/SWE，且不把“物理”自动改成“快速”。后续支持不在本变更范围。程序化床面与岩石进入不透明场景深度及颜色。
+Lake drawing covers only the local grid, disabling infinite ocean tiling. Reuse water color, sky, basic Fresnel and HDR; SSR and fast screen refraction use actual lake normals and the procedural opaque scene. Initially disable existing physical caustics and physical refraction that depend on ocean bed tracing in lake mode (show the reason and retain parameters); do not silently read FFT/SWE or automatically change “physical” to “fast”. Later support is outside this change. Procedural bed and rocks enter opaque scene depth and color.
 
-计时若新增分类只采用异步 GPU timestamp；不支持时显示不可用。记录分辨率、活动波数及 GPU 耗时，默认场景和满池均测量，不预先承诺帧率。
+Any new timing category uses asynchronous GPU timestamps only; show unavailable when unsupported. Record resolution, active wave count and GPU time, measuring both default scene and full pool without promising FPS in advance.
 
-## UI、配置与兼容
+## UI, configuration and compatibility
 
-新增“湖泊场景”按钮及可关闭的“湖泊动画”Dock 面板，归属场景分类，默认布局加入该 Tab。已有布局不强制覆盖，通过顶部面板菜单可添加；湖泊场景入口提供打开该面板的操作。继续五分类及临时隐藏恢复规范。
+Add a “Lake Scene” button and closable “Lake Animation” Dock panel under Scene, with that tab in the default layout. Do not forcibly overwrite existing layouts; the top panel menu can add it, and the lake scene entry provides an action to open it. Continue the five-category and temporary-hide restoration contract.
 
-面板分组：地形／岩石草稿；深度｜SDF 选择及应用重置；发射方向角／角半宽／间隔／角度随机偏差；波形；反射；发射一道／清空；场调试和活动／丢弃计数。每组共享两列网格，使用 yummy_egui，提示单位、范围和生效时机。场景生成种子和波随机种子分离。
+Panel groups: terrain/rock drafts; depth | SDF selection and application/reset; emission direction angle/angular half-width/interval/random angular deviation; waveform; reflection; emit one/clear; field diagnostics and active/dropped counts. Each group shares a two-column grid using yummy_egui, with tooltips for units, ranges and application timing. Separate scene generation seed from wave random seed.
 
-模式切换仅改草稿，应用成功才重置历史；失败回滚资源与当前模式。已存在模式的草稿值保留。暂停应用后仍暂停。切工作区不重置任何波。参数、种子、所选模式存入 OpticsConfig::lake，缺字段默认 disabled；活动波、时间、计数不保存。加载湖泊配置重建并从初始状态开始；UI 必须明确不是播放进度存档。命名配置、Ctrl+S、no-settings 与只读规则不变。
+Mode switching changes only a draft; reset history only after successful application, and roll back resources and current mode on failure. Retain draft values for existing modes. Applying while paused remains paused. Switching workspaces resets no waves. Store parameters, seeds and selected mode in OpticsConfig::lake, defaulting missing fields to disabled; do not save active waves, time or counts. Loading lake configuration rebuilds from initial state; UI must make clear it is not a playback-progress save. Named configuration, Ctrl+S, no-settings and read-only rules remain unchanged.
 
 ## Verification and documentation impact
 
-验证关注独立行为预期，不以字段 getter 或源码字符串断言充数。实现测试前读取 test-audit skill。
+Verify independent behavioral expectations rather than padding tests with field getters or source-string assertions. Read the test-audit skill before implementing tests.
 
-- CPU：场景确定性；规则圆岸／单岩石解析距离参考与离散容差；深度中的水下岩石；角度跨界；事件时间切分一致、一次反射、容量预留、暂停／清空；旧配置与新配置往返及非法值拒绝。
-- 真实 GPU：场符号与遮罩、波前交接前后、方向不跳对岸、两模式有区别、法线与高度差分一致且有限；零波静水；高波数边界；原海洋渲染回归。窗口／快照同一时间种子得到一致状态。
-- 真实窗口：入口、深度／SDF 应用、岩石、暂停发波、只读保存、Dock 恢复和不支持的光学状态。固定相机／时间／种子作视觉对比。
-- 文档交付时更新 architecture.md、guides/ocean.md、specs/workspace-ui.md，并按实际交付补充湖泊行为规范。创建阶段不修改这些当前事实。
+- CPU: deterministic scene; analytic distance reference and discrete tolerance for a regular circular shore/single rock; submerged rocks in depth; angle wraparound; event time partition consistency, single reflection, capacity reservation, pause/clear; old/new configuration round trips and invalid-value rejection.
+- Real GPU: field sign and mask, before/after wavefront handoff, direction not jumping to the opposite shore, differences between modes, finite normals consistent with height differences; still water with zero waves; high-wave-count boundaries; original ocean rendering regression. Window/snapshot yield consistent state at the same time and seed.
+- Real window: entry, depth/SDF application, rocks, paused emission, read-only saving, Dock restoration and unsupported optical status. Fix camera/time/seed for visual comparison.
+- At delivery update architecture.md, guides/ocean.md and specs/workspace-ui.md, and add a lake behavior specification reflecting actual delivery. Do not modify these current facts during creation.
 
 ## Fixed decisions and discretion
 
-无阻塞开放问题。实现者可调整网格／网格网面细节、噪波实现和满足约束的默认美术数值；不得擅自改变 SDF 定义、角度包络、反射次数、时间与保存语义或扩大为物理传播。若中轴处视觉不可接受，应报告边界并另行讨论，不把新传播算法悄悄纳入本变更。
+No blocking open questions. Implementers may adjust grid/mesh details, noise implementation and default artistic values within constraints; they must not unilaterally change the SDF definition, angular envelope, reflection count, time or save semantics, or expand this into physical propagation. If appearance at the medial axis is unacceptable, report the boundary and discuss separately rather than quietly adding a new propagation algorithm to this change.

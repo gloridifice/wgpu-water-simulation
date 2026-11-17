@@ -10,11 +10,11 @@ fn sliders(ui: &mut egui::Ui, rows: &[(&str, &str)], values: &mut [(&mut f32, f3
 }
 
 pub fn show(ui: &mut egui::Ui, config: &mut SprayConfig, error: Option<&str>) {
-    group(ui, "GPU 浪花粒子", |ui| {
+    group(ui, "GPU Spray Particles", |ui| {
         parameter(
             ui,
-            "启用浪花",
-            "近岸 SWE 纹理飞沫，默认关闭。实时切换；关闭清空粒子，不改变水体和泡沫。",
+            "Enable Spray",
+            "Textured nearshore SWE spray, disabled by default. Changes apply immediately; disabling clears particles without changing water or foam.",
             |ui| ui.checkbox(&mut config.enabled, ""),
         );
     });
@@ -24,25 +24,25 @@ pub fn show(ui: &mut egui::Ui, config: &mut SprayConfig, error: Option<&str>) {
     if !config.enabled {
         return;
     }
-    group(ui, "发射条件", |ui| {
+    group(ui, "Emission", |ui| {
         sliders(
             ui,
             &[
                 (
-                    "发射密度",
-                    "0～2000 粒子/平方米/模拟秒，默认 150；再乘坡度、上升和水深门控。实时影响新生粒子，0 停止生成。",
+                    "Emission Density",
+                    "0–2000 particles per square meter per simulation second, default 150; multiplied by slope, rise and depth gates. Affects new particles immediately; 0 stops emission.",
                 ),
                 (
-                    "坡度阈值",
-                    "水面高差/水平距离，0～2，默认 0.03；过渡宽度固定 0.1。不是水深梯度。实时影响发射。",
+                    "Slope Threshold",
+                    "Surface height difference per horizontal distance, 0–2, default 0.03; transition width is fixed at 0.1. Not a depth gradient. Affects emission immediately.",
                 ),
                 (
-                    "上升阈值（米/秒）",
-                    "0～5 米/模拟秒，默认 0.02；过渡宽度 0.2 米/秒。仅上升水面生成，实时生效。",
+                    "Rise Threshold (m/s)",
+                    "0–5 m per simulation second, default 0.02; transition width 0.2 m/s. Emits only on rising surfaces. Applies immediately.",
                 ),
                 (
-                    "最小水深（米）",
-                    "0.001～1 米，默认 0.02；此水深以下不生成，到两倍水深达到完整权重。实时生效。",
+                    "Minimum Depth (m)",
+                    "0.001–1 m, default 0.02; no emission below this depth, reaching full weight at twice this depth. Applies immediately.",
                 ),
             ],
             &mut [
@@ -53,25 +53,25 @@ pub fn show(ui: &mut egui::Ui, config: &mut SprayConfig, error: Option<&str>) {
             ],
         );
     });
-    group(ui, "运动与寿命", |ui| {
+    group(ui, "Motion and Lifetime", |ui| {
         sliders(
             ui,
             &[
                 (
-                    "向上速度（米/秒）",
-                    "0～10 米/模拟秒，默认 2；另有少量确定性扰动。实时影响新生粒子。",
+                    "Upward Speed (m/s)",
+                    "0–10 m per simulation second, default 2, plus a small deterministic perturbation. Affects new particles immediately.",
                 ),
                 (
-                    "前向速度（米/秒）",
-                    "0～10 米/模拟秒，默认 0.5；沿水流叠加，水流静止时不加前向分量。实时影响新生粒子。",
+                    "Forward Speed (m/s)",
+                    "0–10 m per simulation second, default 0.5; added along the flow, with no forward component in still water. Affects new particles immediately.",
                 ),
                 (
-                    "最长寿命（秒）",
-                    "0.05～5 模拟秒，默认 1.2；实际为其 75%～100%，落水可提前消失。只影响新生粒子。",
+                    "Maximum Lifetime (s)",
+                    "0.05–5 simulation seconds, default 1.2; actual lifetime is 75%–100% of this, and particles can disappear earlier on contact with water. Affects new particles only.",
                 ),
                 (
-                    "空气阻力（每秒）",
-                    "0～10/模拟秒，默认 0.5；静止空气中的线性阻力，0 为纯重力弹道。实时影响所有粒子。",
+                    "Air Drag (per second)",
+                    "0–10 per simulation second, default 0.5; linear drag in still air. At 0, particles follow gravity-only trajectories. Affects all particles immediately.",
                 ),
             ],
             &mut [
@@ -82,28 +82,28 @@ pub fn show(ui: &mut egui::Ui, config: &mut SprayConfig, error: Option<&str>) {
             ],
         );
     });
-    group(ui, "浪花诊断", |ui| {
+    group(ui, "Spray Diagnostics", |ui| {
         parameter(
             ui,
-            "发射强度视图",
-            "GPU 发射密度除以满权重密度，绿低红高；不读取泡沫密度。显示最近一次模拟帧的发射区域，暂停时保留。实时生效。",
+            "Emission Intensity View",
+            "GPU emission density divided by full-weight density: green is low, red is high. Does not read foam density. Shows the last simulation frame's emission area, retained while paused. Applies immediately.",
             |ui| ui.checkbox(&mut config.debug, ""),
         );
     });
 }
 
 pub fn appearance(ui: &mut egui::Ui, config: &mut SprayConfig) {
-    group(ui, "尺寸与软交界", |ui| {
+    group(ui, "Size and Soft Intersections", |ui| {
         sliders(
             ui,
             &[
                 (
-                    "尺寸（米）",
-                    "基础四边形直径，0.01～2 米，默认 0.2。最终直径 = 此尺寸 × 随机尺寸倍率，因此最终尺寸可以超过 2 米。实时影响新生粒子，已有粒子不变；保存到配置。",
+                    "Size (m)",
+                    "Base quad diameter, 0.01–2 m, default 0.2. Final diameter = size × random size multiplier, so it may exceed 2 m. Affects new particles immediately, not existing particles; saved in the configuration.",
                 ),
                 (
-                    "软交界距离（米）",
-                    "0.001～1 米，默认 0.15；粒子接近场景深度时淡出。只影响显示，实时生效。",
+                    "Soft Intersection Distance (m)",
+                    "0.001–1 m, default 0.15; particles fade near scene depth. Affects rendering only, immediately.",
                 ),
             ],
             &mut [
@@ -114,14 +114,14 @@ pub fn appearance(ui: &mut egui::Ui, config: &mut SprayConfig) {
         let [minimum, maximum] = &mut config.size_range;
         parameter(
             ui,
-            "随机尺寸倍率下限",
-            "无量纲，0～2，默认 0.65，不能超过上限。新生粒子在上下限之间均匀随机；上下限相同则为固定倍率。实时生效，手动保存，不重置模拟。",
+            "Minimum Random Size Multiplier",
+            "Dimensionless, 0–2, default 0.65; cannot exceed the maximum. New particles sample uniformly between the bounds; equal bounds give a fixed multiplier. Applies immediately, requires manual save, and does not reset the simulation.",
             |ui| ui.add(ParameterSlider::new(&mut *minimum, 0.0..=*maximum).max_decimals(3)),
         );
         parameter(
             ui,
-            "随机尺寸倍率上限",
-            "无量纲，0～2，默认 1.35，不能低于下限。例如尺寸 2 米、倍率 0.5～1，实际为 1～2 米。只影响新生粒子，实时生效，手动保存。",
+            "Maximum Random Size Multiplier",
+            "Dimensionless, 0–2, default 1.35; cannot be below the minimum. For example, size 2 m with multiplier 0.5–1 produces 1–2 m particles. Affects new particles only, applies immediately, and requires manual save.",
             |ui| ui.add(ParameterSlider::new(&mut *maximum, *minimum..=2.0).max_decimals(3)),
         );
     });

@@ -556,7 +556,7 @@
     },
     "profiles": [
       {
-        "name": "常用",
+        "name": "Common",
         "settings": {
           "version": 1,
           "ocean": {
@@ -837,7 +837,7 @@
         }
       },
       {
-        "name": "礁石",
+        "name": "Reef",
         "settings": {
           "version": 1,
           "ocean": {
@@ -1118,7 +1118,7 @@
         }
       },
       {
-        "name": "礁石新",
+        "name": "Reef New",
         "settings": {
           "version": 1,
           "ocean": {
@@ -1399,7 +1399,7 @@
         }
       },
       {
-        "name": "湖泊",
+        "name": "Lake",
         "settings": {
           "version": 1,
           "ocean": {

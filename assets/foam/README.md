@@ -1,64 +1,64 @@
-# 泡沫 NSH 烘焙资源
+# Baked foam NSH assets
 
-本目录提供三套用于对照的同布局泡沫细节数据。模拟密度、动量和双相位位移仍由现有近岸模拟产生；这些图片只用于外观。
+This directory provides three comparable foam-detail datasets with the same layout. Simulation density, momentum, and dual-phase displacement remain products of the existing nearshore simulation; these images only affect appearance.
 
-| 运行时图片 | 原始输入 | 输入解释 |
+| Runtime image | Original input | Input interpretation |
 | --- | --- | --- |
-| `baked/shorewaves_nsh.png` | `../shorewaves/voronoi_lace.png` | 线性灰度，与原项目读取方式一致 |
-| `baked/crest_foam_nsh.png` | `crest/foam.png` | sRGB 解码后的第一通道；原图 512×512 RGBA |
-| `baked/crest_foam2_nsh.png` | `crest/Foam2.png` | sRGB 解码后的第一通道；原图 450×450 灰度 |
+| `baked/shorewaves_nsh.png` | `../shorewaves/voronoi_lace.png` | Linear grayscale, matching the original project's loading convention |
+| `baked/crest_foam_nsh.png` | `crest/foam.png` | First channel after sRGB decoding; original 512×512 RGBA |
+| `baked/crest_foam2_nsh.png` | `crest/Foam2.png` | First channel after sRGB decoding; original 450×450 grayscale |
 
-三张默认输出均为 1024×1024、8 位 RGBA、线性数据，没有 sRGB/gAMA 标签，不对 Alpha 预乘。增大较小原图时采用周期双线性插值，只统一采样尺寸，不增加原始图案细节；缩小时使用面积过滤，避免较细的输入图案因点采样而丢失覆盖。
+All three default outputs are 1024×1024, 8-bit RGBA linear data without sRGB/gAMA tags or premultiplied alpha. Smaller originals are enlarged with periodic bilinear interpolation, standardizing sample size without adding source pattern detail; downsampling uses area filtering so fine patterns do not lose coverage through point sampling.
 
-## 通道约定
+## Channel conventions
 
-- R、G：切线法线 X/Y，分别从 -1～1 编码到 0～1。局部 Y 对应 UV 的 V 增大方向；局部 Z 指向表面外侧。渲染时应根据实际流动坐标变换到世界 XZ 水面基底。
-- B：Soft，输入掩码经可调曲线得到的柔和分布，不是最后的不透明度。
-- A：Height，从同一形态设计的相对起伏，不是测量的几何高度或以米表示的水深。
+- R, G: tangent normal X/Y, each encoded from -1–1 to 0–1. Local Y points in the direction of increasing UV V; local Z points outward from the surface. At render time transform these into the world XZ water-surface basis using actual flow coordinates.
+- B: Soft, a smooth distribution derived from the input mask with an adjustable curve, not final opacity.
+- A: Height, relative relief designed from the same shape, not measured geometric height or water depth in meters.
 
-高度先由 Soft 的幂曲线得到，再作周期边界的可分离盒式模糊。法线按该高度的周期中心差分产生：
+Height is obtained from a power curve of Soft, then blurred with a separable periodic box filter. The normal uses periodic central differences of that height:
 
 ```text
-法线 = normalize(-高度沿 U 的导数 × 相对高度,
-                 -高度沿 V 的导数 × 相对高度,
-                 1)
+normal = normalize(-height derivative along U × relative height,
+                   -height derivative along V × relative height,
+                   1)
 ```
 
-“相对高度”是高度与整块纹理边长的比值，默认 0.004，用于定义微法线坡度，不直接抬高渲染顶点。这个过程是一种美术近似，不能从原始灰度还原真实泡沫厚度。Normal、Soft、Height 来自同一输入，但当前不是新的泡径／网膜形态生成器。
+Relative height is the ratio of height to the full texture side length, default 0.004. It defines micro-normal slope without directly raising render vertices. This is an artistic approximation, not a way to recover real foam thickness from grayscale. Normal, Soft, and Height share an input, but this is not a new bubble-size or lace morphology generator.
 
-## 重复烘焙
+## Rebaking
 
-在仓库根目录执行：
+Run from the repository root:
 
 ```powershell
 cargo run --features ocean --bin foam-bake
 cargo test --features ocean --bin foam-bake
 ```
 
-工具默认更新上述三张运行时资源及各自的 `.recipe.json`。recipe 记录输入路径、原图尺寸、颜色空间、算法版本、FNV-1a 内容指纹和全部参数；第三方原图的 SHA-256 另见 [SOURCES.md](SOURCES.md)。默认不下载任何网络内容，不改模拟或个人设置。
+By default the tool updates the three runtime assets above and their `.recipe.json` files. Each recipe records input path, original dimensions, color space, algorithm version, FNV-1a content fingerprint, and all parameters; third-party original SHA-256 hashes are in [SOURCES.md](SOURCES.md). By default it downloads nothing and does not change the simulation or personal settings.
 
-已烘焙 PNG 是版本化的运行时资源，供程序 `include_bytes!` 内嵌；重新烘焙时直接覆盖它们即可。不要先删除这些资源再构建工具，否则主库编译会因缺少内嵌文件失败。新克隆包含它们，可以直接运行命令。
+The baked PNGs are versioned runtime assets embedded with `include_bytes!`; overwrite them directly when rebaking. Do not delete them before building the tool, or the main library will fail to compile due to missing embedded files. Fresh clones contain them and can run the commands directly.
 
-自定义输入示例：
+Custom input example:
 
 ```powershell
 cargo run --features ocean --bin foam-bake -- --input assets/shorewaves/voronoi_lace.png --output target/foam-test/nsh.png --input-space linear --height-gamma 1.35 --blur-radius 2 --normal-height 0.004
 cargo run --features ocean --bin foam-bake -- --help
 ```
 
-`--input-space` 必须与来源约定一致。工具按明确参数解释首通道，不自动把图片文件的显示亮度当成物理高度，也不使用原图 Alpha 代替掩码。对照 Crest 原效果时，必须保留其 sRGB 解码；如果刻意改成线性解释，应另存为新的制作方案并重新调覆盖曲线。
+`--input-space` must match the source convention. The tool interprets the first channel according to explicit parameters; it does not automatically treat display brightness as physical height or use source alpha as the mask. Retain sRGB decoding when comparing the original Crest effect; if deliberately interpreting it as linear, save a separate recipe and retune the coverage curve.
 
-`--size` 支持 32～4096 的二次幂；`--soft-gamma`、`--height-gamma` 支持 0.1～8；`--blur-radius` 是输出像素中的模糊半径，范围 0～32；`--normal-height` 支持 0～0.1。参数均验证有限数。默认批处理保留输入强度范围，不逐图自动归一化，避免对照时隐式改变泡沫覆盖。
+`--size` supports powers of two from 32–4096; `--soft-gamma` and `--height-gamma` support 0.1–8; `--blur-radius` is the blur radius in output pixels, range 0–32; `--normal-height` supports 0–0.1. All parameters are checked for finiteness. Default batch processing preserves input intensity ranges rather than automatically normalizing each image, avoiding implicit coverage changes in comparisons.
 
-## 预览与比较
+## Preview and comparison
 
-预览默认写入 `target/foam-bake-preview/`，不进入版本管理；可用 `--preview-dir` 更换目录，或 `--no-preview` 禁用。每张 `_preview.png` 是两行四列，顺序为：
+Previews default to `target/foam-bake-preview/` and are not versioned; use `--preview-dir` to change the directory or `--no-preview` to disable them. Each `_preview.png` has two rows of four:
 
-1. 上排：Soft、Height、解码后的法线 RGB、打包 RGB（预览不使用 Alpha 透明）。
-2. 下排：显示密度 0.2／0.5／0.8 时的示意覆盖、Soft 的 3×3 平铺。
+1. Top: Soft, Height, decoded normal RGB, packed RGB (preview does not use alpha transparency).
+2. Bottom: illustrative coverage at display densities 0.2 / 0.5 / 0.8, followed by a 3×3 Soft tile.
 
-预览覆盖使用一个明确的平滑阈值曲线，只用于比较输入形态，不声称与全部运行时光照完全相同。模拟中的泡沫密度不会被这条曲线修改。周期重采样、模糊和求导不会夹住图像边缘；输入自身若有明显内容接缝，仍需重新制作形态，工具不承诺自动消除所有接缝。
+Preview coverage uses an explicit smooth threshold curve for comparing input shapes only; it does not claim to match all runtime lighting. It does not modify simulated foam density. Periodic resampling, blur, and differentiation do not clamp image edges; obvious seams in the input itself still require reworking the shape. The tool does not promise to remove all seams automatically.
 
-运行时生成 mip 时，应把 RG 解码成三维法线再平均、归一化和重新编码；B/A 单独作为线性标量过滤。不要把整张 RGB 作为普通法线，也不要把 A 覆盖为 255。
+When generating runtime mips, decode RG to a 3D normal, average, normalize, and re-encode; filter B/A separately as linear scalars. Do not treat the full RGB as an ordinary normal or overwrite A with 255.
 
-来源和许可见 [SOURCES.md](SOURCES.md)；Crest 派生 PNG 继续附带 `crest/LICENSE.txt`，Shorewaves 派生 PNG 继续附带 `../shorewaves/LICENSE.txt`。
+See [SOURCES.md](SOURCES.md) for sources and licenses; Crest-derived PNGs continue to include `crest/LICENSE.txt`, and Shorewaves-derived PNGs continue to include `../shorewaves/LICENSE.txt`.

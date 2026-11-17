@@ -1,7 +1,7 @@
-//! 一维、平底、全湿水槽：有限体积法 + Rusanov 通量 + 显式 Euler 时间推进。
-//! `Cell` 保存一个网格内的平均守恒量，而不是一个随水移动的粒子。
+//! One-dimensional, flat-bottomed, fully wet tank: finite volumes, Rusanov flux and explicit Euler integration.
+//! A `Cell` stores cell-averaged conserved quantities, not a particle moving with the water.
 
-/// Q = (h, hu)。密度取常数，hu 是单位密度、单位宽度的动量。
+/// Q = (h, hu). Density is constant; hu is momentum per unit density and width.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cell {
     pub h: f64,
@@ -9,17 +9,17 @@ pub struct Cell {
 }
 
 impl Cell {
-    /// 仅适用于 h > 0 的全湿状态。
+    /// Only valid for fully wet states with h > 0.
     pub fn velocity(self) -> f64 {
         self.hu / self.h
     }
 
-    /// 两个特征速度是 u ± sqrt(g h)，最大绝对值为 |u| + sqrt(g h)。
+    /// The characteristic speeds are u ± sqrt(g h); the maximum absolute speed is |u| + sqrt(g h).
     pub fn wave_speed(self, gravity: f64) -> f64 {
         self.velocity().abs() + (gravity * self.h).sqrt()
     }
 
-    /// F(Q) = (hu, hu² / h + g h² / 2)。这里 hu² 指 (hu)²。
+    /// F(Q) = (hu, hu² / h + g h² / 2). Here hu² means (hu)².
     pub fn physical_flux(self, gravity: f64) -> Flux {
         Flux {
             mass: self.hu,
@@ -27,7 +27,7 @@ impl Cell {
         }
     }
 
-    /// 墙外的虚拟状态：水深不变，法向动量反向。
+    /// Ghost state outside the wall: unchanged depth, reversed normal momentum.
     pub fn reflected(self) -> Self {
         Self {
             h: self.h,
@@ -36,7 +36,7 @@ impl Cell {
     }
 }
 
-/// 正通量表示沿 x 正方向通过界面；它不是新的网格状态。
+/// Positive flux crosses the interface in the positive x direction; it is not a new cell state.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Flux {
     pub mass: f64,
@@ -44,7 +44,7 @@ pub struct Flux {
 }
 
 /// F_hat = (F_L + F_R)/2 - alpha (Q_R - Q_L)/2。
-/// 前提：两侧 h > 0，状态有限，gravity > 0；Simulation 会检查这些条件。
+/// Requires h > 0 on both sides, finite states and gravity > 0; Simulation checks these conditions.
 pub fn rusanov_flux(left: Cell, right: Cell, gravity: f64) -> Flux {
     let fl = left.physical_flux(gravity);
     let fr = right.physical_flux(gravity);
@@ -63,7 +63,7 @@ pub struct Config {
     pub cfl: f64,
     pub rest_depth: f64,
     pub bump_height: f64,
-    /// 高斯凸起的标准差，单位：米。
+    /// Standard deviation of the Gaussian bump, in meters.
     pub bump_width: f64,
 }
 
@@ -116,7 +116,7 @@ pub struct Simulation {
     dx: f64,
     current: Vec<Cell>,
     next: Vec<Cell>,
-    /// N 个网格对应 N+1 个界面；相邻网格共享同一个通量。
+    /// N cells have N+1 interfaces; adjacent cells share the same flux.
     interfaces: Vec<Flux>,
     time: f64,
     steps: usize,
@@ -130,7 +130,7 @@ impl Simulation {
         let middle = (config.cells - 1) as f64 * 0.5;
         let cells = (0..config.cells)
             .map(|i| {
-                // 用网格中心采样近似初始单元平均值；此写法保持左右镜像。
+                // Approximate initial cell averages by center samples, preserving mirror symmetry.
                 let distance = (i as f64 - middle) * dx / config.bump_width;
                 Cell {
                     h: config.rest_depth + config.bump_height * (-0.5 * distance * distance).exp(),
@@ -141,7 +141,7 @@ impl Simulation {
         Self::from_cells(config, cells)
     }
 
-    /// 自定义全湿初态，便于检查静水、对称性以及较陡的水位变化。
+    /// Custom fully wet initial state for checking still water, symmetry and steeper profiles.
     pub fn from_cells(config: Config, cells: Vec<Cell>) -> Result<Self, String> {
         config.validate()?;
         if cells.len() != config.cells {
@@ -181,7 +181,7 @@ impl Simulation {
         self.last_dt
     }
 
-    /// 单位宽度水体体积（密度为 1 时也是质量），不包含虚拟网格。
+    /// Water volume per unit width (also mass at density 1), excluding ghost cells.
     pub fn mass(&self) -> f64 {
         self.current.iter().map(|q| q.h).sum::<f64>() * self.dx
     }
@@ -193,14 +193,14 @@ impl Simulation {
             .fold(0.0, f64::max)
     }
 
-    /// 每一步重新估计 dt <= CFL * dx / max(|u| + sqrt(g h))。
+    /// Re-estimate dt <= CFL * dx / max(|u| + sqrt(g h)) on every step.
     pub fn stable_dt(&self) -> f64 {
         self.config.cfl * self.dx / self.max_wave_speed()
     }
 
-    /// 在 x=center 附近重分布水位，产生向两侧传播的局部波包。
-    /// 窄/宽高斯的离散和相抵消，因此不添加水量；不直接改变 hu 或时间。
-    /// 返回实际使用的振幅。水浅时整体缩小扰动，保留至少 75% 原水深。
+    /// Redistribute water near x=center to create a wave packet traveling in both directions.
+    /// The discrete sums of the narrow and wide Gaussians cancel, adding no water; hu and time are unchanged.
+    /// Returns the actual amplitude. In shallow water the disturbance is scaled to retain at least 75% of the original depth.
     pub fn add_disturbance(
         &mut self,
         center: f64,
@@ -232,7 +232,7 @@ impl Simulation {
         if broad_sum == 0.0 {
             return Err("disturbance width is too small for this grid".into());
         }
-        // 用实际网格上的离散和归一化，靠墙截断的波包也保持质量。
+        // Normalize using discrete sums on the actual grid, conserving mass even when the packet is truncated by a wall.
         let ratio = narrow_sum / broad_sum;
         let shape: Vec<_> = weights
             .iter()
@@ -259,8 +259,8 @@ impl Simulation {
         Ok(applied)
     }
 
-    /// 前进一步，max_dt 通常是到下一次输出时刻的剩余时间。
-    /// 无效结果会报错，current 和时间保持不变；不会裁剪水深来掩盖错误。
+    /// Advance one step; max_dt is usually the time remaining until the next output.
+    /// Invalid results return an error without changing current or time; depth is not clipped to hide errors.
     pub fn step(&mut self, max_dt: f64) -> Result<f64, String> {
         if !max_dt.is_finite() || max_dt <= 0.0 {
             return Err("max_dt must be finite and positive".into());
@@ -273,7 +273,7 @@ impl Simulation {
 
         let n = self.current.len();
         let g = self.config.gravity;
-        // 左边界顺序是 (墙外, 墙内)，右边界顺序是 (墙内, 墙外)。
+        // The left boundary order is (outside, inside); the right is (inside, outside).
         self.interfaces[0] = rusanov_flux(self.current[0].reflected(), self.current[0], g);
         for i in 1..n {
             self.interfaces[i] = rusanov_flux(self.current[i - 1], self.current[i], g);
@@ -292,7 +292,7 @@ impl Simulation {
             };
             validate_cell(self.next[i], g, i)?;
         }
-        // 整轮只读 current、只写 next；完成后交换 Vec，不复制整份状态。
+        // Read only current and write only next throughout; swap the Vecs afterward without copying the state.
         std::mem::swap(&mut self.current, &mut self.next);
         self.time = new_time;
         self.steps += 1;
@@ -300,7 +300,7 @@ impl Simulation {
         Ok(dt)
     }
 
-    /// 输出间隔与物理 dt 独立；最后一个小步精确对齐目标时间。
+    /// Output intervals are independent of physical dt; the last substep aligns exactly with the target time.
     pub fn advance_to(&mut self, target: f64) -> Result<(), String> {
         if !target.is_finite() || target < self.time {
             return Err("target time must be finite and not earlier than current time".into());

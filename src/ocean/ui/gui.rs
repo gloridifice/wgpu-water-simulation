@@ -163,7 +163,7 @@ impl Gui {
             clear_foam: false,
             optics: OpticsConfig::default(),
             save_now: false,
-            save_status: "本地保存已禁用".into(),
+            save_status: "Local saving disabled".into(),
             save_failed: false,
             settings_path: None,
             configuration_panel: ConfigurationPanel::new(ConfigurationLibrary::new(
@@ -210,27 +210,27 @@ impl Gui {
                         let toolbar_bounds = ui.available_rect_before_wrap();
                         let controls = ui
                             .horizontal_wrapped(|ui| {
-                                yummy_egui::h3(ui, format!("{}工作区", workspaces.active.name()));
+                                yummy_egui::h3(ui, format!("{} Workspace", workspaces.active.name()));
                                 ui.separator();
-                                if ui.button(if *paused { "继续" } else { "暂停" }).clicked() {
+                                if ui.button(if *paused { "Resume" } else { "Pause" }).clicked() {
                                     *paused = !*paused;
                                 }
-                                ui.label("倍率");
+                                ui.label("Speed");
                                 ui.add_sized(
                                     egui::vec2(140.0, ui.spacing().interact_size.y),
                                     ParameterSlider::new(&mut self.speed, 0.0..=3.0)
                                         .clamping(egui::SliderClamping::Edits)
                                         .max_decimals(2),
                                 )
-                                .on_hover_text("模拟时间倍率，0～3，实时生效；0 停止演化。");
-                                ui.menu_button("时间 / 相机", |ui| {
-                                    ui.label(format!("模拟时间 {time:.2} s"));
-                                    if ui.button("重新计时").clicked() {
+                                .on_hover_text("Simulation time scale, 0–3; applies immediately. 0 stops evolution.");
+                                ui.menu_button("Time / Camera", |ui| {
+                                    ui.label(format!("Simulation time {time:.2} s"));
+                                    if ui.button("Reset Time").clicked() {
                                         *time = 0.0;
                                         self.clear_foam = true;
                                         ui.close();
                                     }
-                                    if ui.button("重置相机").clicked() {
+                                    if ui.button("Reset Camera").clicked() {
                                         *camera = if self.optics.lake.enabled {
                                             Camera::lake(self.optics.lake.terrain.radius)
                                         } else {
@@ -238,11 +238,11 @@ impl Gui {
                                         };
                                         ui.close();
                                     }
-                                    if self.optics.beach && ui.button("沙滩相机").clicked() {
+                                    if self.optics.beach && ui.button("Beach Camera").clicked() {
                                         *camera = Camera::beach(current.length);
                                         ui.close();
                                     }
-                                    if self.optics.model.enabled && ui.button("模型相机").clicked()
+                                    if self.optics.model.enabled && ui.button("Model Camera").clicked()
                                     {
                                         *camera = Camera::model(current.length);
                                         ui.close();
@@ -251,13 +251,13 @@ impl Gui {
                                 if ui
                                     .add_enabled(
                                         self.settings_path.is_some(),
-                                        egui::Button::new("保存"),
+                                        egui::Button::new("Save"),
                                     )
                                     .on_hover_text(
-                                        "保存当前工作状态和配置库（Ctrl+S），不覆盖命名配置快照。",
+                                        "Save the working state and configuration library (Ctrl+S), without overwriting named snapshots.",
                                     )
                                     .on_disabled_hover_text(
-                                        "本地保存已禁用（只读配置或 --no-settings）",
+                                        "Local saving disabled (read-only configuration or --no-settings)",
                                     )
                                     .clicked()
                                 {
@@ -279,7 +279,7 @@ impl Gui {
                                         ui.label(path.display().to_string());
                                     }
                                 });
-                                ui.menu_button("面板", |ui| {
+                                ui.menu_button("Panels", |ui| {
                                     for panel in Panel::ALL
                                         .into_iter()
                                         .filter(|p| *p != Panel::View && p.available(&self.optics))
@@ -288,9 +288,9 @@ impl Gui {
                                         if ui
                                             .selectable_label(present, panel.name())
                                             .on_hover_text(if present {
-                                                "定位已添加面板"
+                                                "Locate added panel"
                                             } else {
-                                                "添加到当前工作区"
+                                                "Add to current workspace"
                                             })
                                             .clicked()
                                         {
@@ -299,11 +299,11 @@ impl Gui {
                                         }
                                     }
                                     ui.separator();
-                                    if ui.button("Dock 边距调试").clicked() {
+                                    if ui.button("Dock Padding Debug").clicked() {
                                         self.show_dock_padding = true;
                                         ui.close();
                                     }
-                                    if ui.button("重置当前布局").clicked() {
+                                    if ui.button("Reset Current Layout").clicked() {
                                         workspaces.reset_current();
                                         if let Some(store) = &mut self.workspace_store {
                                             store.allow_repair();
@@ -312,7 +312,7 @@ impl Gui {
                                     }
                                     if let Some(store) = &mut self.workspace_store
                                         && store.blocked
-                                        && ui.button("确认保存修复后的布局").clicked()
+                                        && ui.button("Confirm Saving Repaired Layout").clicked()
                                     {
                                         store.allow_repair();
                                         ui.close();
@@ -332,7 +332,7 @@ impl Gui {
                                 .collect();
                                 if !errors.is_empty() {
                                     ui.menu_button(
-                                        egui::RichText::new("错误 / 状态")
+                                        egui::RichText::new("Errors / Status")
                                             .color(egui::Color32::LIGHT_RED),
                                         |ui| {
                                             for e in errors {
@@ -469,7 +469,7 @@ impl Gui {
     fn dock_padding_window(&mut self, ctx: &egui::Context) {
         let mut body_padding = self.dock_style.tab.tab_body.inner_margin.left;
         let mut area_padding = self.dock_style.dock_area_padding.unwrap_or_default().left;
-        egui::Window::new("Dock 边距调试")
+        egui::Window::new("Dock Padding Debug")
             .open(&mut self.show_dock_padding)
             .default_pos(egui::pos2(520.0, 80.0))
             .default_width(380.0)
@@ -479,18 +479,18 @@ impl Gui {
                 parameter_table(ui, "dock padding", |ui| {
                     parameter(
                         ui,
-                        "面板内容 padding",
-                        "每个 Dock 面板内容区的四边留白，包括渲染视图；0～32 逻辑点（pt），实时生效，不重置模拟。",
+                        "Panel content padding",
+                        "Padding on all sides of each Dock panel, including the Render View; 0–32 logical points (pt). Applies immediately without resetting the simulation.",
                         |ui| ui.add(ParameterSlider::new(&mut body_padding, 0..=32).suffix(" pt")),
                     );
                     parameter(
                         ui,
-                        "Dock 区域 padding",
-                        "整个 Dock 区域外围的左、右、底部留白，顶部固定为 0，不是面板间距；0～32 逻辑点（pt），实时生效，不重置模拟。",
+                        "Dock area padding",
+                        "Left, right and bottom padding around the Dock area, not spacing between panels; top is fixed at 0. 0–32 logical points (pt); applies immediately without resetting the simulation.",
                         |ui| ui.add(ParameterSlider::new(&mut area_padding, 0..=32).suffix(" pt")),
                     );
                 });
-                ui.label("仅本次运行，不保存；100% 缩放时 1 pt = 1 px。");
+                ui.label("For this run only; not saved. At 100% scaling, 1 pt = 1 px.");
             });
         if body_padding != self.dock_style.tab.tab_body.inner_margin.left {
             self.dock_style.tab.tab_body.inner_margin = egui::Margin::same(body_padding);

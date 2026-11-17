@@ -6,14 +6,18 @@ use yummy_egui::{PanelButton, action_row, choices, group, parameter};
 impl Gui {
     pub(in crate::ocean::ui) fn shore_panel(&mut self, ui: &mut egui::Ui) {
         let available = self.optics.swe_enabled();
-        group(ui, "浅水模拟", |ui| {
-            toggle(ui, "启用浅水模拟", &mut self.optics.shore.enabled);
+        group(ui, "Shallow Water", |ui| {
+            toggle(
+                ui,
+                "Enable Shallow Water Simulation",
+                &mut self.optics.shore.enabled,
+            );
             if !available {
                 parameter(
                     ui,
-                    "运行条件",
-                    "在场景工作区选择沙滩或启用模型后，开启浅水模拟。",
-                    |ui| ui.label("需要海岸场景与 SWE"),
+                    "Requirements",
+                    "Select the beach or enable a model in the Scene workspace, then enable Shallow Water.",
+                    |ui| ui.label("Requires a coastal scene and SWE"),
                 );
             }
         });
@@ -21,11 +25,11 @@ impl Gui {
             return;
         }
         let shore = &mut self.optics.shore;
-        group(ui, "求解与采样", |ui| {
+        group(ui, "Solving and Sampling", |ui| {
             parameter(
                 ui,
-                "每轴网格数",
-                "SWE 分辨率 64～1024，切换即时重建并重置近岸历史，范围不变。",
+                "Grid Cells per Axis",
+                "SWE resolution 64–1024; changing it immediately rebuilds and resets nearshore history without changing the domain.",
                 |ui| {
                     egui::ComboBox::from_id_salt("swe resolution")
                         .width(ui.available_width())
@@ -39,8 +43,8 @@ impl Gui {
             );
             parameter(
                 ui,
-                "网格间距 X/Z（米）",
-                help("网格间距 X/Z（米）"),
+                "Grid Spacing X/Z (m)",
+                help("Grid Spacing X/Z (m)"),
                 |ui| {
                     ui.label(format!(
                         "{:.3} / {:.3}",
@@ -49,37 +53,41 @@ impl Gui {
                     ))
                 },
             );
-            parameter(ui, "SWE 求解器", help("SWE 求解器"), |ui| {
-                choices(ui, &mut shore.order, &[(1, "一阶"), (2, "二阶")])
+            parameter(ui, "SWE Solver", help("SWE Solver"), |ui| {
+                choices(
+                    ui,
+                    &mut shore.order,
+                    &[(1, "First Order"), (2, "Second Order")],
+                )
             });
         });
-        group(ui, "FFT → SWE 输入与混合", |ui| {
+        group(ui, "FFT → SWE Input and Blending", |ui| {
             number(
                 ui,
-                "FFT → SWE 增益",
+                "FFT → SWE Gain",
                 &mut shore.input_gain,
                 0.0..=3.0,
                 false,
             );
             number(
                 ui,
-                "FFT 混合水深（米）",
+                "FFT Blend Depth (m)",
                 &mut shore.breaking_depth,
                 0.5..=5.0,
                 false,
             );
-            toggle(ui, "过滤短波", &mut shore.filter_enabled);
+            toggle(ui, "Filter Short Waves", &mut shore.filter_enabled);
             if shore.filter_enabled {
                 number(
                     ui,
-                    "截止波长（米）",
+                    "Cutoff Wavelength (m)",
                     &mut shore.filter_cutoff,
                     0.0..=128.0,
                     false,
                 );
                 number(
                     ui,
-                    "过滤过渡宽度（米）",
+                    "Filter Transition Width (m)",
                     &mut shore.filter_transition,
                     0.0..=128.0,
                     false,
@@ -89,8 +97,8 @@ impl Gui {
         let [default_filter, short_filter] = action_row(
             ui,
             [
-                PanelButton::new("默认 12～24 米"),
-                PanelButton::new("3～6 米"),
+                PanelButton::new("Default 12–24 m"),
+                PanelButton::new("3–6 m"),
             ],
         );
         if default_filter.clicked() {
@@ -103,11 +111,11 @@ impl Gui {
             shore.filter_cutoff = 3.0;
             shore.filter_transition = 3.0;
         }
-        group(ui, "沙地历史与诊断", |ui| {
+        group(ui, "Sand History and Diagnostics", |ui| {
             if self.optics.beach {
                 number(
                     ui,
-                    "沙地干燥时间（秒）",
+                    "Sand Drying Time (s)",
                     &mut shore.drying_time,
                     1.0..=120.0,
                     false,
@@ -115,27 +123,34 @@ impl Gui {
             }
             list(
                 ui,
-                "浅水调试视图",
+                "Shallow Water Debug View",
                 &mut shore.view,
                 &crate::ocean::simulation::nearshore::VIEWS,
             );
         });
-        if ui.add(PanelButton::new("重置浅水、泡沫和沙地")).clicked() {
+        if ui
+            .add(PanelButton::new("Reset Shallow Water, Foam and Sand"))
+            .clicked()
+        {
             self.clear_foam = true;
         }
     }
 
     pub(in crate::ocean::ui) fn shore_foam_panel(&mut self, ui: &mut egui::Ui) {
         let shore = &mut self.optics.shore;
-        group(ui, "泡沫生成", |ui| {
-            toggle(ui, "启用泡沫发射", &mut shore.foam_emission_enabled);
+        group(ui, "Foam Generation", |ui| {
+            toggle(ui, "Enable Foam Emission", &mut shore.foam_emission_enabled);
         });
         if shore.foam_emission_enabled {
-            group(ui, "前沿生成", |ui| {
-                toggle(ui, "压缩脊线实验", &mut shore.foam_ridge_enabled);
+            group(ui, "Front Generation", |ui| {
+                toggle(
+                    ui,
+                    "Compression Ridge Experiment",
+                    &mut shore.foam_ridge_enabled,
+                );
                 number(
                     ui,
-                    "前沿生成速率（每秒）",
+                    "Front Generation Rate (per s)",
                     &mut shore.foam_front_generation,
                     0.0..=30.0,
                     false,
@@ -143,14 +158,14 @@ impl Gui {
                 if shore.foam_ridge_enabled {
                     number(
                         ui,
-                        "窄带宽度（米）",
+                        "Narrow Band Width (m)",
                         &mut shore.foam_ridge_width,
                         0.05..=10.0,
                         true,
                     );
                     number(
                         ui,
-                        "峰值相对显著度",
+                        "Peak Relative Prominence",
                         &mut shore.foam_ridge_prominence,
                         0.0..=1.0,
                         false,
@@ -158,7 +173,7 @@ impl Gui {
                 } else {
                     number(
                         ui,
-                        "前沿采样距离（米）",
+                        "Front Sampling Distance (m)",
                         &mut shore.foam_front_distance,
                         0.05..=10.0,
                         false,
@@ -166,52 +181,52 @@ impl Gui {
                 }
                 number(
                     ui,
-                    "速度变化起始阈值（每秒）",
+                    "Velocity Change Start Threshold (per s)",
                     &mut shore.foam_velocity_threshold,
                     0.0..=20.0,
                     false,
                 );
                 number(
                     ui,
-                    "速度变化过渡范围（每秒）",
+                    "Velocity Change Transition Range (per s)",
                     &mut shore.foam_velocity_transition,
                     0.0..=20.0,
                     false,
                 );
             });
             if !shore.foam_ridge_enabled {
-                group(ui, "背景生成", |ui| {
+                group(ui, "Background Generation", |ui| {
                     number(
                         ui,
-                        "背景生成速率（每秒）",
+                        "Background Generation Rate (per s)",
                         &mut shore.generation,
                         0.0..=15.0,
                         false,
                     );
                     number(
                         ui,
-                        "背景生成倍率",
+                        "Background Generation Multiplier",
                         &mut shore.foam_background_multiplier,
                         0.0..=1.0,
                         false,
                     );
                     number(
                         ui,
-                        "背景生成起始阈值",
+                        "Background Generation Start Threshold",
                         &mut shore.foam_generation_threshold,
                         0.0..=2.0,
                         false,
                     );
                     number(
                         ui,
-                        "背景生成过渡范围",
+                        "Background Generation Transition Range",
                         &mut shore.foam_generation_transition,
                         0.0..=2.0,
                         false,
                     );
                     number(
                         ui,
-                        "汇聚增强阈值（每秒）",
+                        "Convergence Enhancement Threshold (per s)",
                         &mut shore.foam_compression_threshold,
                         0.0..=4.0,
                         false,
@@ -219,26 +234,30 @@ impl Gui {
                 });
             }
         }
-        group(ui, "浓度模式与寿命", |ui| {
-            toggle(ui, "双浓度实验", &mut shore.foam_dual_phase);
+        group(ui, "Concentration Mode and Lifetime", |ui| {
+            toggle(
+                ui,
+                "Dual-Concentration Experiment",
+                &mut shore.foam_dual_phase,
+            );
             if shore.foam_dual_phase {
                 number(
                     ui,
-                    "新鲜半衰期（秒）",
+                    "Fresh Half-Life (s)",
                     &mut shore.foam_fresh_half_life,
                     0.1..=60.0,
                     true,
                 );
                 number(
                     ui,
-                    "残余半衰期（秒）",
+                    "Residual Half-Life (s)",
                     &mut shore.foam_residual_half_life,
                     0.1..=120.0,
                     true,
                 );
                 number(
                     ui,
-                    "退出转残余比例",
+                    "Exit-to-Residual Fraction",
                     &mut shore.foam_conversion,
                     0.0..=1.0,
                     false,
@@ -246,7 +265,7 @@ impl Gui {
             } else {
                 number(
                     ui,
-                    "水上泡沫衰减（每秒）",
+                    "Water Foam Decay (per s)",
                     &mut shore.decay,
                     0.0..=4.0,
                     false,
@@ -254,22 +273,33 @@ impl Gui {
             }
         });
         if !shore.foam_dual_phase {
-            group(ui, "泡沫输送与水流拖曳", |ui| {
+            group(ui, "Foam Transport and Flow Drag", |ui| {
                 if shore.order == 2 {
-                    parameter(ui, "泡沫空间输送", help("泡沫空间输送"), |ui| {
-                        choices(
-                            ui,
-                            &mut shore.foam_transport_order,
-                            &[(1, "一阶"), (2, "二阶")],
-                        )
-                    });
+                    parameter(
+                        ui,
+                        "Foam Spatial Transport",
+                        help("Foam Spatial Transport"),
+                        |ui| {
+                            choices(
+                                ui,
+                                &mut shore.foam_transport_order,
+                                &[(1, "First Order"), (2, "Second Order")],
+                            )
+                        },
+                    );
                 }
-                toggle(ui, "启用水流拖曳", &mut shore.foam_drag_enabled);
+                toggle(ui, "Enable Flow Drag", &mut shore.foam_drag_enabled);
                 if shore.foam_drag_enabled {
-                    number(ui, "水流跟随倍率", &mut shore.foam_follow, 0.0..=1.0, false);
                     number(
                         ui,
-                        "速度响应时间（秒）",
+                        "Flow Following Multiplier",
+                        &mut shore.foam_follow,
+                        0.0..=1.0,
+                        false,
+                    );
+                    number(
+                        ui,
+                        "Velocity Response Time (s)",
                         &mut shore.foam_response_time,
                         0.0..=20.0,
                         false,
@@ -277,29 +307,37 @@ impl Gui {
                 }
                 number(
                     ui,
-                    "新生泡沫速度倍率",
+                    "New Foam Velocity Multiplier",
                     &mut shore.foam_birth_speed,
                     0.0..=1.0,
                     false,
                 );
-                parameter(ui, "物理参考起点", help("物理参考起点"), |ui| {
-                    if ui.add(PanelButton::new("应用推荐值")).clicked() {
-                        shore.apply_foam_reference();
-                    }
-                });
+                parameter(
+                    ui,
+                    "Physical Reference Starting Point",
+                    help("Physical Reference Starting Point"),
+                    |ui| {
+                        if ui
+                            .add(PanelButton::new("Apply Recommended Values"))
+                            .clicked()
+                        {
+                            shore.apply_foam_reference();
+                        }
+                    },
+                );
             });
         }
-        group(ui, "泡沫密度诊断", |ui| {
+        group(ui, "Foam Density Diagnostics", |ui| {
             number(
                 ui,
-                "密度颜色参考值",
+                "Density Color Reference",
                 &mut shore.foam_density_reference,
                 0.01..=20.0,
                 true,
             );
             list(
                 ui,
-                "浅水调试视图",
+                "Shallow Water Debug View",
                 &mut shore.view,
                 &crate::ocean::simulation::nearshore::VIEWS,
             );
@@ -307,8 +345,8 @@ impl Gui {
         let [debug, reset] = action_row(
             ui,
             [
-                PanelButton::new("密度调试：低绿／高红"),
-                PanelButton::new("重置浅水历史"),
+                PanelButton::new("Density Debug: Low Green / High Red"),
+                PanelButton::new("Reset Shallow Water History"),
             ],
         );
         if debug.clicked() {

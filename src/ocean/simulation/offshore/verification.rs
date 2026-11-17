@@ -1,4 +1,4 @@
-//! 独立的双精度直接 DFT 作为 GPU FFT 的数值参照；不依赖另一个 FFT 实现。
+//! An independent double-precision direct DFT provides the GPU FFT reference, without another FFT implementation.
 use super::super::spectral::{FftWaves as Ocean, spectrum::initial_spectrum};
 use crate::ocean::{Error, gpu::context::Gpu, parameters::ocean::OceanConfig};
 use std::f64::consts::TAU;

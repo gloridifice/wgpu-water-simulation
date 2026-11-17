@@ -10,7 +10,7 @@ fn refraction_mode(ui: &mut egui::Ui, enabled: &mut bool, method: &mut OpticalMe
     } else {
         2
     };
-    if segmented_control(ui,&mut selection,&[(0,"关闭"),(1,"快速"),(2,"物理")]).on_hover_text("关闭停止该效果；快速使用 UV 近似，物理使用波面与接收面求交。切换实时生效，手动保存，不重置模拟，保留各模式参数。").changed() {
+    if segmented_control(ui,&mut selection,&[(0,"Off"),(1,"Fast"),(2,"Physical")]).on_hover_text("Off disables the effect; Fast uses a UV approximation, while Physical intersects the wave surface with the receiving surface. Changes apply immediately, require manual saving, do not reset the simulation, and preserve each mode's parameters.").changed() {
         *enabled=selection!=0;
         if *enabled {*method=if selection==1 {OpticalMethod::Fast} else {OpticalMethod::Physical};}
     }
@@ -18,45 +18,57 @@ fn refraction_mode(ui: &mut egui::Ui, enabled: &mut bool, method: &mut OpticalMe
 impl Gui {
     pub(in crate::ocean::ui) fn caustics_panel(&mut self, ui: &mut egui::Ui) {
         if self.optics.lake.enabled {
-            ui.label("湖泊模式暂不支持物理焦散，原参数保留。波反射请在“动画 SDF 波纹”分类设置。");
+            ui.label("Lake mode does not yet support physical caustics; existing parameters are preserved. Configure wave reflections under Animated SDF Ripples.");
             return;
         }
         let o = &mut self.optics;
-        segmented_control(ui, &mut o.caustics, &[(false, "关闭"), (true, "物理")])
-            .on_hover_text("实时切换物理焦散，保留参数，不重置模拟。");
+        segmented_control(ui, &mut o.caustics, &[(false, "Off"), (true, "Physical")])
+            .on_hover_text("Toggle physical caustics immediately, preserving parameters without resetting the simulation.");
         if o.caustics {
-            group(ui, "焦散参数", |ui| {
-                number(ui, "焦散强度", &mut o.caustics_strength, 0.0..=4.0, false);
+            group(ui, "Caustics Parameters", |ui| {
                 number(
                     ui,
-                    "焦散覆盖宽度（米）",
+                    "Caustics Intensity",
+                    &mut o.caustics_strength,
+                    0.0..=4.0,
+                    false,
+                );
+                number(
+                    ui,
+                    "Caustics Coverage Width (m)",
                     &mut o.caustics_extent,
                     8.0..=512.0,
                     true,
                 );
                 number(
                     ui,
-                    "焦散柔化（纹素）",
+                    "Caustics Softening (texels)",
                     &mut o.caustics_softness,
                     0.0..=4.0,
                     false,
                 );
                 list(
                     ui,
-                    "焦散光束网格",
+                    "Caustics Beam Grid",
                     &mut o.caustics_resolution,
                     &[(128, "128 × 128"), (256, "256 × 256"), (512, "512 × 512")],
                 );
-                number(ui, "水折射率", &mut o.water_ior, 1.0..=1.6, false);
+                number(
+                    ui,
+                    "Water Refractive Index",
+                    &mut o.water_ior,
+                    1.0..=1.6,
+                    false,
+                );
             });
         }
-        group(ui, "焦散诊断", |ui| {
+        group(ui, "Caustics Diagnostics", |ui| {
             parameter(
                 ui,
-                "显示",
-                "实时切换共享渲染视图；不重置。入射光不包含接收材质或观察路径消光。",
+                "Display",
+                "Switch the shared Render View immediately without resetting. Incident light excludes receiver material and viewing-path extinction.",
                 |ui| {
-                    segmented_control(ui, &mut o.view, &[(0, "正常"), (12, "入射光")]);
+                    segmented_control(ui, &mut o.view, &[(0, "Normal"), (12, "Incident Light")]);
                 },
             );
         });
@@ -65,23 +77,29 @@ impl Gui {
         let o = &mut self.optics;
         refraction_mode(ui, &mut o.refraction, &mut o.refraction_method);
         if o.lake.enabled && o.refraction && o.refraction_method == OpticalMethod::Physical {
-            ui.label("湖泊模式暂不支持物理折射；此设置保留但不运行，可选择快速折射。");
+            ui.label("Lake mode does not yet support physical refraction; this setting is preserved but inactive. Fast refraction is available.");
             return;
         }
         if o.refraction {
-            group(ui, "折射参数", |ui| {
-                number(ui, "水折射率", &mut o.water_ior, 1.0..=1.6, false);
+            group(ui, "Refraction Parameters", |ui| {
+                number(
+                    ui,
+                    "Water Refractive Index",
+                    &mut o.water_ior,
+                    1.0..=1.6,
+                    false,
+                );
                 if o.refraction_method == OpticalMethod::Fast {
                     number(
                         ui,
-                        "折射扰动强度",
+                        "Refraction Distortion Strength",
                         &mut o.fast_refraction_strength,
                         0.0..=2.0,
                         false,
                     );
                     number(
                         ui,
-                        "折射充分扰动水深（米）",
+                        "Full Refraction Distortion Depth (m)",
                         &mut o.fast_refraction_depth,
                         0.01..=20.0,
                         true,
@@ -89,7 +107,7 @@ impl Gui {
                     let mut percent = o.fast_refraction_limit * 100.0;
                     number(
                         ui,
-                        "折射偏移上限（屏幕高度%）",
+                        "Maximum Refraction Offset (% of screen height)",
                         &mut percent,
                         0.0..=20.0,
                         false,
@@ -98,20 +116,24 @@ impl Gui {
                 }
                 number(
                     ui,
-                    "折射最大光程（米）",
+                    "Maximum Refraction Path Length (m)",
                     &mut o.refraction_distance,
                     1.0..=500.0,
                     true,
                 );
             });
         }
-        group(ui, "折射诊断", |ui| {
+        group(ui, "Refraction Diagnostics", |ui| {
             parameter(
                 ui,
-                "显示",
-                "实时切换共享渲染视图；绿色为有效采样，红色为回退，关闭时灰色。不重置。",
+                "Display",
+                "Switch the shared Render View immediately; green indicates valid samples, red indicates fallback, and gray indicates disabled. No reset.",
                 |ui| {
-                    segmented_control(ui, &mut o.view, &[(0, "正常"), (13, "方向"), (14, "命中")]);
+                    segmented_control(
+                        ui,
+                        &mut o.view,
+                        &[(0, "Normal"), (13, "Direction"), (14, "Hit")],
+                    );
                 },
             );
         });

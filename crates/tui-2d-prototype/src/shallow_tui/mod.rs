@@ -17,7 +17,7 @@ use std::{
 use tui_2d_prototype::solver::Config;
 
 pub fn run(config: Config, paused: bool) -> Result<(), Box<dyn std::error::Error>> {
-    // 先验证求解参数，再切换终端模式；run 在正常退出/错误/恐慌时恢复终端。
+    // Validate solver parameters before switching terminal modes; run restores the terminal on exit, error or panic.
     let mut app = App::new(config, paused)?;
     ratatui::run(|terminal| {
         let _capture = MouseCapture;
@@ -30,7 +30,7 @@ struct MouseCapture;
 
 impl Drop for MouseCapture {
     fn drop(&mut self) {
-        // 正常返回、错误与 panic 展开均关闭鼠标捕获，恢复终端的鼠标行为。
+        // Disable mouse capture on return, error or panic unwinding to restore terminal mouse behavior.
         let _ = execute!(io::stdout(), DisableMouseCapture);
     }
 }
@@ -54,7 +54,7 @@ fn event_loop(
                     if handle_key(app, key)? {
                         return Ok(());
                     }
-                    // 按键处理（尤其暂停/恢复）前消耗的时间不计入下一个 tick。
+                    // Exclude time before key handling (especially pause/resume) from the next tick.
                     previous = Instant::now();
                 }
                 Event::Resize(_, _) => {
@@ -124,7 +124,7 @@ mod tests {
                 row,
                 modifiers: KeyModifiers::NONE,
             };
-            // 水面图外的点击和拖动/放开均不改变水面。
+            // Clicks outside the water plot and drag/release events do not change the water.
             handle_mouse(
                 &mut app,
                 event(MouseEventKind::Down(MouseButton::Left), 2, 2),

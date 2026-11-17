@@ -23,9 +23,9 @@ impl<F: FnMut(Panel, &mut egui::Ui)> egui_dock::TabViewer for Panels<F> {
     type Tab = Panel;
     fn title(&mut self, tab: &mut Panel) -> egui::WidgetText {
         match tab {
-            Panel::Controls => "试验参数",
-            Panel::Maps => "FFT → J → 泡沫生成权重",
-            Panel::Statistics => "数值与说明",
+            Panel::Controls => "Experiment Settings",
+            Panel::Maps => "FFT → J → Foam Emission Weight",
+            Panel::Statistics => "Values and Notes",
         }
         .into()
     }
@@ -171,117 +171,117 @@ impl State {
     }
     fn controls_panel(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().id_salt("lab controls").show(ui,|ui| {
-            yummy_egui::h3(ui, "播放");
+            yummy_egui::h3(ui, "Playback");
             ui.horizontal_wrapped(|ui| {
-                if ui.button(if self.paused {"播放"} else {"暂停"}).clicked(){self.paused = !self.paused;}
-                if ui.add_enabled(self.paused,egui::Button::new("步进 1/60 秒")).clicked(){self.time+=1.0/60.0;}
-                if ui.button("回到 0 秒").clicked(){self.time=0.0;self.paused=true;}
+                if ui.button(if self.paused {"Play"} else {"Pause"}).clicked(){self.paused = !self.paused;}
+                if ui.add_enabled(self.paused,egui::Button::new("Step 1/60 s")).clicked(){self.time+=1.0/60.0;}
+                if ui.button("Return to 0 s").clicked(){self.time=0.0;self.paused=true;}
             });
             parameter_table(ui,"clock",|ui| {
-                parameter(ui,"时间（秒）","模拟时间，0～3600 秒。修改立即暂停并查看该时刻；没有泡沫历史可清空。",|ui| {
+                parameter(ui,"Time (s)","Simulation time, 0–3600 s. Editing pauses immediately at that time; there is no foam history to clear.",|ui| {
                     if ui.add(egui::DragValue::new(&mut self.time).range(0.0..=3600.0).speed(0.02).max_decimals(3)).changed(){self.paused=true;}
                 });
-                parameter(ui,"时间倍率","0～3，无量纲。只改变播放速度，不改变同一模拟时刻的 J。实时生效。",|ui|ui.add(egui::Slider::new(&mut self.speed,0.0..=3.0)));
+                parameter(ui,"Time scale","0–3, dimensionless. Changes playback speed only, not J at a given simulation time. Applies immediately.",|ui|ui.add(egui::Slider::new(&mut self.speed,0.0..=3.0)));
             });
-            ui.separator();yummy_egui::h3(ui, "FFT 波谱（应用后生效）");
+            ui.separator();yummy_egui::h3(ui, "FFT Spectrum (Apply to Update)");
             parameter_table(ui,"spectrum",|ui| {
-                parameter(ui,"FFT 分辨率","64～512，每轴采样数。应用后重建现有 Ocean FFT，不新增另一套波谱；保留当前时间。",|ui| {
+                parameter(ui,"FFT resolution","64–512 samples per axis. Applying rebuilds the existing Ocean FFT, not a separate spectrum; current time is retained.",|ui| {
                     egui::ComboBox::from_id_salt("fft n").width(ui.available_width()).selected_text(self.draft.resolution.to_string()).show_ui(ui,|ui| {for n in [64,128,256,512] {ui.selectable_value(&mut self.draft.resolution,n,n.to_string());}});
                 });
-                parameter(ui,"周期边长（米）","16～256 米，世界空间周期。应用后重建 FFT，并按范围倍率调整试验范围。",|ui|ui.add(egui::Slider::new(&mut self.draft.length,16.0..=256.0)));
-                parameter(ui,"波谱幅值","Phillips 波谱系数，0～0.03，非波高米数；0 得到平水。应用后重建 FFT。",|ui|ui.add(egui::Slider::new(&mut self.draft.amplitude,0.0..=0.03).max_decimals(5)));
-                parameter(ui,"主波尺度（米）","Phillips 特征长度，1～100 米；不是最小波长。应用后重建 FFT。",|ui|ui.add(egui::Slider::new(&mut self.draft.phillips_length,1.0..=100.0)));
+                parameter(ui,"Period length (m)","16–256 m, world-space period. Applying rebuilds the FFT and adjusts the experiment domain using the extent multiplier.",|ui|ui.add(egui::Slider::new(&mut self.draft.length,16.0..=256.0)));
+                parameter(ui,"Spectrum amplitude","Phillips spectrum coefficient, 0–0.03, not wave height in meters; 0 gives flat water. Applying rebuilds the FFT.",|ui|ui.add(egui::Slider::new(&mut self.draft.amplitude,0.0..=0.03).max_decimals(5)));
+                parameter(ui,"Dominant wave scale (m)","Phillips characteristic length, 1–100 m; not the minimum wavelength. Applying rebuilds the FFT.",|ui|ui.add(egui::Slider::new(&mut self.draft.phillips_length,1.0..=100.0)));
                 let mut angle=self.draft.wind_angle.to_degrees();
-                if parameter(ui,"风向（度）","−180～180 度。改变波谱方向；应用后重建 FFT。",|ui|ui.add(egui::Slider::new(&mut angle,-180.0..=180.0))).changed(){self.draft.wind_angle=angle.to_radians();}
-                parameter(ui,"随机种子","无符号整数；固定种子用于可重复比较。应用后重建 FFT，不使用个人配置。",|ui|ui.add(egui::DragValue::new(&mut self.draft.seed)));
+                if parameter(ui,"Wind direction (degrees)","−180–180 degrees. Changes spectrum direction; applying rebuilds the FFT.",|ui|ui.add(egui::Slider::new(&mut angle,-180.0..=180.0))).changed(){self.draft.wind_angle=angle.to_radians();}
+                parameter(ui,"Random seed","Unsigned integer; fix the seed for repeatable comparisons. Applying rebuilds the FFT; personal settings are not used.",|ui|ui.add(egui::DragValue::new(&mut self.draft.seed)));
             });
-            if ui.button("应用 FFT 参数").clicked(){self.apply=true;}
-            ui.separator();yummy_egui::h3(ui, "J 与目标采样网格");
+            if ui.button("Apply FFT Settings").clicked(){self.apply=true;}
+            ui.separator();yummy_egui::h3(ui, "J and Target Sampling Grid");
             parameter_table(ui,"sampling",|ui| {
-                parameter(ui,"横向位移倍率","0～3，无量纲。实际位移系数为负值，与海洋 choppiness 约定一致；高度增益固定为 1。0 时 J=1。实时生效，不重建 FFT。",|ui|ui.add(egui::Slider::new(&mut self.controls.chop,0.0..=3.0)));
-                parameter(ui,"目标网格","64～512，每轴格数。只改变权重图采样，不改变 FFT；不运行 SWE。格内面积平均，不能凭空增加细节。实时重建诊断图。",|ui| {
+                parameter(ui,"Horizontal displacement scale","0–3, dimensionless. The actual displacement coefficient is negative, consistent with ocean choppiness; height gain is fixed at 1. At 0, J=1. Applies immediately without rebuilding FFT.",|ui|ui.add(egui::Slider::new(&mut self.controls.chop,0.0..=3.0)));
+                parameter(ui,"Target grid","64–512 cells per axis. Changes only weight map sampling, not FFT; SWE is not run. Cell area averages cannot create extra detail. Diagnostic maps rebuild immediately.",|ui| {
                     egui::ComboBox::from_id_salt("target n").width(ui.available_width()).selected_text(self.controls.grid.to_string()).show_ui(ui,|ui| {for n in [64,128,256,512] {ui.selectable_value(&mut self.controls.grid,n,n.to_string());}});
                 });
-                for (axis,name) in ["范围 X／周期","范围 Z／周期"].into_iter().enumerate() {
-                    parameter(ui,name,"0.25～3 倍 FFT 周期，世界范围居中。越大则每格越粗；跨周期重复采样。实时生效。",|ui|ui.add(egui::Slider::new(&mut self.controls.extent[axis],0.25..=3.0).max_decimals(2)));
+                for (axis,name) in ["X extent / period","Z extent / period"].into_iter().enumerate() {
+                    parameter(ui,name,"0.25–3 times the FFT period, centered in world space. Larger extents mean coarser cells; samples repeat across periods. Applies immediately.",|ui|ui.add(egui::Slider::new(&mut self.controls.extent[axis],0.25..=3.0).max_decimals(2)));
                 }
             });
             ui.horizontal_wrapped(|ui| {
-                if ui.button("单周期方形").clicked(){self.controls.extent=[1.0,1.0];}
-                if ui.button("沿岸窄条 0.5 × 3").clicked(){self.controls.extent=[0.5,3.0];}
+                if ui.button("Single-period square").clicked(){self.controls.extent=[1.0,1.0];}
+                if ui.button("Alongshore strip 0.5 × 3").clicked(){self.controls.extent=[0.5,3.0];}
             });
-            ui.separator();yummy_egui::h3(ui, "生成权重（实时）");
+            ui.separator();yummy_egui::h3(ui, "Emission Weight (Live)");
             parameter_table(ui,"weights",|ui| {
-                parameter(ui,"压缩起始阈值","0～1，无量纲。C=max(0,1−J)；超过阈值才有掩码。只改变示意权重，不改水体或现有泡沫。",|ui|ui.add(egui::Slider::new(&mut self.controls.threshold,0.0..=1.0).max_decimals(3)));
-                parameter(ui,"压缩过渡宽度","0～1，无量纲。掩码在起始阈值至阈值＋宽度间平滑变为 1。0 为严格大于阈值的硬门限；平水不会误触发。",|ui|ui.add(egui::Slider::new(&mut self.controls.transition,0.0..=1.0).max_decimals(3)));
-                parameter(ui,"调制强度","0～1，无量纲。W=(1−强度)+强度×增益×M。0 严格恢复 W=1；1 完全使用 J 掩码。实时生效，不自动归一。",|ui|ui.add(egui::Slider::new(&mut self.controls.strength,0.0..=1.0).max_decimals(2)));
-                parameter(ui,"掩码增益","0～8，无量纲。改变峰值及平均权重；不逐帧拉伸对比度。用右侧平均 W 判断总生成量变化。",|ui|ui.add(egui::Slider::new(&mut self.controls.gain,0.0..=8.0).max_decimals(2)));
-                parameter(ui,"示意基准生成率","0～10 泡沫量／面积／模拟秒（非实测质量单位）。全域均匀基准，S=基准×W；不是正式 SWE 生成率，也不是累计密度。",|ui|ui.add(egui::Slider::new(&mut self.controls.base_rate,0.0..=10.0).max_decimals(2)));
+                parameter(ui,"Compression threshold","0–1, dimensionless. C=max(0,1−J); the mask appears only above the threshold. Changes illustrative weights only, not water or existing foam.",|ui|ui.add(egui::Slider::new(&mut self.controls.threshold,0.0..=1.0).max_decimals(3)));
+                parameter(ui,"Compression transition width","0–1, dimensionless. The mask smoothly reaches 1 between the threshold and threshold + width. 0 is a hard threshold requiring a strictly greater value; flat water does not trigger it.",|ui|ui.add(egui::Slider::new(&mut self.controls.transition,0.0..=1.0).max_decimals(3)));
+                parameter(ui,"Modulation strength","0–1, dimensionless. W=(1−strength)+strength×gain×M. 0 restores exactly W=1; 1 fully uses the J mask. Applies immediately; not automatically normalized.",|ui|ui.add(egui::Slider::new(&mut self.controls.strength,0.0..=1.0).max_decimals(2)));
+                parameter(ui,"Mask gain","0–8, dimensionless. Changes peak and mean weight without stretching contrast per frame. Use mean W on the right to assess total emission changes.",|ui|ui.add(egui::Slider::new(&mut self.controls.gain,0.0..=8.0).max_decimals(2)));
+                parameter(ui,"Illustrative baseline emission","0–10 foam amount/area/simulation s (not measured mass). Uniform baseline across the domain, S=baseline×W; neither the actual SWE emission rate nor accumulated density.",|ui|ui.add(egui::Slider::new(&mut self.controls.base_rate,0.0..=10.0).max_decimals(2)));
             });
         });
     }
     fn statistics_panel(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().id_salt("lab statistics").show(ui,|ui| {
-            yummy_egui::h3(ui, "独立权重试验 · 不保存配置");
-            ui.label("未接入 SWE；不显示累计泡沫密度。");
+            yummy_egui::h3(ui, "Standalone Weight Experiment · Settings Not Saved");
+            ui.label("Not coupled to SWE; accumulated foam density is not shown.");
             let config=self.experiment.ocean.config;
             let p=self.controls.params(config);
-            ui.separator();yummy_egui::h3(ui, "当前实际采样");
-            ui.label(format!("FFT：{}²，{:.2} 米／采样",config.resolution,config.length/config.resolution as f32));
-            ui.label(format!("目标：{}²，{:.1} × {:.1} 米",self.controls.grid,p.domain[1],p.domain[2]));
-            ui.label(format!("每格：{:.3} × {:.3} 米",p.domain[1]/self.controls.grid as f32,p.domain[2]/self.controls.grid as f32));
-            ui.label("范围按世界比例显示；+X 向右，+Z 向上。").on_hover_text("图像使用最近邻显示以暴露网格分辨率；缩小显示仍可能遮住细线，点击单图放大观察。计算使用面积平均，不是点采样。所有图使用未形变的 FFT 世界坐标。");
-            ui.separator();yummy_egui::h3(ui, "异步统计（约 4 次／秒）");
+            ui.separator();yummy_egui::h3(ui, "Current Sampling");
+            ui.label(format!("FFT: {}², {:.2} m/sample",config.resolution,config.length/config.resolution as f32));
+            ui.label(format!("Target: {}², {:.1} × {:.1} m",self.controls.grid,p.domain[1],p.domain[2]));
+            ui.label(format!("Per cell: {:.3} × {:.3} m",p.domain[1]/self.controls.grid as f32,p.domain[2]/self.controls.grid as f32));
+            ui.label("Domain shown to world scale; +X points right, +Z up.").on_hover_text("Images use nearest-neighbor display to reveal grid resolution; downscaling can still hide thin lines, so click an image to enlarge it. Calculations use area averages, not point samples. All plots use undeformed FFT world coordinates.");
+            ui.separator();yummy_egui::h3(ui, "Asynchronous Statistics (~4 Hz)");
             if let Some(s)=&self.stats {
-                ui.label(format!("统计时刻：{:.3} 模拟秒",s.time));
-                if s.params!=p {ui.colored_label(egui::Color32::YELLOW,"参数已变动，等待新统计");}
-                for (a,label) in ["面积变化比 J","生成掩码 M","生成权重 W","示意生成率 S"].iter().enumerate() {
+                ui.label(format!("Sample time: {:.3} simulation s",s.time));
+                if s.params!=p {ui.colored_label(egui::Color32::YELLOW,"Parameters changed; awaiting new statistics");}
+                for (a,label) in ["Area ratio J","Emission mask M","Emission weight W","Illustrative emission rate S"].iter().enumerate() {
                     yummy_egui::h3(ui, *label);
-                    ui.label(format!("{:.4} ～ {:.4}\n平均 {:.4}",s.min[a],s.max[a],s.mean[a]));
+                    ui.label(format!("{:.4} – {:.4}\nMean {:.4}",s.min[a],s.max[a],s.mean[a]));
                 }
-                ui.label(format!("掩码 > 0.5：{:.1}%\n格均 J ≤ 0：{:.2}%",100.0*s.active,100.0*s.folded));
-                ui.label(format!("相对基准总生成率：{:.3} 倍",s.mean[2])).on_hover_text("此实验基准在全域均匀，因此平均 W 等于积分生成率倍率（基准为 0 时仅表示权重倍率）。不自动保持总量；减少生成不能直接当作形态改善。");
-                if s.max[2]>self.controls.weight_range || s.max[3]>self.controls.rate_range {ui.colored_label(egui::Color32::YELLOW,"部分颜色饱和；数值未截断");}
-            } else {ui.label("等待读回…");}
-            ui.separator();yummy_egui::h3(ui, "固定色标（仅显示）");
+                ui.label(format!("Mask > 0.5: {:.1}%\nCell-average J ≤ 0: {:.2}%",100.0*s.active,100.0*s.folded));
+                ui.label(format!("Total emission relative to baseline: {:.3}×",s.mean[2])).on_hover_text("The baseline is uniform over the domain, so mean W equals the integrated emission rate multiplier (when the baseline is zero, it represents only the weight multiplier). Total emission is not automatically preserved; reduced emission does not by itself imply improved shape.");
+                if s.max[2]>self.controls.weight_range || s.max[3]>self.controls.rate_range {ui.colored_label(egui::Color32::YELLOW,"Some colors are saturated; values are not clamped");}
+            } else {ui.label("Awaiting readback…");}
+            ui.separator();yummy_egui::h3(ui, "Fixed Color Scales (Display Only)");
             parameter_table(ui,"display scales",|ui| {
-                parameter(ui,"J 偏离范围","0.01～2，无量纲。色标为 1±此值，橙色压缩／灰白 J=1／蓝色扩张；不影响计算。实时生效。",|ui|ui.add(egui::Slider::new(&mut self.controls.j_range,0.01..=2.0).logarithmic(true)));
-                parameter(ui,"权重色标上限","1.1～8，无量纲。黑=0、青绿=1、黄=上限；超过仅颜色饱和，实际 W 不截断。实时生效。",|ui|ui.add(egui::Slider::new(&mut self.controls.weight_range,1.1..=8.0)));
-                parameter(ui,"生成率白值","0.01～80 泡沫量／面积／秒。黑=0、白=此值；仅影响示意源项显示。实时生效。",|ui|ui.add(egui::Slider::new(&mut self.controls.rate_range,0.01..=80.0).logarithmic(true)));
+                parameter(ui,"J deviation range","0.01–2, dimensionless. Color scale is 1±this value: orange compression, off-white J=1, blue expansion. Does not affect calculations; applies immediately.",|ui|ui.add(egui::Slider::new(&mut self.controls.j_range,0.01..=2.0).logarithmic(true)));
+                parameter(ui,"Weight color maximum","1.1–8, dimensionless. Black=0, teal=1, yellow=maximum; values above it saturate only the color, not W. Applies immediately.",|ui|ui.add(egui::Slider::new(&mut self.controls.weight_range,1.1..=8.0)));
+                parameter(ui,"Emission rate white value","0.01–80 foam amount/area/s. Black=0, white=this value; affects only the illustrative source display. Applies immediately.",|ui|ui.add(egui::Slider::new(&mut self.controls.rate_range,0.01..=80.0).logarithmic(true)));
             });
             ui.separator();
-            ui.label("C = max(0, 1 − J)\nM = smoothstep(阈值, 阈值＋宽度, C)\nW = (1 − 强度) ＋ 强度 × 增益 × M\nS = 示意基准生成率 × W").on_hover_text("先在 FFT 原始采样上求掩码，再对目标格做面积平均。J 图也是格均值；不是用格均 J 再求掩码。J 是几何压缩代理，不是流速散度或精确破碎率。远海泡沫历史不参与权重。");
+            ui.label("C = max(0, 1 − J)\nM = smoothstep(threshold, threshold + width, C)\nW = (1 − strength) + strength × gain × M\nS = illustrative baseline emission rate × W").on_hover_text("The mask is calculated on raw FFT samples, then area-averaged over target cells. The J plot also shows cell averages; the mask is not calculated from cell-average J. J is a geometric compression proxy, not velocity divergence or an exact breaking rate. Offshore foam history does not affect the weight.");
             if let Some(error)=&self.error {ui.colored_label(egui::Color32::LIGHT_RED,error);}
         });
     }
     fn maps_panel(&mut self, ui: &mut egui::Ui) {
         const TITLES: [&str; 4] = [
-            "J · 格均面积变化比",
-            "M · 格均生成掩码",
-            "W · 生成权重",
-            "S · 示意加权生成率（非密度）",
+            "J · Cell-average area ratio",
+            "M · Cell-average emission mask",
+            "W · Emission weight",
+            "S · Illustrative weighted emission rate (not density)",
         ];
         let legends = [
             format!(
-                "橙：{:.2}  |  灰白：1  |  蓝：{:.2}",
+                "Orange: {:.2}  |  Off-white: 1  |  Blue: {:.2}",
                 1.0 - self.controls.j_range,
                 1.0 + self.controls.j_range
             ),
-            "黑：0  |  白：1（只压缩区域）".into(),
+            "Black: 0  |  White: 1 (compression only)".into(),
             format!(
-                "黑：0  |  青绿：1  |  黄：{:.1}",
+                "Black: 0  |  Teal: 1  |  Yellow: {:.1}",
                 self.controls.weight_range
             ),
-            format!("黑：0  |  白：{:.2} /s", self.controls.rate_range),
+            format!("Black: 0  |  White: {:.2} /s", self.controls.rate_range),
         ];
         ui.horizontal_wrapped(|ui| {
             if ui
-                .selectable_label(self.focus.is_none(), "四图对照")
+                .selectable_label(self.focus.is_none(), "Four-plot comparison")
                 .clicked()
             {
                 self.focus = None;
             }
-            for (i, title) in ["J", "掩码", "权重", "源项"].iter().enumerate() {
+            for (i, title) in ["J", "Mask", "Weight", "Source"].iter().enumerate() {
                 if ui.selectable_label(self.focus == Some(i), *title).clicked() {
                     self.focus = Some(i);
                 }
@@ -341,7 +341,7 @@ impl State {
                     self.stats = Some(Statistics::from_bytes(&bytes, pending.time, pending.params));
                     drop(bytes);
                 }
-                Err(error) => self.error = Some(format!("统计读回失败：{error}")),
+                Err(error) => self.error = Some(format!("Statistics readback failed: {error}")),
             }
             pending.buffer.unmap();
         }

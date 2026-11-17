@@ -1,4 +1,4 @@
-// 不透明预览材质：实际模拟三角形 + 光照和 Fresnel 天空反射。
+// Opaque preview material: actual simulation triangles with lighting and Fresnel sky reflection.
 struct Uniforms {
     view_projection: mat4x4<f32>,
     inverse_view_projection: mat4x4<f32>,
@@ -44,7 +44,7 @@ fn water_vertex(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>
 
 @fragment
 fn water_fragment(input: SurfaceOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    // 导数在分支之前执行，网格覆盖不依赖 polygon-line 设备 feature。
+    // Compute derivatives before branching; the mesh overlay does not require the polygon-line device feature.
     let width = max(fwidth(input.barycentric), vec3<f32>(1e-6));
     let edge = smoothstep(vec3<f32>(0.0), width * 1.2, input.barycentric);
     let wire = 1.0 - min(edge.x, min(edge.y, edge.z));

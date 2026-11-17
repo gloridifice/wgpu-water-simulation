@@ -1,58 +1,58 @@
-# 实施任务
+# Implementation Tasks
 
-实现、自动验证与原生桌面验收已执行；当前工作区另有 Fog 模块的格式／编译问题，详见 4.2 验证记录。设计见 [implement.md](implement.md)，验收编号对应 [proposal.md](../proposal.md)。
+Implementation, automated verification and native desktop acceptance have been performed; the current workspace has separate Fog formatting/compilation issues, detailed in the 4.2 verification record. See [implement.md](implement.md) for design; acceptance numbers refer to [proposal.md](../proposal.md).
 
-- [x] 1.1 定义湖泊配置、模式参数、默认值、有限数与范围校验以及旧配置兼容。
-  Acceptance: proposal 验收 6；旧配置仍使用原海洋模式，湖泊参数及两模式独立设置可往返，活动波不序列化。
+- [x] 1.1 Define lake configuration, mode parameters, defaults, finite-number and range validation, and old configuration compatibility.
+  Acceptance: proposal 6; old configurations retain the original ocean mode, lake parameters and independent mode settings round-trip, and active waves are not serialized.
 
-- [x] 1.2 实现确定性不规则湖岸、湖底、程序化岩石及共享干湿几何数据。
+- [x] 1.2 Implement deterministic irregular shoreline, lake bed, procedural rocks and shared wet/dry geometry data.
   Dependencies: 1.1
-  Acceptance: proposal 验收 1；固定种子可重建，无岸线自交、无限放置重试或岩石与遮罩明显错位。
+  Acceptance: proposal 1; fixed seeds rebuild consistently, without shoreline self-intersection, infinite placement retries or obvious rock/mask misalignment.
 
-- [x] 1.3 生成深度与含露水岩石孔洞的二维欧氏 SDF，提供统一坐标采样和场诊断资源。
+- [x] 1.3 Generate depth and two-dimensional Euclidean SDF with exposed-rock holes, and provide shared coordinate sampling and field diagnostic resources.
   Dependencies: 1.2
-  Acceptance: proposal 验收 1、2；规则参考误差在网格尺度内，水下岩石只影响深度，SDF 符号和距离单位正确；平台与中轴处理有限。
+  Acceptance: proposal 1, 2; error against regular references stays within grid scale, submerged rocks affect only depth, SDF signs and distance units are correct, and plateau/medial-axis handling remains finite.
 
-- [x] 2.1 实现有界波事件池、冻结发射参数、解析推进、一次反射和容量预留。
+- [x] 2.1 Implement a bounded wave event pool, frozen emission parameters, analytic advancement, single reflection and capacity reservation.
   Dependencies: 1.1
-  Acceptance: proposal 验收 3、4；精确抵岸时刻不依赖帧分割，扇区不翻转，反射较弱且仅一次，清空／过期不反射，暂停与池满行为符合设计。
+  Acceptance: proposal 3, 4; exact shore-arrival time is independent of frame partitioning, sectors do not flip, reflection is weaker and happens once, clear/expiry do not reflect, and pause/full-pool behavior follows the design.
 
-- [x] 2.2 实现 GPU 波记录、角包络、双模式波场合成及一致高度／坡度发布。
+- [x] 2.2 Implement GPU wave records, angular envelope, dual-mode wave-field composition and consistent height/slope publication.
   Dependencies: 1.3, 2.1
-  Acceptance: proposal 验收 2、3、5；CPU/WGSL 布局一致，角度跨界和交接连续，无干域水面、除零或非有限法线，无正常帧状态回读。
+  Acceptance: proposal 2, 3, 5; CPU/WGSL layouts agree, angular wraparound and handoff are continuous, with no dry-area water, division by zero, nonfinite normals or normal-frame state readback.
 
-- [x] 2.3 接入 Renderer、程序化不透明场景、窗口与快照调度，隔离海洋与湖泊资源路径。
+- [x] 2.3 Integrate Renderer, procedural opaque scene, window and snapshot scheduling, isolating ocean and lake resource paths.
   Dependencies: 2.2
-  Acceptance: proposal 验收 1、5；湖泊不推进 FFT/SWE/泡沫/浪花，无外围无限海面，支持的光学用湖波高度法线；物理焦散／物理折射在湖泊显式不可用，原海洋保持可用。
+  Acceptance: proposal 1, 5; lake does not advance FFT/SWE/foam/spray, has no surrounding infinite sea, and supported optics use lake wave height and normals; physical caustics/refraction are explicitly unavailable in lake mode, while the original ocean remains available.
 
-- [x] 3.1 接入场景入口、湖泊 Dock 面板、草稿应用和配置保存规则。
+- [x] 3.1 Integrate scene entry, lake Dock panel, draft application and configuration saving rules.
   Dependencies: 2.3
-  Acceptance: proposal 验收 6；五分类不变，深度／SDF 显式应用重置且失败保留旧场景，参数单位与生效语义清楚，岩石可配置，已有 Dock 布局不被覆盖，只读不写盘。
+  Acceptance: proposal 6; retain five categories, depth/SDF require explicit application and reset and retain the old scene on failure, parameter units and application semantics are clear, rocks are configurable, existing Dock layouts are not overwritten and read-only mode does not write.
 
-- [x] 3.2 增加有行为价值的 CPU 与真实 GPU 验证入口并完成固定条件视觉对比。
+- [x] 3.2 Add behaviorally valuable CPU and real GPU verification entry points and perform visual comparisons under fixed conditions.
   Dependencies: 3.1
-  Acceptance: proposal 验收 1–6；先读取 test-audit skill；验证场生成、距离参考、单次反射、时序分割、角度跨界、配置兼容与生产 shader，不以编译代替 GPU 检查、不以离屏图代替 UI。
+  Acceptance: proposal 1–6; read the test-audit skill first; verify field generation, distance references, single reflection, time partitioning, angle wraparound, configuration compatibility and production shaders. Do not substitute compilation for GPU checks or offscreen images for UI acceptance.
 
-- [x] 4.1 同步已实现架构、Ocean 使用说明与工作区／湖泊行为规范。
+- [x] 4.1 Synchronize implemented architecture, Ocean usage guide and workspace/lake behavior specifications.
   Dependencies: 3.2
-  Acceptance: proposal 验收 7；记录两种传播场单位与局限、岩石行为、单次反射、禁用光学、参数重置和保存边界，不将计划或未验证视觉描述成既成事实。
+  Acceptance: proposal 7; document units and limitations of both propagation fields, rock behavior, single reflection, disabled optics and parameter reset/save boundaries without presenting plans or unverified visuals as delivered facts.
 
-- [x] 4.2 执行最终格式、静态检查、库测试、相关 GPU 验证、真实 UI 与性能验收，记录限制。
+- [x] 4.2 Perform final formatting, static checks, library tests, relevant GPU verification, real UI and performance acceptance; record limitations.
   Dependencies: 4.1
-  Acceptance: `cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --features ocean --lib` 及相关实际 GPU 验证通过；固定种子／相机／时间对照两模式与反射，记录默认及满池 GPU 耗时；窗口限帧且 no-settings，不覆盖个人配置，不终止用户程序。无法运行的检查明确列出，不声称全部通过。
+  Acceptance: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --features ocean --lib` and relevant actual GPU verification pass; compare both modes and reflection with fixed seed/camera/time and record default and full-pool GPU times. Limit window frames and use no-settings, do not overwrite personal configuration or terminate user programs. Explicitly list checks that cannot run; do not claim everything passed.
 
 ## Verification
 
-- 1.1–1.3：湖泊配置兼容／往返／非法值拒绝、固定种子场生成、独立圆环＋岛屿距离参考（网格容差）及水下岩石只改变深度的库测试通过。
-- 2.1：帧时间分割、固定扇区、较弱后代、单次反射、暂停、满池预留与清空取消行为测试通过。
-- 2.2–2.3：RTX 3070 / Vulkan，实际 GPU compute 和 raster 检查通过；包括干湿／波谷约束、高度坡度一致、两模式差异、±180° 连续、512 秒重基准、反射交接、静水／清空、物理光学隔离、快速折射／SSR 与切回原海洋。交接两侧 0.0002 秒的最大高度差约 4.8e-5 米。
-- 3.1：生产 egui 控件测试确认选 SDF 只改草稿，显式应用才更新模式与重置请求；既有 Dock、配置保存／只读测试通过。专用只读 512² SDF 配置完成快照和 120 帧窗口运行，文件 SHA-256 前后一致，未产生布局 sidecar。
-- 3.2：`cargo test --features ocean --lib`：74 passed。已按 test-audit 的行为／独立预期要求编写测试，没有新增仅供测试的生产接口。固定场景种子 73、波种子 42、湖泊相机、t=7 的深度／SDF 快照已读取对比；岩石与岸域可见，波纹较弱，不据静态截图声称运动方向已做人工确认。
-- 4.1：已同步 [architecture.md](../../../../architecture.md)、[Ocean 指南](../../../../guides/ocean.md)、[UI 规范](../../../../specs/workspace-ui.md)，新增 [湖泊规范](../../../../specs/animated-lake.md)，明确动画／SDF 局限和不支持光学。
-- 4.2 已通过部分：`cargo fmt --all --check`；`cargo clippy --workspace --all-targets -- -D warnings`；74 个库测试；release 构建；专项 `--verify-lake`、`--verify-optics` 和完整 `--verify`（含原 FFT/SWE/泡沫/浪花／光学回归）；只读 512² 窗口冒烟及两模式快照。最终完整 GPU 日志临时保留在忽略目录 仓库根目录下的 target/lake-full-verification-final.log（临时证据，不是持久交付文档）。
-- 性能：256² 波场合成（不含绘制／UI），真实 GPU timestamp，预热后 9 次；4 条活动波中位数约 0.018 ms，128 条约 0.093 ms。结果仅代表本机 RTX 3070，不承诺其他硬件帧率。
-- 原生 UI 已确认部分：限帧、no-settings 窗口运行，cutty 截图实际读取确认五分类、湖泊场景入口、共享两列参数、深度／SDF 选择器及禁用保存状态。截图与临时配置均不纳入版本管理，程序按有限帧自行退出，没有终止用户进程。
-- 4.2 原生桌面补充验收：使用任务专用 `target/lake-ui-acceptance.json`，未触碰个人配置。真实窗口点击已确认应用 SDF 并手动保存，暂停时“发射一道”使活动波由 0 变为 1；将“湖泊动画”拖到“场景与地形”同组后关闭本次测试进程并重启，sidecar 与 cutty 截图确认双标签及活动标签恢复。窗口均限帧，只关闭本次明确启动的测试进程。
-- 4.2 MCP 补充验收：Pi 工具目录当时未暴露项目工具，因此用本地 MCP SDK 建立独立 `target/debug/ocean.exe --headless --no-settings` stdio 会话，未改 `.pi/mcp.json`。`scene_describe`／`parameters_get` 后发现字段和动作，实际调用参数补丁、`lake.emit`／`lake.clear`、固定步进与截帧；暂停状态仍接受显式步进。固定种子和相机的波高诊断图已读取，确认深度入射、同扇区较弱反射、SDF 弧段及清空归零；未仅凭 PNG 成功断言视觉结果。
-- 4.2 当前复检：`cargo clippy --features ocean --lib -- -D warnings` 通过；`cargo test --features ocean --lib` 为 75 passed（新增的一项来自后续 MCP 接入）；`target/debug/ocean.exe --verify-lake` 再次通过，4／128 波中位耗时约 0.018／0.102 ms。`git diff --check` 通过。
-- 当前工作区限制（不属于本湖泊变更）：`cargo fmt --all --check` 现被 `crates/swe-fog/src/parameters.rs`、`volumes.rs` 的格式差异挡住；`cargo clippy --workspace --all-targets -- -D warnings` 现被这两个 Fog 文件中的 `String`／`Box<dyn Error>` 类型错误挡住。未为通过检查擅改这些无关文件。湖泊交付时上述全仓格式、clippy、74 个库测试及完整 GPU 回归均已实际通过；当前结果不声称为全仓通过。
+- 1.1–1.3: Library tests passed for lake configuration compatibility/round trips/invalid-value rejection, fixed-seed field generation, independent circular-ring plus island distance references (grid tolerance), and submerged rocks affecting depth only.
+- 2.1: Behavior tests passed for frame-time partitioning, fixed sectors, weaker descendants, single reflection, pause, full-pool reservation and cancellation on clear.
+- 2.2–2.3: Actual GPU compute and raster checks passed on RTX 3070 / Vulkan, including wet/dry and trough constraints, height/slope consistency, mode differences, ±180° continuity, 512-second rebasing, reflection handoff, still water/clear, physical optics isolation, fast refraction/SSR and switching back to the original ocean. Maximum height difference 0.0002 seconds on either side of handoff was approximately 4.8e-5 meters.
+- 3.1: Production egui control tests confirmed selecting SDF changes only the draft; explicit application updates the mode and reset request. Existing Dock and configuration saving/read-only tests passed. A dedicated read-only 512² SDF configuration completed snapshots and a 120-frame window run; its SHA-256 was unchanged and no layout sidecar was produced.
+- 3.2: `cargo test --features ocean --lib`: 74 passed. Tests follow test-audit's behavior/independent-expectation requirements, with no new test-only production interfaces. Depth/SDF snapshots with scene seed 73, wave seed 42, lake camera and t=7 were read and compared; rocks and shore were visible, ripples were weak, and static screenshots are not claimed as manual confirmation of motion direction.
+- 4.1: Synchronized [architecture.md](../../../../architecture.md), [Ocean guide](../../../../guides/ocean.md) and [UI specification](../../../../specs/workspace-ui.md), and added the [lake specification](../../../../specs/animated-lake.md), documenting animation/SDF limitations and unsupported optics.
+- 4.2 passed at delivery: `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; 74 library tests; release build; targeted `--verify-lake`, `--verify-optics` and full `--verify` (including original FFT/SWE/foam/spray/optics regression); read-only 512² window smoke and snapshots of both modes. The final full GPU log was temporarily retained in the ignored repository-root path target/lake-full-verification-final.log (temporary evidence, not a durable delivery document).
+- Performance: 256² wave-field composition (excluding drawing/UI), real GPU timestamps, nine runs after warmup; medians approximately 0.018 ms for 4 active waves and 0.093 ms for 128. Results represent only the local RTX 3070 and promise no frame rate on other hardware.
+- Confirmed native UI: a frame-limited, no-settings window run and actual inspection of cutty screenshots confirmed five categories, lake scene entry, shared two-column parameters, depth/SDF selector and disabled save state. Screenshots and temporary configuration were not versioned; the program exited after its frame limit and no user process was terminated.
+- 4.2 additional native desktop acceptance: used task-specific `target/lake-ui-acceptance.json` without touching personal configuration. Real window clicks confirmed applying SDF and manually saving; “Emit One” while paused changed active waves from 0 to 1. After dragging “Lake Animation” into the “Scene and Terrain” group, closing this test process and restarting, the sidecar and cutty screenshots confirmed restoration of both tabs and the active tab. Windows were frame-limited; only the test process explicitly started for this task was closed.
+- 4.2 additional MCP acceptance: Pi's tool catalog did not expose project tools at the time, so a local MCP SDK established a separate `target/debug/ocean.exe --headless --no-settings` stdio session without modifying `.pi/mcp.json`. After discovering fields and actions using `scene_describe`/`parameters_get`, actually invoked parameter patches, `lake.emit`/`lake.clear`, fixed stepping and captures; explicit stepping remained available while paused. Fixed-seed and camera wave-height diagnostic images were read, confirming depth incidence, weaker reflection in the same sector, SDF arcs and clearing to zero; visual results were not asserted from PNG creation alone.
+- 4.2 current recheck: `cargo clippy --features ocean --lib -- -D warnings` passed; `cargo test --features ocean --lib` reported 75 passed (the extra test came from later MCP integration); `target/debug/ocean.exe --verify-lake` passed again, with median times of approximately 0.018/0.102 ms for 4/128 waves. `git diff --check` passed.
+- Current workspace limitation (outside this lake change): `cargo fmt --all --check` is now blocked by formatting differences in `crates/swe-fog/src/parameters.rs` and `volumes.rs`; `cargo clippy --workspace --all-targets -- -D warnings` is now blocked by `String`/`Box<dyn Error>` type errors in those two Fog files. These unrelated files were not changed merely to pass checks. Repository-wide formatting, clippy, 74 library tests and full GPU regression actually passed at lake delivery; the current results do not claim a repository-wide pass.

@@ -1,4 +1,4 @@
-// 一个绑定布局涵盖所有压力阶段；mode 只由调度端改变。
+// One binding layout covers all pressure stages; mode is changed only by the dispatcher.
 struct Params {
     grid: vec4<u32>,             // nx, ny, nz, fine cell count
     counts: vec4<u32>,           // dofs, velocity count, fluid count, mode
@@ -13,7 +13,7 @@ struct Params {
 @group(0) @binding(2) var<storage, read> coefficients: array<f32>;
 @group(0) @binding(3) var<storage, read_write> velocity: array<f32>;
 @group(0) @binding(4) var<storage, read_write> fine_pressure: array<f32>;
-// x, b, r, z, p, A*p，均为 dofs 长度。
+// x, b, r, z, p, A*p, each of length dofs.
 @group(0) @binding(5) var<storage, read_write> vectors: array<f32>;
 // rr, rz, pAp, bb, previous_rz, divergence_rms, divergence_max。
 @group(0) @binding(6) var<storage, read_write> stats: array<f32>;
@@ -75,7 +75,7 @@ fn pressure_main(@builtin(global_invocation_id) gid: vec3<u32>,
     let i = gid.x;
     let n = params.counts.x;
     let mode = params.counts.w;
-    // 归约仅 dispatch 一个 workgroup；每个线程跨步遍历整个数组，再在共享内存中归约。
+    // Reduction dispatches one workgroup; each thread strides across the array before reducing in shared memory.
     if mode == 4u {
         var sums = vec4<f32>(0.0);
         for (var k = lid.x; k < n; k += 256u) {

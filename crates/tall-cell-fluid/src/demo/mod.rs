@@ -1,5 +1,5 @@
-//! 独立可视化示例。模拟在线程中运行，窗口显示真实 GPU 提取的表面快照。
-//! 通过 `cargo run --features demo --bin fluid-demo` 启动，不引用 Ocean。
+//! Standalone visual demo. The simulation runs on a thread; the window displays GPU-extracted surface snapshots.
+//! Run with `cargo run --features demo --bin fluid-demo`; does not depend on Ocean.
 
 mod gpu_timer;
 mod gui;
@@ -23,25 +23,25 @@ use winit::{
 };
 use worker::{Command, DemoConfig, Frame, Scene, Worker, WorkerEvent};
 
-const HELP: &str = "独立三维液体 GPU demo（不使用 Ocean）
+const HELP: &str = "Standalone 3D GPU fluid demo (without Ocean)
 
-cargo run --release --features demo --bin fluid-demo -- [选项]
-  --scene drop|dam   液滴落水 / 水柱溃坝，默认 drop
-  --resolution N     2m 立方域每轴单元数，8..40，默认 16
-  --paused           初始暂停
-  --frames N         显示 N 帧后退出，用于有限时长冒烟验证
-  --steps N          达到 N 个模拟子步后退出（配合 snapshot 可保存指定时刻）
-  --snapshot PATH    保存 PNG 后退出；不覆盖已有文件，未给 steps 时截初始状态
-  --view water|mesh|normals  水面材质 / 三角网格 / 法线，默认 water
-  --verify           无窗口验证两个场景、真实表面、暂停/单步/重置；steps 默认 6，至少 2
-  -h, --help         显示帮助
+cargo run --release --features demo --bin fluid-demo -- [options]
+  --scene drop|dam   Droplet / dam break, default drop
+  --resolution N     Cells per axis in the 2m cube, 8..40, default 16
+  --paused           Start paused
+  --frames N         Exit after N displayed frames, for bounded smoke runs
+  --steps N          Exit after N simulation substeps (use with snapshot to save a specific time)
+  --snapshot PATH    Save a PNG and exit; never overwrite, capture the initial state if steps is omitted
+  --view water|mesh|normals  Water material / triangle mesh / normals, default water
+  --verify           Headless verification of both scenes, real surfaces, pause/step/reset; steps defaults to 6, minimum 2
+  -h, --help         Show help
 
-空格：播放/暂停 | N：暂停时单步 | R：重置 | 1/2：液滴/溃坝
-V：材质/三角网格/法线 | 鼠标左键拖动：环绕 | 滚轮：缩放 | Home：恢复相机
-Esc：退出。egui 面板显示模拟、Mesh 和着色耗时，也可通过面板控制场景与显示方式。
-模拟 / Mesh 为包含回读等待的墙钟时间；着色为真实 GPU 时间，三者采样频率不同。
+Space: play/pause | N: step while paused | R: reset | 1/2: droplet/dam break
+V: water/mesh/normals | left drag: orbit | scroll: zoom | Home: reset camera
+Esc: quit. The egui panel shows simulation, mesh and rendering timings and controls the scene and view.
+Simulation and mesh timings are wall-clock times including readback waits; rendering uses actual GPU time. Sampling rates differ.
 
-求解在后台按 CFL 推进，窗口独立刷新；模拟时间不保证与现实时间同步。
+The solver advances in the background according to CFL while the window refreshes independently; simulation time need not match real time.
 ";
 
 struct Options {
@@ -58,9 +58,9 @@ fn value<T: std::str::FromStr>(
     flag: &str,
 ) -> Result<T, String> {
     args.next()
-        .ok_or_else(|| format!("{flag} 缺少值"))?
+        .ok_or_else(|| format!("{flag} requires a value"))?
         .parse()
-        .map_err(|_| format!("{flag} 的值不合法"))
+        .map_err(|_| format!("invalid value for {flag}"))
 }
 
 fn options() -> Result<Option<Options>, String> {
@@ -87,7 +87,7 @@ fn options() -> Result<Option<Options>, String> {
                 result.config.scene = match value::<String>(&mut args, &arg)?.as_str() {
                     "drop" => Scene::Drop,
                     "dam" => Scene::Dam,
-                    _ => return Err("scene 必须为 drop 或 dam".into()),
+                    _ => return Err("scene must be drop or dam".into()),
                 }
             }
             "--resolution" => result.config.resolution = value(&mut args, &arg)?,
@@ -101,37 +101,40 @@ fn options() -> Result<Option<Options>, String> {
                     "water" => ViewMode::Water,
                     "mesh" => ViewMode::Mesh,
                     "normals" => ViewMode::Normals,
-                    _ => return Err("view 必须为 water、mesh 或 normals".into()),
+                    _ => return Err("view must be water, mesh or normals".into()),
                 }
             }
-            _ => return Err(format!("未知选项 {arg}；使用 --help 查看帮助")),
+            _ => return Err(format!("unknown option {arg}; use --help for help")),
         }
     }
     if !(8..=40).contains(&result.config.resolution) {
-        return Err("resolution 必须在 8..40 之间".into());
+        return Err("resolution must be between 8 and 40".into());
     }
     if result.frames == Some(0) {
-        return Err("frames 必须为正数".into());
+        return Err("frames must be positive".into());
     }
     if result.verify && (result.snapshot.is_some() || result.frames.is_some()) {
-        return Err("verify 为无窗口验证，不能同时指定 snapshot 或 frames".into());
+        return Err("verify is headless and cannot be combined with snapshot or frames".into());
     }
     if result.verify && result.steps.unwrap_or(6) < 2 {
-        return Err("verify 至少需要 2 个子步".into());
+        return Err("verify requires at least 2 substeps".into());
     }
     if result.snapshot.as_ref().is_some_and(|path| path.exists()) {
-        return Err("snapshot 文件已存在；请选择新路径".into());
+        return Err("snapshot file already exists; choose a new path".into());
     }
     if result.snapshot.is_some() && result.steps.is_none() {
         result.steps = Some(0);
     }
     if result.config.paused && result.steps.is_some_and(|n| n > 0) && !result.verify {
-        return Err("paused 与正数 steps 会阻止自动完成；请去掉其中一个".into());
+        return Err(
+            "paused with a positive steps value prevents automatic completion; remove one of them"
+                .into(),
+        );
     }
     Ok(Some(result))
 }
 
-/// CLI 入口，独立创建事件循环和工作线程；不加载/保存任何个人设置。
+/// CLI entry point; creates its own event loop and worker thread without loading or saving personal settings.
 pub fn run() -> Result<(), String> {
     let Some(options) = options()? else {
         return Ok(());
@@ -143,7 +146,7 @@ pub fn run() -> Result<(), String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     let paused = options.config.paused || options.steps == Some(0);
     let scene = options.config.scene;
-    // 有限子步运行逐帧请求单步，避免最新帧 mailbox 越过指定截图时刻。
+    // Request one step per frame in finite runs so the latest-frame mailbox cannot skip the snapshot time.
     let worker = Worker::spawn(DemoConfig {
         paused: paused || options.steps.is_some(),
         ..options.config
@@ -221,33 +224,34 @@ impl App {
             return;
         };
         let scene = match self.scene {
-            Scene::Drop => "液滴落水",
-            Scene::Dam => "水柱溃坝",
+            Scene::Drop => "Droplet",
+            Scene::Dam => "Dam Break",
         };
         let view = match self.options.view {
-            ViewMode::Water => "水面",
-            ViewMode::Mesh => "三角网格",
-            ViewMode::Normals => "法线",
+            ViewMode::Water => "Water",
+            ViewMode::Mesh => "Mesh",
+            ViewMode::Normals => "Normals",
         };
         if let Some(error) = &self.worker_error {
             window.set_title(&format!(
-                "Tall Cell Fluid | 计算失败：{error} | R 重置 / Esc 退出"
+                "Tall Cell Fluid | Computation failed: {error} | R reset / Esc quit"
             ));
         } else if let Some(frame) = &self.frame {
             let state = if frame.generation < self.expected_generation {
-                "重置中"
+                "Resetting"
             } else if self.paused && !frame.paused {
-                "等待暂停"
+                "Waiting to pause"
             } else if self.paused {
-                "已暂停"
+                "Paused"
             } else {
-                "运行中"
+                "Running"
             };
             window.set_title(&format!("Tall Cell Fluid | {scene} · {view} | {state} | t={:.3}s · step={} · {} triangles | Space/N/R · 1/2 · V",
                 frame.time,frame.steps,frame.mesh.indices.len()/3));
         } else {
-            window
-                .set_title("Tall Cell Fluid | 正在初始化 GPU 与初始水面… | 鼠标拖动/滚轮调整相机");
+            window.set_title(
+                "Tall Cell Fluid | Initializing GPU and surface... | Drag/scroll to adjust camera",
+            );
         }
     }
 
@@ -328,7 +332,7 @@ impl App {
                 return;
             }
         };
-        // 冒烟帧数从实际水面就绪后开始，避免初始化画面耗尽整个验证窗口。
+        // Count smoke-test frames only after the surface is ready, so initialization cannot consume the entire run.
         if self.frame.is_some() {
             self.presented += 1;
         }
@@ -356,7 +360,10 @@ impl App {
             event_loop.exit();
         } else if self.options.frames.is_some_and(|n| self.presented >= n) {
             if self.options.snapshot.is_some() {
-                self.fail(event_loop, "达到 frames 上限，尚未到达截图目标子步".into());
+                self.fail(
+                    event_loop,
+                    "Reached the frames limit before the target snapshot substep".into(),
+                );
             } else {
                 self.send(Command::Stop);
                 event_loop.exit();

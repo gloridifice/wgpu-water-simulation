@@ -35,21 +35,21 @@ impl CoefficientEditor {
         }
         ui.push_id(label, |ui| {
             yummy_egui::h3(ui, label).on_hover_text(
-                "线性 RGB 系数等于颜色乘以强度；消光为零时使用散射源乘以距离的解析极限。",
+                "The linear RGB coefficient is color multiplied by intensity; when extinction is zero, the analytic limit is the scattering source multiplied by distance.",
             );
             let mut changed = false;
             parameter_table(ui, "coefficient table", |ui| {
                 changed |= parameter(
                     ui,
-                    "颜色",
-                    "线性 RGB 颜色；实际系数等于颜色乘以强度。",
+                    "Color",
+                    "Linear RGB color; the actual coefficient is color multiplied by intensity.",
                     |ui| ui.color_edit_button_rgb(&mut self.tint),
                 )
                 .changed();
                 changed |= parameter(
                     ui,
-                    "强度",
-                    "独立调整系数大小，范围 0～10，使用对数滑块；右侧可精确输入，实时生效，不重置模拟。",
+                    "Intensity",
+                    "Adjust coefficient magnitude independently, 0–10, using a logarithmic slider or precise input on the right. Applies immediately without resetting the simulation.",
                     |ui| {
                         ui.add(
                             ParameterSlider::new(&mut self.strength, 0.0..=10.0)
@@ -66,10 +66,10 @@ impl CoefficientEditor {
                 *rgb = self.tint.map(|v| v * self.strength);
                 self.last_rgb = *rgb;
             }
-            ui.collapsing("RGB 精确值", |ui| {
+            ui.collapsing("Exact RGB values", |ui| {
                 parameter_table(ui, "RGB table", |ui| {
                     for (channel, name) in ["R", "G", "B"].into_iter().enumerate() {
-                        parameter(ui, name, "线性 RGB 系数，范围 0～10；对数滑块保留右侧精确输入，实时生效，不重置模拟。", |ui| {
+                        parameter(ui, name, "Linear RGB coefficient, 0–10; logarithmic slider with precise input on the right. Applies immediately without resetting the simulation.", |ui| {
                             ui.add(
                                 ParameterSlider::new(&mut rgb[channel], 0.0..=10.0)
                                     .logarithmic(true)

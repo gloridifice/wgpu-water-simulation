@@ -35,7 +35,9 @@ impl<T: Clone + PartialEq + Serialize> Sidecar<T> {
         self.observed = Some(value);
     }
     pub fn read_failed(&mut self, error: String) {
-        self.error = Some(format!("布局读取失败：{error}；已保留原文件"));
+        self.error = Some(format!(
+            "Failed to load layout: {error}; original file preserved"
+        ));
         self.blocked = true;
     }
     pub fn read_json(&self) -> Result<Option<serde_json::Value>, String> {
@@ -45,7 +47,7 @@ impl<T: Clone + PartialEq + Serialize> Sidecar<T> {
             Err(e) => return Err(e.to_string()),
         };
         if metadata.len() > 1024 * 1024 {
-            return Err("文件超过 1 MiB".into());
+            return Err("File exceeds 1 MiB".into());
         }
         serde_json::from_slice(&std::fs::read(&self.path).map_err(|e| e.to_string())?)
             .map(Some)
@@ -89,7 +91,7 @@ impl<T: Clone + PartialEq + Serialize> Sidecar<T> {
                 self.error = None;
                 self.attempted_at = None;
             }
-            Err(e) => self.error = Some(format!("布局保存失败：{e}")),
+            Err(e) => self.error = Some(format!("Failed to save layout: {e}")),
         }
     }
 }

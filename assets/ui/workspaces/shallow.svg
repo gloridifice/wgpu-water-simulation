@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" role="img" aria-labelledby="shallow-title">
-  <title id="shallow-title">浅水：水面与近岸坡底</title>
+  <title id="shallow-title">Shallow Water: surface and nearshore slope</title>
   <path d="M2.75 6.25c2.3 0 2.3 1.5 4.62 1.5s2.32-1.5 4.63-1.5 2.31 1.5 4.63 1.5 2.32-1.5 4.62-1.5"/>
   <path d="M2.75 11.25c3.5 0 5.5 1.75 8.5 4s6 3.5 10 3.5H2.75Z"/>
 </svg>

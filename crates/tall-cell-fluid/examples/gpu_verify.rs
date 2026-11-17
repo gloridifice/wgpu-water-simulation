@@ -1,4 +1,4 @@
-//! 无窗口、无需资源下载的实际 GPU 验证。失败以非零退出码结束，不静默跳过。
+//! Headless real GPU verification without resource downloads. Failures exit nonzero, never silently skip.
 use tall_cell_fluid::adaptivity::{AdaptiveGrid, AdaptivityConfig, PressureBasis};
 use tall_cell_fluid::gpu::{self, GpuContext, GpuSimulation};
 use tall_cell_fluid::surface::SurfaceLimits;
@@ -21,7 +21,7 @@ fn verify_adaptivity(context: &GpuContext) -> Result<(), String> {
         let top = size[1] as f64 * 0.07;
         grid.set_liquid_sdf(|p| p[1] - top);
         if size[1] == 33 {
-            // 不规则静态台阶以及空中液体，验证连续水柱分段。
+            // Irregular static steps and airborne liquid verify contiguous column segmentation.
             grid.set_solid_sdf(|p| if p[0] < 0.25 { p[1] - 0.3 } else { 1.0 });
             for n in 0..grid.phi.len() {
                 let c = grid.domain.coord(n);
@@ -184,7 +184,7 @@ fn verify_pipeline(context: &GpuContext) -> Result<(), String> {
     pool.set_liquid_sdf(|p| p[1] - 2.0);
     let initial_volume = pool.liquid_volume();
     let mut config = gpu::default_config();
-    config.reinitialize_every = 2; // 本次验证明确覆盖距离重建。
+    config.reinitialize_every = 2; // Explicitly cover distance reinitialization in this verification.
     let mut sim = GpuSimulation::from_grid(context, pool, config.clone())?;
     let reports = sim.advance(0.04)?;
     assert!(reports.iter().all(|r| r.projection.converged));

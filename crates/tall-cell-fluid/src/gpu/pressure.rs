@@ -1,4 +1,4 @@
-//! GPU 压力投影。CPU 只组装拓扑/CSR 和读取收敛标量，不计算 RHS 或迭代向量。
+//! GPU pressure projection. The CPU only assembles topology/CSR and reads convergence scalars, not RHS or iteration vectors.
 
 use super::GpuContext;
 use crate::adaptivity::AdaptiveGrid;
@@ -28,9 +28,9 @@ struct ResultData {
     after: f64,
 }
 
-/// 实际执行 WGSL RHS、CSR 乘法、Jacobi-PCG、点积、压力重建及 MAC 速度修正。
+/// Execute WGSL RHS, CSR multiplication, Jacobi-PCG, dot products, pressure reconstruction, and MAC velocity correction.
 ///
-/// 回退仍使用 GPU 完整细基求解，绝不调用 CPU `pressure::project`。
+/// Fallback still solves on the GPU with the full fine basis and never calls CPU `pressure::project`.
 pub fn project(
     context: &GpuContext,
     grid: &mut Grid,
@@ -48,7 +48,7 @@ pub fn project(
         || !((dt / density) as f32).is_normal()
         || !((density / dt) as f32).is_normal()
     {
-        return Err("GPU 投影时间步和密度必须为有限正数，且比例可由 f32 表示".into());
+        return Err("GPU projection time step and density must be finite positive numbers with ratios representable as f32".into());
     }
     let mut output = solve(context, grid, adaptive, dt, density, config)?;
     let mut report = ProjectionReport {
@@ -65,7 +65,7 @@ pub fn project(
         adaptive_residual_norm: output.residual,
     };
     if !report.converged && config.fine_fallback {
-        // 尚未提交第一次求解的速度，因而回退天然从同一个临时状态重新开始。
+        // The first solve's velocity has not been committed, so fallback restarts from the same temporary state.
         let uniform = AdaptiveGrid::uniform(grid);
         output = solve(context, grid, &uniform, dt, density, config)?;
         report.iterations += output.iterations;
@@ -91,7 +91,8 @@ pub fn project(
 }
 
 fn append<T: Copy>(destination: &mut Vec<T>, values: &[T]) -> Result<u32, String> {
-    let offset = u32::try_from(destination.len()).map_err(|_| "GPU 压力缓冲区下标溢出")?;
+    let offset =
+        u32::try_from(destination.len()).map_err(|_| "GPU pressure buffer index overflow")?;
     destination.extend_from_slice(values);
     Ok(offset)
 }
@@ -125,7 +126,9 @@ fn solve(
         .basis
         .iter()
         .flat_map(|basis| basis.indices)
-        .map(|i| u32::try_from(i).map_err(|_| "GPU 压力基函数下标溢出".to_owned()))
+        .map(|i| {
+            u32::try_from(i).map_err(|_| "GPU pressure basis function index overflow".to_owned())
+        })
         .collect::<Result<_, _>>()?;
     let basis_weights: Vec<f32> = adaptive
         .basis
@@ -213,7 +216,7 @@ fn solve(
         if length as u64 * 4 > context.device.limits().max_storage_buffer_binding_size
             || length > u32::MAX as usize
         {
-            return Err("GPU 压力工作缓冲区超过设备上限".into());
+            return Err("GPU pressure work buffer exceeds device limit".into());
         }
     }
     let metadata_buffer = context.buffer("pressure topology", &metadata);
@@ -254,7 +257,7 @@ fn solve(
     dispatch(&mut params, 4, 256);
     let mut statistics = context.read::<f32>(&stats, 8)?;
     let rhs_norm = f64::from(statistics[3]).sqrt();
-    // 固定的 Neumann 参考行可累积其余行残差，使用保守的绝对散度约束。
+    // The pinned Neumann reference row can accumulate residuals from other rows, so use a conservative absolute divergence bound.
     let tolerance = config
         .absolute_tolerance
         .max(config.relative_tolerance * rhs_norm)
@@ -283,7 +286,7 @@ fn solve(
             dispatch(&mut params, 5, dofs);
         }
     }
-    // 一律使用重新计算的真实残差，不能仅相信 PCG 递推残差。
+    // Always use the recomputed true residual, not just the PCG recurrence residual.
     dispatch(&mut params, 6, dofs);
     dispatch(&mut params, 7, dofs);
     dispatch(&mut params, 4, 256);
@@ -300,7 +303,7 @@ fn solve(
         || !residual.is_finite()
         || pressure.iter().chain(&velocity).any(|v| !v.is_finite())
     {
-        return Err("GPU 压力求解产生非有限数".into());
+        return Err("GPU pressure solve produced non-finite values".into());
     }
     Ok(ResultData {
         pressure,
@@ -320,7 +323,7 @@ mod tests {
     use crate::adaptivity::PressureBasis;
 
     #[test]
-    #[ignore = "需要实际 GPU；通过 --ignored 显式执行"]
+    #[ignore = "Requires a real GPU; run explicitly with --ignored"]
     fn gpu_pressure_closed_free_surface_reduced_and_fallback() {
         let context = pollster::block_on(GpuContext::new()).expect("GPU adapter");
         let config = PressureConfig {

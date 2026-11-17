@@ -1,6 +1,6 @@
 use super::{CellType, Grid, Particle};
 
-/// 返回给定交错网格上的双线性四邻居及权重。
+/// Return the four bilinear neighbors and weights on the given staggered grid.
 fn stencil(
     x: f64,
     y: f64,
@@ -123,7 +123,7 @@ fn velocity(grid: &Grid, x: f64, y: f64) -> (f64, f64) {
     )
 }
 
-/// 纯 PIC：直接插值新网格速度。后续 FLIP 可在此增加“插值网格速度增量”。
+/// Pure PIC: interpolate the new grid velocity directly. A future FLIP scheme could interpolate velocity changes here.
 pub(crate) fn grid_to_particles(
     particles: &mut [Particle],
     grid: &Grid,
@@ -161,7 +161,7 @@ pub(crate) fn grid_to_particles(
                 p.y = bed;
                 p.v = p.v.max(0.0);
             } else {
-                // 撞到阶梯坡面的竖直面时退回，不把粒子直接抬上台阶。
+                // Revert on collision with a vertical stair face rather than lifting the particle onto the step.
                 p.x = old_x;
                 p.u = 0.0;
                 p.y = p.y.max(grid.bed_height(p.x) + radius);
@@ -198,7 +198,7 @@ mod tests {
         grid.mark_solids(2.0 * grid.h);
         grid.mark_fluid(&particles);
         particles_to_grid(&particles, &mut grid);
-        // 只测传递本身；静止固壁边界与匀速流并不相容，不在此加入边界外推。
+        // Test transfer alone; stationary solid walls are incompatible with uniform flow, so omit boundary extrapolation.
         for (valid, weight) in grid.u_valid.iter_mut().zip(&grid.u_weight) {
             *valid = *weight > 0.0;
         }

@@ -1,4 +1,4 @@
-// 所有长度以格距计进行回溯，场值 phi/solid 仍为米，速度为 m/s。
+// Backtrace lengths are in grid spacings; phi and solid remain in meters and velocity in m/s.
 struct Params {
     dims: vec4<u32>,
     offsets: vec4<u32>,

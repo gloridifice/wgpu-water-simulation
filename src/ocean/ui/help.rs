@@ -1,184 +1,185 @@
 //! Parameter descriptions retained when reorganizing the panels.
 pub fn help(name: &str) -> &'static str {
     match name {
-        "折射扰动强度" => {
-            "无量纲，0～2，默认 1。缩放局部平面折射估计的 UV 偏移，0 不偏移。实时生效，手动保存，不重置。"
+        "Refraction Distortion Strength" => {
+            "Dimensionless, 0–2, default 1. Scales the UV offset estimated by local planar refraction; 0 disables the offset. Applies live; save manually; no reset."
         }
-        "折射充分扰动水深（米）" => {
-            "0.01～20 米，默认 2。小于此水深时逐渐减弱偏移，减少岸边薄水层拉伸。实时生效，手动保存，不重置。"
+        "Full Refraction Distortion Depth (m)" => {
+            "0.01–20 m, default 2. Gradually reduces the offset below this depth to reduce stretching in thin nearshore water. Applies live; save manually; no reset."
         }
-        "折射偏移上限（屏幕高度%）" => {
-            "0～20%，默认 4%。限制近似折射在屏幕中的最大位移；按屏幕高度归一，保持不同宽高比下一致。实时生效，手动保存，不重置。"
+        "Maximum Refraction Offset (% of screen height)" => {
+            "0–20%, default 4%. Limits the maximum screen displacement from approximate refraction, normalized by screen height for consistency across aspect ratios. Applies live; save manually; no reset."
         }
-
-        "启用水底焦散" => {
-            "实际 FFT／SWE 波面折射太阳光，照亮平底、沙坡及礁石高度场。模型使用分层高度场最近交点，扫描材质仅叠加聚光增亮；不支持洞穴和悬挑。默认关闭，实时生效，手动保存，不重置模拟。"
+        "Enable Underwater Caustics" => {
+            "The actual FFT/SWE surface refracts sunlight onto the flat bottom, sand slope, and reef height field. The model uses the nearest intersection with a layered height field; scanned materials receive only focused brightening. Caves and overhangs are unsupported. Off by default; applies live; save manually; does not reset the simulation."
         }
-        "焦散强度" => {
-            "无量纲，0～4，默认 1。控制透射太阳光贡献；0 恢复原直射光。实时生效，手动保存，不重置。"
+        "Caustics Intensity" => {
+            "Dimensionless, 0–4, default 1. Controls transmitted sunlight contribution; 0 restores the original direct light. Applies live; save manually; no reset."
         }
-        "焦散覆盖宽度（米）" => {
-            "8～512 米，默认 128。固定世界空间正方形：SWE 或模型开启时以其区域中心定位，否则以世界原点定位。边缘渐变至平水面透射光；不随相机移动。实时生效，不重置。"
+        "Caustics Coverage Width (m)" => {
+            "8–512 m, default 128. A fixed world-space square centered on the SWE or model region when enabled, otherwise on the world origin. Edges fade to flat-water transmitted light; does not follow the camera. Applies live; no reset."
         }
-        "焦散柔化（纹素）" => {
-            "0～4 个光照贴图纹素，默认 1。控制亮线空间过滤；贴图固定 512×512。实时生效，手动保存，不重置。"
+        "Caustics Softening (texels)" => {
+            "0–4 light-map texels, default 1. Controls spatial filtering of bright lines; the map is fixed at 512×512. Applies live; save manually; no reset."
         }
-        "焦散光束网格" => {
-            "每轴 128／256／512 个单元，默认 256。提高光束采样密度以减少漏采和亮线闪烁，增加 GPU 开销。实时生效，手动保存，不重置水体。"
+        "Caustics Beam Grid" => {
+            "128/256/512 cells per axis, default 256. Increases beam sampling density to reduce missed samples and bright-line flicker, at greater GPU cost. Applies live; save manually; does not reset water."
         }
-        "启用水底折射" => {
-            "空气向水中折射，平底／沙坡解析求交，模型沿折射方向查询屏幕深度层级；屏幕外、无可见交点或超出光程时回退直线取样。默认关闭，实时生效，手动保存，不重置。"
+        "Enable Underwater Refraction" => {
+            "Refracts from air into water; intersects the flat bottom/sand slope analytically and queries the screen depth hierarchy along the refracted direction for models. Falls back to straight-line sampling off-screen, without a visible intersection, or beyond the optical path limit. Off by default; applies live; save manually; no reset."
         }
-        "水折射率" => {
-            "无量纲，1～1.6，默认 1.333。控制焦散和观察折射的偏折，也控制水面菲涅耳反射与太阳高光。1 时界面无偏折、无反射。实时生效，手动保存，不重置。"
+        "Water Refractive Index" => {
+            "Dimensionless, 1–1.6, default 1.333. Controls caustic and view refraction bending, as well as water-surface Fresnel reflection and sun highlights. At 1 the interface has no bending or reflection. Applies live; save manually; no reset."
         }
-        "折射最大光程（米）" => {
-            "1～500 米，默认 100。限制观察视线的折射取样距离；超过范围回退直线取样。实时生效，手动保存，不重置。"
+        "Maximum Refraction Path Length (m)" => {
+            "1–500 m, default 100. Limits refracted sampling distance along the view ray; beyond it, falls back to straight-line sampling. Applies live; save manually; no reset."
         }
-        "随机种子" => "波谱随机种子，点击应用后重建海面。",
-        "参数状态" => "波谱参数需要点击应用后生效。",
-        "模拟时间" => "已经经过的模拟时间。",
-        "每轴网格数" => {
-            "SWE 模拟分辨率，64～1024，默认 256。覆盖范围不变；增大后网格更细，显存和计算耗时增加，稳定步长缩短。切换立即重建并重新初始化近岸水体、泡沫和湿沙历史；需手动保存。"
+        "Random Seed" => "Spectrum random seed; click Apply to rebuild the ocean surface.",
+        "Parameter Status" => "Spectrum parameters take effect after clicking Apply.",
+        "Simulation Time" => "Elapsed simulation time.",
+        "Grid Cells per Axis" => {
+            "SWE simulation resolution, 64–1024, default 256. Coverage remains unchanged; higher values give finer cells, increase GPU memory and computation time, and shorten the stable time step. Switching immediately rebuilds and reinitializes nearshore water, foam, and wet-sand history; save manually."
         }
-        "网格间距 X/Z（米）" => "当前模拟范围除以每轴网格数；X 朝岸，Z 沿岸。",
-        "双浓度实验" => {
-            "默认关闭。开启后新鲜 N 与残余 R 共用 SWE 水流做半拉格朗日输运，并共同压缩／稀释；不再使用惯性、拖曳或守恒泡沫通量。所有源只加入 N，R 仅在水面保留。N 可选常数、噪波或 NSH 纹理外观，R 保留细丝外观；单浓度材质选择独立保留。切换会重置近岸水体、泡沫与湿沙；需手动保存配置。"
+        "Grid Spacing X/Z (m)" => {
+            "Current simulation extent divided by cells per axis; X points toward shore, Z along shore."
         }
-        "新鲜半衰期（秒）" => {
-            "模拟秒，0.1～60，默认 1.4。N 的总退出半衰期，已包含转成 R 的减少，不重复衰减。双浓度模式下实时生效，手动保存，不清空历史。"
+        "Dual-Concentration Experiment" => {
+            "Off by default. When enabled, fresh N and residual R share SWE flow for semi-Lagrangian transport and are compressed/diluted together; inertia, drag, and conservative foam flux are no longer used. All sources add only N; R remains only on water. N can use a constant, noise, or NSH texture appearance; R retains its filament appearance. The single-concentration material selection is preserved independently. Switching resets nearshore water, foam, and wet sand; save the configuration manually."
         }
-        "残余半衰期（秒）" => {
-            "模拟秒，0.1～120，默认 9。R 独立指数衰减，新转入的 R 也立即参与衰减。双浓度模式下实时生效，手动保存，不清空历史。"
+        "Fresh Half-Life (s)" => {
+            "Simulation seconds, 0.1–60, default 1.4. Total exit half-life of N, including reduction from conversion to R; decay is not applied twice. Applies live in dual-concentration mode; save manually; history is not cleared."
         }
-        "退出转残余比例" => {
-            "无量纲，0～1，默认 0.65。N 退出量的 65% 转为 R，其余直接消失；0 不转化，1 全转化。局部转化与衰减用联合解析解。双浓度模式下实时生效，手动保存，不清空历史。"
+        "Residual Half-Life (s)" => {
+            "Simulation seconds, 0.1–120, default 9. R decays exponentially and independently; newly converted R also decays immediately. Applies live in dual-concentration mode; save manually; history is not cleared."
         }
-        "原型孔洞外观" => {
-            "默认关闭。以输运坐标采样三尺度噪声，密度控制孔洞破裂；覆盖旧纹理选择，不改生成、输送、拖曳和衰减。固定空间尺度与 HTML 原型一致，无额外微法线。实时生效，手动保存，不重置。"
+        "Exit-to-Residual Fraction" => {
+            "Dimensionless, 0–1, default 0.65. 65% of exiting N converts to R and the rest disappears directly; 0 converts none, 1 converts all. Local conversion and decay use a coupled analytic solution. Applies live in dual-concentration mode; save manually; history is not cleared."
         }
-        "坐标重置周期（秒）" => {
-            "模拟时间，默认 2 秒，可选 0 或 0.25～60 秒。越长保留越多拉伸；0 为持续形变、不重置，长期可能失真。只重置不可见的坐标层，不清除泡沫；手动保存，修改周期可能改变相位混合，严格比较请重置模拟。"
+        "Prototype Hole Appearance" => {
+            "Off by default. Samples three-scale noise in transport coordinates, with density controlling hole breakup; overrides the old texture selection without changing generation, transport, drag, or decay. Fixed spatial scales match the HTML prototype; no extra micro normals. Applies live; save manually; no reset."
         }
-        "纹理随流扭曲" => {
-            "默认开启。关闭后以固定世界坐标显示近岸泡沫纹理，同时作用于新鲜 N 和残余 R；浓度仍正常随流输送、汇聚、生成和衰减。位移历史继续更新，重新开启立即显示当前扭曲。布尔开关，实时生效，手动保存，不重置模拟。"
+        "Coordinate Reset Period (s)" => {
+            "Simulation time, default 2 seconds; choose 0 or 0.25–60 seconds. Longer periods retain more stretching; 0 means continuous deformation without reset and may distort over time. Resets only invisible coordinate layers, not foam; save manually. Changing the period may change phase blending; reset the simulation for strict comparisons."
         }
-        "纹理来源" => {
-            "0 为原灰度效果；其余为线性 NSH：法线 XY、Soft、Height。三张图使用同一密度与双相位运动，可在暂停时比较。实时生效，手动保存，不重置模拟；只改变近岸水上泡沫。"
+        "Flow-Warped Texture" => {
+            "On by default. When off, nearshore foam textures use fixed world coordinates for both fresh N and residual R; concentrations still flow, converge, generate, and decay normally. Displacement history continues updating, so re-enabling immediately shows the current distortion. Boolean switch; applies live; save manually; does not reset the simulation."
         }
-        "纹理尺寸（米）" => {
-            "粗层每块覆盖的世界长度，0.25～64 米，默认 12 米；细层固定为其 1/10。只作用于 NSH 路径。实时生效，手动保存，不重置密度或位移历史。"
+        "Texture Source" => {
+            "0 is the original grayscale effect; the others are linear NSH: normal XY, Soft, Height. All three maps use the same density and dual-phase motion and can be compared while paused. Applies live; save manually; does not reset the simulation; changes only nearshore water foam."
         }
-        "泡沫微法线强度" => {
-            "无量纲，0～3，默认 0.65；0 关闭 NSH 细法线，保留密度厚度法线。只改变泡沫光照，实时生效，手动保存。"
+        "Texture Size (m)" => {
+            "World-space length covered by each coarse tile, 0.25–64 m, default 12 m; the fine layer is fixed at 1/10 of this. Applies only to the NSH path. Applies live; save manually; does not reset density or displacement history."
         }
-        "不透明度密度尺度" => {
-            "模拟泡沫量／面积，非实测质量单位；范围 0.01～20，默认 2。NSH 不透明度 = 孔隙覆盖率 × (1 − exp(−原始密度／此值))。完整覆盖处，密度等于此值时约 63%，三倍时约 95%；越大越透水，不改变 NSH 孔隙阈值。双浓度常数／噪波模式分别用 N、R 的 1 − exp(−密度／此值) 控制白块与细丝覆盖；N 纹理模式用孔隙覆盖率乘该响应，R 不变。原型模式用同一响应控制噪声孔洞阈值；取 1/6 对应 HTML 的密度响应。实时生效，手动保存，不重置或改变模拟密度。"
+        "Foam Micro Normal Strength" => {
+            "Dimensionless, 0–3, default 0.65; 0 disables fine NSH normals while retaining density-thickness normals. Changes only foam lighting; applies live; save manually."
         }
-        "泡沫粗糙度" => {
-            "无量纲，0.15～1，默认 0.85；越高高光越宽。仅作用于 NSH 泡沫的简化光照，实时生效，手动保存。"
+        "Opacity Density Scale" => {
+            "Simulated foam amount/area, not a measured mass unit; range 0.01–20, default 2. NSH opacity = pore coverage × (1 − exp(−raw density / this value)). At full coverage, density equal to this value gives about 63%, and three times gives about 95%; larger values reveal more water without changing the NSH pore threshold. Dual-concentration constant/noise modes use 1 − exp(−density / this value) for N and R respectively to control white patch and filament coverage; N texture mode multiplies pore coverage by this response, while R is unchanged. Prototype mode uses the same response to control the noise-hole threshold; 1/6 matches the HTML density response. Applies live; save manually; does not reset or change simulated density."
         }
-        "材质调试" => {
-            "显示图案、Height、法线、不透明度或 0.5 米输运坐标网格，含双相位混合。双浓度模式 Soft／Height 分别显示 N 阈值场或 NSH Soft／R 噪声，法线视图在 N 纹理覆盖处显示其微法线、其余显示原法线；原型模式 Soft 显示噪声，Height 为零；网格独立于泡沫密度便于观察形变。NSH／原型模式显示泡沫且浅水视图为正常着色时启用，不覆盖密度调试。实时生效，手动保存。"
+        "Foam Roughness" => {
+            "Dimensionless, 0.15–1, default 0.85; higher values broaden highlights. Affects only simplified NSH foam lighting; applies live; save manually."
         }
-        "N 渲染方式" => {
-            "仅双浓度新鲜泡沫 N：常数为统一阈值，噪波为两尺度梯度噪波阈值（默认），纹理使用 NSH 孔隙、微法线和粗糙度光照。三选一，无量纲。纹理与原阈值模式的浓度到覆盖曲线不同，但均保留零浓度和薄水保护。切换保留各模式参数，实时生效，手动保存，不重置；不改 N/R 模拟、R 自身材质或单浓度材质。"
+        "Material Debug" => {
+            "Shows pattern, Height, normal, opacity, or a 0.5 m transport-coordinate grid, including dual-phase blending. In dual-concentration mode Soft/Height show the N threshold field or NSH Soft/R noise respectively; the normal view shows N micro normals where its texture covers, and original normals elsewhere. In prototype mode Soft shows noise and Height is zero; the grid is independent of foam density for easier deformation inspection. Enabled when foam is shown in NSH/prototype mode and the Shallow Water view uses normal shading; does not override density debugging. Applies live; save manually."
         }
-        "N 纹理来源" => {
-            "1 Shorewaves NSH、2 Crest Foam NSH、3 Crest Foam2 NSH，默认 1。仅使用 N 浓度渲染三套已烘焙线性纹理的孔隙与微法线，粗细层占比 72%／28%；不包括原灰度路径。仅 N 纹理模式生效，实时更新、手动保存，不重置，不改 R 或单浓度材质。"
+        "N Rendering Mode" => {
+            "Only for dual-concentration fresh foam N: constant uses a uniform threshold, noise uses a two-scale gradient-noise threshold (default), and texture uses NSH pores, micro normals, and roughness lighting. Choose one of three; dimensionless. Texture and original threshold modes have different concentration-to-coverage curves, but both retain zero-concentration and thin-water protection. Switching preserves each mode's parameters; applies live; save manually; no reset. Does not change N/R simulation, R's material, or the single-concentration material."
         }
-        "N 纹理尺寸（米）" => {
-            "0.25～64 米，默认 12。N 的粗层纹理世界边长，细层为其 1/10；使用共享输运坐标与双相位混合。仅 N 纹理模式生效，实时更新、手动保存，不重置历史，不改 R。"
+        "N Texture Source" => {
+            "1 Shorewaves NSH, 2 Crest Foam NSH, 3 Crest Foam2 NSH, default 1. Uses only N concentration to render pores and micro normals from three baked linear texture sets, with 72%/28% coarse/fine layers; excludes the original grayscale path. Only effective in N texture mode; updates live; save manually; no reset; does not change R or the single-concentration material."
         }
-        "N 微法线强度" => {
-            "无量纲，0～3，默认 0.65。控制 N 的 NSH 纹理微法线；0 关闭微法线，保留原宏观法线。随输运坐标的旋转／剪切变换，只改变 N 光照，不改变 R 法线或几何高度。仅 N 纹理模式生效，实时更新、手动保存，不重置。"
+        "N Texture Size (m)" => {
+            "0.25–64 m, default 12. World-space tile edge length of N's coarse texture layer; the fine layer is 1/10 of this. Uses shared transport coordinates and dual-phase blending. Only effective in N texture mode; updates live; save manually; does not reset history or change R."
         }
-        "N 粗糙度" => {
-            "无量纲，0.15～1，默认 0.85。N 的 NSH 简化光照粗糙度，越大高光越宽；不改变水体或 R 光照。仅 N 纹理模式生效，实时更新、手动保存，不重置模拟。"
+        "N Micro Normal Strength" => {
+            "Dimensionless, 0–3, default 0.65. Controls N's NSH texture micro normals; 0 disables them while retaining the original macro normals. Transforms with transport-coordinate rotation/shear; changes only N lighting, not R normals or geometric height. Only effective in N texture mode; updates live; save manually; no reset."
         }
-        "N 覆盖参考值" => {
-            "模拟泡沫量／面积，非实测质量单位，0.01～20，默认 2。控制 N 纹理孔隙随浓度填充的范围；值越大，同浓度露水越多。不透明度另乘 1−exp(−N／共用不透明度密度尺度)。独立于密度调试色标，不裁剪或修改浓度，不改变 R。仅 N 纹理模式生效，实时更新、手动保存，不重置。"
+        "N Roughness" => {
+            "Dimensionless, 0.15–1, default 0.85. Roughness for N's simplified NSH lighting; larger values broaden highlights. Does not change water or R lighting. Only effective in N texture mode; updates live; save manually; does not reset the simulation."
         }
-        "N 常数阈值" => {
-            "无量纲，0～1，默认 0.5。作为新鲜 N 覆盖的统一比较阈值；越低越容易显示，越高越容易露水。与密度的指数响应比较，不是 N 原始浓度。保留原过渡宽度，零浓度仍不可见。仅常数模式生效，实时更新、手动保存，不重置模拟。"
+        "N Coverage Reference" => {
+            "Simulated foam amount/area, not a measured mass unit, 0.01–20, default 2. Controls the range over which N texture pores fill with concentration; larger values expose more water at the same concentration. Opacity is additionally multiplied by 1−exp(−N / shared opacity density scale). Independent of the density debug color scale; does not clamp or change concentration or change R. Only effective in N texture mode; updates live; save manually; no reset."
         }
-        "N 主噪波频率（每米）" => {
-            "0.05～20／米，默认 0.8。控制 N 主噪波的空间频率，越大图案越细；不是精确周期波长。使用共享输运坐标，保持原三角格梯度噪波及足迹过滤。仅噪波模式生效，实时更新、手动保存，不重置，不改 R 或模拟浓度。"
+        "N Constant Threshold" => {
+            "Dimensionless, 0–1, default 0.5. Uniform comparison threshold for fresh N coverage; lower values show foam more easily, higher values expose water more easily. Compared against the exponential density response, not raw N concentration. Retains the original transition width; zero concentration remains invisible. Only effective in constant mode; updates live; save manually; does not reset the simulation."
         }
-        "N 细噪波频率（每米）" => {
-            "0.05～60／米，默认 2.5。控制 N 细节层的空间频率，越大图案越细；细层仍使用原旋转与偏移，越细可能被像素足迹过滤。仅噪波模式且细层占比非零时影响外观；实时更新、手动保存，不重置模拟。"
+        "N Main Noise Frequency (per m)" => {
+            "0.05–20/m, default 0.8. Controls the spatial frequency of N's main noise; larger values produce finer patterns, not an exact periodic wavelength. Uses shared transport coordinates, retaining the original triangular-grid gradient noise and footprint filtering. Only effective in noise mode; updates live; save manually; no reset; does not change R or simulated concentration."
         }
-        "N 细噪波占比" => {
-            "无量纲，0～1，默认 0.3。阈值场 = (1−占比)×主噪波 + 占比×细噪波；0 仅主层，1 仅细层，默认保持原 70%／30%。仅噪波模式生效，实时更新、手动保存，不重置，不改 R 材质或模拟浓度。"
+        "N Fine Noise Frequency (per m)" => {
+            "0.05–60/m, default 2.5. Controls the spatial frequency of N's detail layer; larger values produce finer patterns. The fine layer retains its original rotation and offset; finer details may be filtered by the pixel footprint. Affects appearance only in noise mode with a nonzero fine-layer fraction; updates live; save manually; does not reset the simulation."
         }
-        "浓度决定透明度" => {
-            "默认关闭，N 与 R 各自独立。开启后将 pow(clamp(自身浓度／浓度范围,0,1),p) 作为附加因子，同时乘到该泡沫的预乘颜色与不透明度上，不改变原孔隙图案和浓度模拟。N 的三种渲染方式均可用；R 不改变 N。布尔开关，实时生效，手动保存，不重置；关闭保留参数并恢复原外观。"
+        "N Fine Noise Fraction" => {
+            "Dimensionless, 0–1, default 0.3. Threshold field = (1−fraction)×main noise + fraction×fine noise; 0 uses only the main layer, 1 only the fine layer; the default retains the original 70%/30%. Only effective in noise mode; updates live; save manually; no reset; does not change R material or simulated concentration."
         }
-        "N 浓度范围" | "R 浓度范围" => {
-            "模拟泡沫量／面积，非实测质量单位，0～10，默认 1。该类泡沫的浓度除以此值后限于 0～1，再取 p 次幂作为附加不透明度因子。越大同浓度越透明；0 时正浓度按 1、零浓度按 0 处理，避免除零。不裁剪模拟浓度。仅对应的“浓度决定透明度”开启时生效，实时更新、手动保存、不重置。"
+        "Concentration Controls Opacity" => {
+            "Off by default, independent for N and R. When enabled, pow(clamp(own concentration / concentration range,0,1),p) is an additional factor multiplying both the foam's premultiplied color and opacity, without changing the original pore pattern or concentration simulation. Available for all three N rendering modes; R does not change N. Boolean switch; applies live; save manually; no reset. Disabling preserves parameters and restores the original appearance."
         }
-        "N 浓度幂值 p" | "R 浓度幂值 p" => {
-            "无量纲，0.1～5，默认 1。对归一化浓度取 p 次幂，p>1 时更透明，p<1 时更不透明；不改变原孔隙覆盖、另一类泡沫或模拟浓度。仅对应的“浓度决定透明度”开启时生效，实时更新、手动保存、不重置。"
+        "N Concentration Range" | "R Concentration Range" => {
+            "Simulated foam amount/area, not a measured mass unit, 0–10, default 1. This foam's concentration is divided by this value, clamped to 0–1, then raised to power p as an additional opacity factor. Larger values are more transparent at the same concentration; at 0, positive concentration is treated as 1 and zero concentration as 0 to avoid division by zero. Does not clamp simulated concentration. Effective only when the corresponding 'Concentration Controls Opacity' is enabled; updates live; save manually; no reset."
         }
-        "泡沫显示成分" => {
-            "双浓度模式下选择全部、仅新鲜 N 或仅残余 R，默认全部。只筛选近岸材质和泡沫外观高度；单独查看时隐藏远海泡沫。无量纲选项，实时生效，手动保存，不改变生成、输送、转化或衰减，不重置模拟；密度调试视图保持独立。"
+        "N Concentration Exponent p" | "R Concentration Exponent p" => {
+            "Dimensionless, 0.1–5, default 1. Raises normalized concentration to power p; p>1 is more transparent, p<1 more opaque. Does not change original pore coverage, the other foam type, or simulated concentration. Effective only when the corresponding 'Concentration Controls Opacity' is enabled; updates live; save manually; no reset."
         }
-        "启用泡沫发射" => {
-            "启用／停发新生泡沫，默认启用。停发不清除已有密度、动量或湿沙；输送、拖曳和衰减继续。实时生效，手动保存，不重置模拟。"
+        "Foam Display Components" => {
+            "In dual-concentration mode, choose all, fresh N only, or residual R only; default all. Filters only the nearshore material and foam appearance height; offshore foam is hidden when viewing one component. Dimensionless option; applies live; save manually; does not change generation, transport, conversion, or decay and does not reset the simulation. Density debug views remain independent."
         }
-        "压缩脊线实验" => {
-            "默认关闭。开启后只在沿当前流向的局部压缩峰附近窄带发射，强制关闭背景源；沿波前切线不做点状极大值筛选。只改新生泡沫，不修改水动力。实时生效，手动保存，不清空已有泡沫；比较从重置后开始。"
+        "Enable Foam Emission" => {
+            "Enable/disable new foam emission, enabled by default. Disabling does not clear existing density, momentum, or wet sand; transport, drag, and decay continue. Applies live; save manually; does not reset the simulation."
         }
-        "窄带宽度（米）" => {
-            "0.05～10 米，默认 1。局部五点拟合的有效范围有限，实际宽度限制在沿流向的一至两格，不能生成亚格细线。只在脊线实验中生效；手动保存，不重置。"
+        "Compression Ridge Experiment" => {
+            "Off by default. When enabled, emits only in a narrow band near local compression peaks along the current flow direction, forcibly disabling the background source; no pointwise maximum filtering along the wavefront tangent. Changes only new foam, not hydrodynamics. Applies live; save manually; existing foam is not cleared; start comparisons after a reset."
         }
-        "峰值相对显著度" => {
-            "0～1，无量纲，默认 0.02。中心压缩比两侧凸起的二阶差需大于此比例；提高会拒绝平缓宽峰。均匀压缩斜坡不发射。只在脊线实验中生效，手动保存、不重置。"
+        "Narrow Band Width (m)" => {
+            "0.05–10 m, default 1. The local five-point fit has limited effective range, so actual width is limited to one or two cells along the flow and cannot produce sub-grid thin lines. Effective only in the ridge experiment; save manually; no reset."
         }
-        "前沿生成速率（每秒）" => {
-            "有方向的压缩达到满权重时的泡沫生成速率，范围 0～30。0 关闭前沿生成；独立于背景上涨阈值。实时生效，手动保存，不清空历史。"
+        "Peak Relative Prominence" => {
+            "0–1, dimensionless, default 0.02. The second difference of central compression above both sides must exceed this fraction; increasing it rejects gentle broad peaks. Uniform compression slopes do not emit. Effective only in the ridge experiment; save manually; no reset."
         }
-        "前沿采样距离（米）" => {
-            "仅旧前沿源生效，脊线实验固定读取相邻网格。沿当前水流方向，在此距离内均匀采样 4 个位置，范围 0.05～10 米，默认 1 米。沿采样方向相互靠近的速度差除以实际距离，再取最大压缩强度；同向追赶也能触发，拉开和纯横向速度差不触发。按世界距离采样，兼容非正方形网格；干燥和越界点跳过。实时生效，不清空历史。"
+        "Front Generation Rate (per s)" => {
+            "Foam generation rate when directional compression reaches full weight, range 0–30. 0 disables front generation; independent of the background rise threshold. Applies live; save manually; history is not cleared."
         }
-        "速度变化起始阈值（每秒）" => {
-            "沿采样方向的压缩速度差除以实际采样距离后超过此值才开始产泡，范围 0～20，默认 0.1。比如 0.5 米内速度相差 1 米/秒，对应强度 2/秒。仅计入相互靠近的部分。实时生效，手动保存，不清空历史。"
+        "Front Sampling Distance (m)" => {
+            "Effective only for the old front source; the ridge experiment always reads adjacent cells. Uniformly samples 4 positions within this distance along the current flow direction, range 0.05–10 m, default 1 m. The approaching velocity difference along the sampling direction is divided by actual distance, then the maximum compression strength is taken; same-direction chasing can trigger it, while separation and purely transverse velocity differences cannot. Samples by world distance, supporting non-square cells; dry and out-of-bounds points are skipped. Applies live; history is not cleared."
         }
-        "速度变化过渡范围（每秒）" => {
-            "范围 0～20，默认 0.5；强度从起始阈值到阈值加此范围，生成权重平滑升至 1。0 为严格大于阈值才生成，零速度差不产泡。实时生效，手动保存，不清空历史。"
+        "Velocity Change Start Threshold (per s)" => {
+            "Foam generation starts only when the compressive velocity difference along the sampling direction divided by the actual sampling distance exceeds this value, range 0–20, default 0.1. For example, a velocity difference of 1 m/s over 0.5 m gives strength 2/s. Only approaching components count. Applies live; save manually; history is not cleared."
         }
-        "背景生成倍率" => {
-            "范围 0～1，默认 0.15，只缩放上涨、流速与汇聚触发的背景源。单独观察旧前沿时设为 0；脊线实验中背景强制为零，不改写此保存值。实时生效，手动保存，不清空历史。"
+        "Velocity Change Transition Range (per s)" => {
+            "Range 0–20, default 0.5; generation weight smoothly rises to 1 as strength goes from the start threshold to the threshold plus this range. At 0, generation requires strictly exceeding the threshold; zero velocity difference produces no foam. Applies live; save manually; history is not cleared."
         }
-        "泡沫空间输送" => {
-            "无单位，1 为原一阶通量（默认），2 为受限 MUSCL 重构，减少细丝和孔洞的数值扩散。密度和动量共同守恒输送，不限制密度到 1。仅 SWE 二阶（RK2）启用此选择；SWE 一阶始终使用原通量。改变选择实时生效，手动保存，不清空历史；不改生成、衰减或材质。"
+        "Background Generation Multiplier" => {
+            "Range 0–1, default 0.15; scales only background sources triggered by rising water, flow speed, and convergence. Set to 0 to observe the old front alone; the ridge experiment forces background to zero without changing this saved value. Applies live; save manually; history is not cleared."
         }
-        "启用水流拖曳" => {
-            "开启时水流逐渐改变泡沫动量；关闭后保留惯性输送，适合隔离观察追赶汇聚。生成仍注入动量，衰减仍移除动量，落到沙地后停止。实时生效，手动保存，不重置。"
+        "Foam Spatial Transport" => {
+            "Dimensionless; 1 is the original first-order flux (default), 2 is limited MUSCL reconstruction, reducing numerical diffusion of filaments and holes. Density and momentum are transported conservatively together; density is not capped at 1. This selection applies only to second-order SWE (RK2); first-order SWE always uses the original flux. Changes apply live; save manually; history is not cleared; generation, decay, and material are unchanged."
         }
-        "水流跟随倍率" => {
-            "拖曳目标速度 = 水流速度 × 此倍率，范围 0～1。仅在拖曳开启时有效。物理参考取 1；小于 1 是额外视觉阻滞。泡沫量与动量共同输送，合流速度按泡沫量加权，水体不受反作用。实时生效，手动保存。"
+        "Enable Flow Drag" => {
+            "When enabled, flow gradually changes foam momentum; when disabled, inertial transport remains, useful for isolating chasing convergence. Generation still injects momentum, decay still removes it, and motion stops on sand. Applies live; save manually; no reset."
         }
-        "速度响应时间（秒）" => {
-            "范围 0～20；越大越保留惯性，0 为立即随流。约经过此时间完成 63% 的速度响应；只在拖曳开启时有效。物理参考起点 2 秒，属于模拟校准值。实时生效，手动保存，不清空历史。"
+        "Flow Following Multiplier" => {
+            "Drag target velocity = flow velocity × this multiplier, range 0–1. Effective only when drag is enabled. The physical reference is 1; below 1 adds visual resistance. Foam amount and momentum are transported together, merging velocity is weighted by foam amount, and water receives no reaction force. Applies live; save manually."
         }
-        "新生泡沫速度倍率" => {
-            "新增泡沫的动量 = 新增量 × 当地水流速度 × 此倍率，范围 0～1，默认及物理参考值为 1。只影响新生泡沫，已有泡沫保留动量；关闭拖曳后仍有效。实时生效，手动保存，不重置。"
+        "Velocity Response Time (s)" => {
+            "Range 0–20; larger values retain more inertia, 0 follows flow immediately. Approximately 63% of the velocity response completes after this time; effective only when drag is enabled. The physical reference starting point is 2 seconds, a simulation calibration value. Applies live; save manually; history is not cleared."
         }
-        "物理参考起点" => {
-            "应用：拖曳开启、跟随倍率 1、响应时间 2 秒、新生速度倍率 1、水上衰减 0.3/秒。基于线性拖曳模型与秒级泡沫衰退的校准起点，不是通用海水实测常数。不改生成、沙地或显示参数；实时生效，手动保存。"
+        "New Foam Velocity Multiplier" => {
+            "New foam momentum = added amount × local flow velocity × this multiplier, range 0–1, default and physical reference 1. Affects only new foam; existing foam retains momentum. Still effective with drag disabled. Applies live; save manually; no reset."
         }
-        "最大高度（米）" => {
-            "范围 0～1 米，默认 0.05 米；0 关闭高度效果。只根据近岸水上泡沫密度向上移动渲染顶点，不增加水位、水深或动量。泡沫明暗使用抬高后的法线，水体仍使用原水面。实时生效，手动保存，不重置历史。"
+        "Physical Reference Starting Point" => {
+            "Apply: drag enabled, following multiplier 1, response time 2 seconds, new foam velocity multiplier 1, water foam decay 0.3/s. A calibration starting point based on linear drag and foam decay on the scale of seconds, not a universal measured seawater constant. Does not change generation, sand, or display parameters; applies live; save manually."
         }
-        "起始密度" => {
-            "范围 0～20，默认 0.1。使用模拟中的泡沫量／面积，未截断为 0～1；小于等于此值时不抬高。不依赖密度颜色参考值，也不采样孔隙纹理。仅近岸水上泡沫生效，远海泡沫不抬高。实时生效，手动保存。"
+        "Maximum Height (m)" => {
+            "Range 0–1 m, default 0.05 m; 0 disables the height effect. Moves render vertices upward based only on nearshore water foam density; does not increase water level, depth, or momentum. Foam shading uses the raised normals; water still uses the original surface. Applies live; save manually; history is not reset."
         }
-        "密度过渡范围" => {
-            "范围 0.001～20，默认 1.9。密度从起始值增加到起始值加此范围时，smoothstep 将高度从 0 平滑增加到最大值；超过后保持最大值。浅于 20 毫米时平滑减弱，8 毫米及以下不抬高；关闭显示泡沫也关闭高度。实时生效，手动保存。"
+        "Starting Density" => {
+            "Range 0–20, default 0.1. Uses simulated foam amount/area, not clamped to 0–1; no raising at or below this value. Independent of the density color reference and does not sample pore textures. Applies only to nearshore water foam; offshore foam is not raised. Applies live; save manually."
         }
-        "水上泡沫衰减（每秒）" => {
-            "仅旧单浓度路径使用，范围 0～4 /秒；双浓度模式改用两项半衰期，不叠加本衰减。实时生效，手动保存，不重置历史。"
+        "Density Transition Range" => {
+            "Range 0.001–20, default 1.9. As density rises from the starting value to that value plus this range, smoothstep smoothly increases height from 0 to the maximum; above that it stays at the maximum. Smoothly weakens below 20 mm depth, with no raising at 8 mm or less; hiding foam also disables height. Applies live; save manually."
+        }
+        "Water Foam Decay (per s)" => {
+            "Used only by the old single-concentration path, range 0–4/s; dual-concentration mode uses the two half-lives instead, without adding this decay. Applies live; save manually; history is not reset."
         }
         _ => legacy_help(name),
     }
@@ -186,121 +187,157 @@ pub fn help(name: &str) -> &'static str {
 
 fn legacy_help(name: &str) -> &'static str {
     match name {
-        "波谱强度 A" => "Phillips 波谱强度；波高与 A 的平方根成正比。点击应用后重建波谱。",
-        "波谱尺度 L（米）" => {
-            "Phillips 长度尺度，等于风速平方除以重力加速度。点击应用后生效。"
+        "Spectrum Strength A" => {
+            "Phillips spectrum strength; wave height is proportional to the square root of A. Click Apply to rebuild the spectrum."
         }
-        "风向（度）" => "风向单位向量的方向，不是波速。点击应用后重建波谱。",
-        "区块边长（米）" => "FFT 周期区块的边长；海面由 3×3 个区块构成。点击应用后生效。",
-        "FFT 分辨率" => "每轴 FFT 采样数；采样间距等于区块边长除以分辨率。点击应用后生效。",
-        "远海网格密度" => {
-            "无量纲，8～512，默认 128。方格模式为每轴格数；近正三角形模式以相近三角形数量调整行列。仅改密度时点击应用只重建远海绘制网格，不重置模拟；与波谱一起修改时仍重建模拟。"
+        "Spectrum Scale L (m)" => {
+            "Phillips length scale, equal to wind speed squared divided by gravitational acceleration. Click Apply to take effect."
         }
-        "近正三角形网格" => {
-            "默认关闭。开启后远海绘制顶点隔行错开半格，形成周期拼接的近正三角形；三角形数基本不变。立即生效，暂停时可对照，不重置 FFT、SWE 或泡沫历史，不应用其他波谱草稿。局部 SWE 水面仍用方格；需手动保存。"
+        "Wind Direction (degrees)" => {
+            "Direction of the wind unit vector, not wave speed. Click Apply to rebuild the spectrum."
         }
-        "暂停" => "冻结模拟、泡沫和纹理流动，仍可调整渲染参数。",
-        "时间倍率" => "模拟时间的速度倍率，0 表示停止演化。",
-        "波高增益" => "同时缩放 FFT 位移与 SWE 输入；修改后会重新初始化浅水和泡沫历史。",
-        "水平挤浪" | "挤浪强度" => {
-            "FFT 水平位移让浪峰更尖，并改变用于生成远海泡沫的雅可比值。"
+        "Patch Size (m)" => {
+            "Edge length of a periodic FFT patch; the ocean consists of 3×3 patches. Click Apply to take effect."
         }
-        "显示泡沫" => "只切换泡沫显示，不停止模拟。",
-        "雅可比阈值" => "水面形变的雅可比值低于此阈值时生成远海泡沫。实时生效。",
-        "生成速率（每秒）" => "每模拟秒的远海泡沫生成速率，实时生效。",
-        "衰减系数（每秒）" => "远海泡沫的指数衰减系数；越小存活越久，0 表示不自然衰减。",
-        "泡沫视图" => "选择正常水面、形变雅可比值或远海泡沫覆盖率。",
-        "倾斜沙滩" => "启用倾斜沙滩：负 X 为陆地，正 X 为深水。修改地形会重置浅水模拟。",
-        "启用浅水模拟" => "启用局部浅水模拟及泡沫、沙地历史。切换后重置 SWE。",
-        "SWE 求解器" => {
-            "一阶使用欧拉积分，二阶使用 MUSCL 与 RK2。切换会重置模拟；比较几何时可将法线细节设为 0。"
+        "FFT Resolution" => {
+            "FFT samples per axis; sample spacing equals patch size divided by resolution. Click Apply to take effect."
         }
-        "水上泡沫" => "水上泡沫的线性 RGB 颜色，包含远海泡沫。只改变显示。",
-        "法线细节强度" => {
-            "来自 FFT 的短波法线细节；0 为关闭，1 为默认。薄水区域逐渐减弱，不重置模拟。开启反射更容易观察。"
+        "Offshore Grid Density" => {
+            "Dimensionless, 8–512, default 128. In square-grid mode this is the cell count per axis; near-equilateral triangle mode adjusts rows and columns to a similar triangle count. When only density changes, clicking Apply rebuilds only the offshore draw mesh without resetting the simulation; changing it with the spectrum still rebuilds the simulation."
         }
-        "FFT → SWE 增益" => {
-            "同时缩放输入水位和动量：0 为无输入，1 为匹配，3 为三倍。修改后用当前 FFT 初始化整片浅水并清空历史。"
+        "Near-Equilateral Triangle Grid" => {
+            "Off by default. When enabled, offshore draw vertices in alternating rows are offset by half a cell to form periodically tiled near-equilateral triangles; the triangle count remains nearly unchanged. Applies immediately and can be compared while paused; does not reset FFT, SWE, or foam history or apply other spectrum drafts. The local SWE surface still uses a square grid; save manually."
         }
-        "过滤短波" => {
-            "对输入 SWE 的 FFT 水位与动量使用相同短波过滤，远海细节不变。修改后重新初始化浅水。"
+        "Pause" => {
+            "Freeze simulation, foam, and texture flow while allowing rendering parameters to be adjusted."
         }
-        "截止波长（米）" => "不大于此波长的波被过滤；从截止波长加过渡宽度开始完整传入。",
-        "过滤过渡宽度（米）" => {
-            "截止波长以上的平滑过滤范围，0 表示硬切换。修改后重新初始化浅水。"
+        "Time Scale" => "Simulation time speed multiplier; 0 stops evolution.",
+        "Wave Height Gain" => {
+            "Scales both FFT displacement and SWE input; changes reinitialize Shallow Water and foam history."
         }
-        "FFT 混合水深（米）" => {
-            "在此水深到其 2.5 倍之间，从 SWE 过渡到 FFT。修改后重置浅水。"
+        "Horizontal Choppiness" | "Choppiness Strength" => {
+            "FFT horizontal displacement sharpens wave crests and changes the Jacobian used to generate offshore foam."
         }
-        "背景生成速率（每秒）" => {
-            "范围 0～15，默认 4；单位为每模拟秒增加的泡沫面密度，另乘背景生成倍率。0 关闭背景源，前沿速率独立。实时生效，手动保存，不重置历史。"
+        "Show Foam" => "Only toggles foam display; does not stop simulation.",
+        "Jacobian Threshold" => {
+            "Offshore foam is generated when the surface deformation Jacobian falls below this threshold. Applies live."
         }
-        "背景生成起始阈值" => {
-            "水深上涨速度除以浅水波速超过此值时开始生成背景泡沫。无量纲，越低越容易生成；默认 0.25。实时生效，不重置。"
+        "Generation Rate (per s)" => {
+            "Offshore foam generation rate per simulation second; applies live."
         }
-        "背景生成过渡范围" => {
-            "从起始阈值到完整生成权重的过渡宽度。默认 0.4，即 0.25 开始、0.65 达到完整权重。0 为硬阈值，不影响前沿生成。"
+        "Decay Coefficient (per s)" => {
+            "Exponential decay coefficient for offshore foam; smaller values last longer, 0 means no natural decay."
         }
-        "水上泡沫衰减（每秒）" => {
-            "水上泡沫的指数衰减系数；越小存活越久，0 为无自然衰减。"
+        "Foam View" => {
+            "Choose normal water surface, deformation Jacobian, or offshore foam coverage."
         }
-        "汇聚增强阈值（每秒）" => {
-            "增强背景泡沫生成的水流汇聚阈值。已有泡沫仍会通过输送自然堆积，不受此阈值限制。"
+        "Sloping Beach" => {
+            "Enable the sloping beach: negative X is land, positive X is deep water. Terrain changes reset the Shallow Water simulation."
         }
-        "密度颜色参考值" => {
-            "模拟泡沫量／面积，范围 0.01～20，默认 2。达到此值时密度调试显示红色，也控制材质孔隙的填充范围；不限制模拟密度。NSH 浓淡另由不透明度密度尺度控制。实时生效，手动保存，不重置。"
+        "Enable Shallow Water Simulation" => {
+            "Enable local Shallow Water simulation and foam and sand history. Switching resets SWE."
         }
-        "沙地干燥时间（秒）" => "湿沙的干燥时间常数，不控制泡沫寿命。",
-        "浅水调试视图" => {
-            "调试视图跳过普通着色。流向：蓝色冲岸、橙色退水。密度：低绿高红，不混合孔隙纹理。"
+        "SWE Solver" => {
+            "First order uses Euler integration; second order uses MUSCL and RK2. Switching resets the simulation; set normal detail to 0 when comparing geometry."
         }
-        "沙地纹理旋转（度）" => {
-            "绕世界原点在沙坡平面内旋转纹理。范围 -180～180 度，默认 0 度；正角将纹理横轴从坡向 +X 转向沿岸 +Z。所有沙地贴图和法线方向同步旋转，实时生效并随配置保存，不重置模拟。"
+        "Water Foam" => {
+            "Linear RGB color of water foam, including offshore foam. Changes display only."
         }
-        "沙地纹理尺寸（米）" => {
-            "每块沙地纹理沿沙坡和沿岸覆盖的长度。范围 0.25～128 米；数值越大，沙纹越大、重复越少。颜色、法线、粗糙度和 AO 同步缩放，实时生效并随配置保存，不重置模拟。"
+        "Normal Detail Strength" => {
+            "Short-wave normal detail from FFT; 0 is off, 1 is default. Gradually weakens in thin water; does not reset the simulation. Easier to see with reflections enabled."
         }
-        "沙滩坡度（高／宽）" | "岸线 X（米）" => {
-            "负 X 为陆地，正 X 为深水。修改后重新初始化浅水模拟。"
+        "FFT → SWE Gain" => {
+            "Scales both input water level and momentum: 0 is no input, 1 is matched, 3 is triple. Changes initialize the entire Shallow Water region from the current FFT and clear history."
         }
-        "海底深度（米）" => {
-            "单位米，0.25～100。平面场景控制海底；模型场景控制补充海床，修改即时重建并重置近岸历史；纯倾斜沙滩下禁用。"
+        "Filter Short Waves" => {
+            "Applies the same short-wave filter to FFT water level and momentum input to SWE; offshore detail is unchanged. Changes reinitialize Shallow Water."
         }
-        "启用天空散射" => {
-            "基于平均海平面与直线光路的各向同性天空散射。手动光源解析积分，天空光源分段解析积分。"
+        "Cutoff Wavelength (m)" => {
+            "Waves at or below this wavelength are filtered; full transmission begins at the cutoff wavelength plus the transition width."
         }
-        "天空颜色（线性 RGB）" => "天空照明的线性 RGB 颜色，同时影响背景和反射。",
-        "天空强度" => "天空照明的辐亮度倍率。",
-        "散射反照率 RGB" => {
-            "散射系数 = 反照率 × 消光系数；吸收系数 =（1 − 反照率）× 消光系数。"
+        "Filter Transition Width (m)" => {
+            "Smooth filtering range above the cutoff wavelength; 0 is a hard switch. Changes reinitialize Shallow Water."
         }
-        "天空积分步数" => "天空散射的积分分段数，越多越准确，GPU 开销也越高。",
-        "水体调试视图" => {
-            "光学调试跳过反射和泡沫。透射率按消光系数和光程指数衰减；吸收视图显示衰减后的背景，损失含散射出射。"
+        "FFT Blend Depth (m)" => {
+            "Transitions from SWE to FFT between this depth and 2.5 times this depth. Changes reset Shallow Water."
         }
-        "光程白色参考值（米）" => "光程调试中显示为白色的距离。",
-        "天空反射与高光" => "控制水面反射与太阳高光，也控制下方的屏幕空间反射。实时生效。",
-        "屏幕空间反射（SSR）" => {
-            "沿波面的反射方向查询相机深度，反射屏幕内可见的出水模型和岸边。未命中时使用天空反射。实时生效。"
+        "Background Generation Rate (per s)" => {
+            "Range 0–15, default 4; units are foam area density added per simulation second, additionally multiplied by the background generation multiplier. 0 disables the background source; the front rate is independent. Applies live; save manually; history is not reset."
         }
-        "SSR 强度" => {
-            "有效 SSR 命中与天空反射的混合权重，无量纲，0～1。0 使用天空反射并停止 SSR 追踪，1 使用完整 SSR。实时生效。"
+        "Background Generation Start Threshold" => {
+            "Background foam generation begins when water depth rise rate divided by shallow-water wave speed exceeds this value. Dimensionless; lower values generate more easily; default 0.25. Applies live; no reset."
         }
-        "SSR 追踪步数" => {
-            "每条反射射线最多访问的 Hi-Z 分块数，16～256，默认 128。降低可限制开销，但可能漏掉倒影并回退天空。实时生效。"
+        "Background Generation Transition Range" => {
+            "Transition width from the start threshold to full generation weight. Default 0.4, meaning starts at 0.25 and reaches full weight at 0.65. 0 is a hard threshold; does not affect front generation."
         }
-        "SSR 命中容差" => {
-            "命中容差的无量纲倍率，0.25～4，默认 1。基准随像素在世界中的覆盖范围变化。较小可能漏检，较大可能产生错误命中。实时生效。"
+        "Water Foam Decay (per s)" => {
+            "Exponential decay coefficient for water foam; smaller values last longer, 0 means no natural decay."
         }
-        "SSR 边缘淡出（像素）" => {
-            "采样点距离渲染画面边缘多远开始淡出到天空，0～128 渲染像素，默认 4。0 关闭淡出；越界仍回退天空。实时生效。"
+        "Convergence Enhancement Threshold (per s)" => {
+            "Flow convergence threshold for enhancing background foam generation. Existing foam still accumulates naturally through transport, regardless of this threshold."
         }
-        "反射距离（米）" => {
-            "屏幕空间反射的最长射线，1～500 米。接近上限时渐变为天空反射。实时生效。"
+        "Density Color Reference" => {
+            "Simulated foam amount/area, range 0.01–20, default 2. At this value the density debug display is red; also controls the material pore filling range, without limiting simulated density. NSH intensity is separately controlled by opacity density scale. Applies live; save manually; no reset."
         }
-        "海底 RGB 测试色带" | "棋盘格尺寸（米）" => {
-            "用于比较不同颜色吸收与光程长度的海底标定图案。"
+        "Sand Drying Time (s)" => "Wet-sand drying time constant; does not control foam lifetime.",
+        "Shallow Water Debug View" => {
+            "Debug views skip normal shading. Flow direction: blue toward shore, orange receding. Density: low green, high red, without pore texture blending."
         }
-        _ => "实时参数，修改后立即生效。",
+        "Sand Texture Rotation (degrees)" => {
+            "Rotates the texture in the sand-slope plane around the world origin. Range -180–180 degrees, default 0 degrees; a positive angle turns the texture's horizontal axis from downslope +X toward alongshore +Z. All sand maps and normal directions rotate together; applies live and saves with the configuration; does not reset the simulation."
+        }
+        "Sand Texture Size (m)" => {
+            "Length covered by each sand texture tile along the slope and shore. Range 0.25–128 m; larger values make larger sand patterns with less repetition. Color, normals, roughness, and AO scale together; applies live and saves with the configuration; does not reset the simulation."
+        }
+        "Beach Slope (height/width)" | "Shoreline X (m)" => {
+            "Negative X is land, positive X is deep water. Changes reinitialize the Shallow Water simulation."
+        }
+        "Seabed Depth (m)" => {
+            "In meters, 0.25–100. Controls the seabed in the flat scene and the supplemental seabed in the model scene; changes rebuild immediately and reset nearshore history. Disabled with a purely sloping beach."
+        }
+        "Enable Sky Scattering" => {
+            "Isotropic sky scattering based on mean sea level and straight light paths. The manual light source uses analytic integration; the sky source uses piecewise analytic integration."
+        }
+        "Sky Color (linear RGB)" => {
+            "Linear RGB color of sky illumination, affecting both background and reflections."
+        }
+        "Sky Intensity" => "Radiance multiplier for sky illumination.",
+        "Scattering Albedo RGB" => {
+            "Scattering coefficient = albedo × extinction coefficient; absorption coefficient = (1 − albedo) × extinction coefficient."
+        }
+        "Sky Integration Steps" => {
+            "Number of integration segments for sky scattering; more is more accurate but costs more GPU time."
+        }
+        "Water Debug View" => {
+            "Optical debugging skips reflections and foam. Transmittance decays exponentially with extinction coefficient and path length; absorption view shows the attenuated background, with losses including out-scattering."
+        }
+        "Path Length White Reference (m)" => {
+            "Distance displayed as white in path-length debugging."
+        }
+        "Sky Reflection and Highlights" => {
+            "Controls water surface reflection and sun highlights, as well as screen-space reflection below. Applies live."
+        }
+        "Screen-Space Reflection (SSR)" => {
+            "Queries camera depth along the wave-surface reflection direction, reflecting above-water models and shore visible on screen. Uses sky reflection on a miss. Applies live."
+        }
+        "SSR Strength" => {
+            "Blend weight between valid SSR hits and sky reflection, dimensionless, 0–1. 0 uses sky reflection and stops SSR tracing; 1 uses full SSR. Applies live."
+        }
+        "SSR Trace Steps" => {
+            "Maximum Hi-Z tiles visited per reflection ray, 16–256, default 128. Lower values limit cost but may miss reflections and fall back to sky. Applies live."
+        }
+        "SSR Hit Tolerance" => {
+            "Dimensionless multiplier for hit tolerance, 0.25–4, default 1. The baseline varies with the pixel's world-space footprint. Smaller values may miss hits; larger values may produce false hits. Applies live."
+        }
+        "SSR Edge Fade (pixels)" => {
+            "Distance from the render image edge at which samples begin fading to sky, 0–128 render pixels, default 4. 0 disables fading; out-of-bounds samples still fall back to sky. Applies live."
+        }
+        "Reflection Distance (m)" => {
+            "Maximum screen-space reflection ray length, 1–500 m. Fades to sky reflection near the limit. Applies live."
+        }
+        "Seabed RGB Test Bands" | "Checker Size (m)" => {
+            "Seabed calibration pattern for comparing absorption of different colors and optical path lengths."
+        }
+        _ => "Live parameter; changes take effect immediately.",
     }
 }

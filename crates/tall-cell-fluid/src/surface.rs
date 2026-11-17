@@ -1,11 +1,14 @@
-//! 从单元中心的液体距离场提取三角形表面。
+//! Extract a triangular surface from the cell-centered liquid distance field.
 //!
-//! 将相邻八个单元中心当作一个采样立方体，以一致的六四面体分解提取
-//! `phi = 0`。这不是压力网格的外壳，也不依赖纵长单元的合并结果。
-//! 相邻采样立方体使用相同的公共面对角线，并对共享边的交点去重。
+//! Treat eight neighboring cell centers as a sampling cube and extract `phi = 0`
+//! using a consistent six-tetrahedron decomposition. This is not the pressure
+//! grid's outer shell and does not depend on tall-cell merging.
+//! Adjacent sampling cubes use the same shared-face diagonal and deduplicate
+//! intersections on shared edges.
 //!
-//! 提取范围是第一层到最后一层单元中心；接触计算域边界的液体不会自动
-//! 封口。该函数只读取液体 `phi`，不会另行裁切固体或生成固体表面。
+//! Extraction spans the first through last layers of cell centers; liquid touching
+//! the domain boundary is not automatically capped. This function only reads liquid
+//! `phi`; it does not separately clip solids or generate solid surfaces.
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -13,9 +16,10 @@ use std::fmt;
 
 use crate::grid::{Grid, Vec3};
 
-/// 可直接复制到顶点缓冲区的 24 字节布局：位置和外法线各三个 `f32`。
+/// A 24-byte layout suitable for direct copying to a vertex buffer: three `f32`s
+/// each for position and outward normal.
 ///
-/// 位置单位为米；这不是 WGSL uniform/storage 中 `vec3` 的对齐布局。
+/// Positions are in meters; this is not the aligned WGSL uniform/storage `vec3` layout.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceVertex {
@@ -23,14 +27,14 @@ pub struct SurfaceVertex {
     pub normal: [f32; 3],
 }
 
-/// 索引每三个组成一个三角形，从水外观察顶点为逆时针绕序。
+/// Each three indices form a triangle, wound counterclockwise when viewed from outside the water.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SurfaceMesh {
     pub vertices: Vec<SurfaceVertex>,
     pub indices: Vec<u32>,
 }
 
-/// 表面输出上限。超过上限会返回错误，不交付截断或破裂的表面。
+/// Surface output limits. Exceeding a limit returns an error rather than a truncated or broken surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SurfaceLimits {
     pub max_vertices: usize,
@@ -57,17 +61,17 @@ pub enum SurfaceError {
 impl fmt::Display for SurfaceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidGrid(reason) => write!(f, "无效表面采样网格：{reason}"),
-            Self::NonFinitePhi { index } => write!(f, "phi[{index}] 不是有限数"),
-            Self::VertexLimit { max } => write!(f, "表面顶点超过上限 {max}"),
-            Self::TriangleLimit { max } => write!(f, "表面三角形超过上限 {max}"),
+            Self::InvalidGrid(reason) => write!(f, "Invalid surface sampling grid: {reason}"),
+            Self::NonFinitePhi { index } => write!(f, "phi[{index}] is not finite"),
+            Self::VertexLimit { max } => write!(f, "Surface vertices exceed limit {max}"),
+            Self::TriangleLimit { max } => write!(f, "Surface triangles exceed limit {max}"),
         }
     }
 }
 
 impl Error for SurfaceError {}
 
-/// 使用默认资源上限提取完整零等值面。
+/// Extract the complete zero isosurface using default resource limits.
 ///
 /// ```
 /// use tall_cell_fluid::{Domain, Grid};
@@ -87,11 +91,12 @@ pub fn extract_surface(grid: &Grid) -> Result<SurfaceMesh, SurfaceError> {
     extract_surface_with_limits(grid, SurfaceLimits::default())
 }
 
-/// 从距离场提取表面，并限制顶点、三角形及相应缓存的规模。
+/// Extract a surface from the distance field, limiting vertices, triangles, and associated buffers.
 ///
-/// `phi < 0` 为水，恰好为零的样本归到水外。等值点使用采样点编号去重，
-/// 不使用扰动距离值的方法改变几何；重复或零面积三角形会被丢弃。
-/// 法线由单元中心差分梯度插值得到，梯度退化时使用相邻三角形外法线。
+/// `phi < 0` is water; samples exactly at zero are outside. Isosurface points are
+/// deduplicated by sample index without perturbing distance values to change geometry;
+/// duplicate or zero-area triangles are discarded. Normals are interpolated from
+/// cell-centered finite-difference gradients, falling back to adjacent outward face normals.
 pub fn extract_surface_with_limits(
     grid: &Grid,
     limits: SurfaceLimits,
@@ -100,23 +105,29 @@ pub fn extract_surface_with_limits(
     let count = size
         .iter()
         .try_fold(1usize, |product, &n| product.checked_mul(n))
-        .ok_or(SurfaceError::InvalidGrid("单元数量溢出"))?;
+        .ok_or(SurfaceError::InvalidGrid("cell count overflow"))?;
     if size.contains(&0)
         || !grid.domain.cell_size.is_finite()
         || grid.domain.cell_size <= 0.0
         || grid.phi.len() != count
     {
-        return Err(SurfaceError::InvalidGrid("尺寸、间距或 phi 长度不合法"));
+        return Err(SurfaceError::InvalidGrid(
+            "invalid dimensions, spacing, or phi length",
+        ));
     }
     for (axis, &axis_size) in size.iter().enumerate() {
         let first = grid.domain.origin[axis] + 0.5 * grid.domain.cell_size;
         let last = grid.domain.origin[axis] + (axis_size as f64 - 0.5) * grid.domain.cell_size;
         if !first.is_finite() || !last.is_finite() || first.abs().max(last.abs()) > f32::MAX as f64
         {
-            return Err(SurfaceError::InvalidGrid("位置超出有限 f32 顶点范围"));
+            return Err(SurfaceError::InvalidGrid(
+                "position outside finite f32 vertex range",
+            ));
         }
         if axis_size > 1 && first as f32 >= last as f32 {
-            return Err(SurfaceError::InvalidGrid("采样范围在 f32 顶点精度下坍缩"));
+            return Err(SurfaceError::InvalidGrid(
+                "sampling range collapses at f32 vertex precision",
+            ));
         }
     }
     let mut phi_scale = 0.0_f64;
@@ -139,8 +150,8 @@ pub fn extract_surface_with_limits(
         triangles: HashSet::new(),
         face_normals: Vec::new(),
     };
-    // 围绕 0 -> 7 体对角线，按三个坐标方向的排列分解立方体。
-    // 这些连接由几何构造得到，不需要第三方 Marching Cubes 查找表。
+    // Decompose the cube around the 0 -> 7 body diagonal by permutations of the three axes.
+    // These connections are geometric and need no third-party Marching Cubes lookup table.
     const TETRAHEDRA: [[usize; 4]; 6] = [
         [0, 1, 3, 7],
         [0, 3, 2, 7],
@@ -220,7 +231,7 @@ impl MeshBuilder<'_> {
             let c = self.intersection(tip, others[2])?;
             self.triangle([a, b, c], outward)?;
         } else {
-            // 二内二外时，四个交点沿四边形边界依次排列。
+            // With two inside and two outside, the four intersections follow the quadrilateral boundary.
             let a = self.intersection(inside[0], outside[0])?;
             let b = self.intersection(inside[0], outside[1])?;
             let c = self.intersection(inside[1], outside[1])?;
@@ -254,7 +265,7 @@ impl MeshBuilder<'_> {
         if self.mesh.vertices.len() >= limit {
             return Err(SurfaceError::VertexLimit { max: limit });
         }
-        // 先缩放再相加，避免有限但极大的异号距离值在相减时溢出。
+        // Scale before adding to avoid overflow when subtracting huge finite distances of opposite signs.
         let scale = pa.abs().max(pb.abs());
         let t = (pa.abs() / scale) / (pa.abs() / scale + pb.abs() / scale);
         let position = lerp(self.grid.domain.center(a), self.grid.domain.center(b), t);
@@ -277,7 +288,7 @@ impl MeshBuilder<'_> {
             high[axis] = (p[axis] + 1).min(self.grid.domain.size[axis] - 1);
             let a = self.grid.phi[self.grid.domain.index(low)] / self.phi_scale;
             let b = self.grid.phi[self.grid.domain.index(high)] / self.phi_scale;
-            // 统一网格间距和全局 phi 缩放在法线归一化时约掉。
+            // Uniform grid spacing and global phi scaling cancel during normal normalization.
             (b - a) / (high[axis] - low[axis]) as f64
         })
     }
@@ -286,7 +297,7 @@ impl MeshBuilder<'_> {
         if indices[0] == indices[1] || indices[1] == indices[2] || indices[2] == indices[0] {
             return Ok(());
         }
-        // 用实际输出的 f32 位置检查退化，避免坐标量化后出现零面积三角形。
+        // Check degeneracy using the output f32 positions to avoid zero-area triangles after quantization.
         let positions = indices.map(|i| self.mesh.vertices[i as usize].position.map(f64::from));
         let mut normal = cross(
             sub(positions[1], positions[0]),

@@ -98,16 +98,22 @@ impl<T: Settings> SettingsStore<T> {
                 (
                     doc.current.clone(),
                     Some(doc.current),
-                    "已载入本地配置".into(),
+                    "Local settings loaded".into(),
                     false,
                     false,
                 )
             }
-            Ok(None) => (T::default(), None, "新配置，尚未保存".into(), false, false),
+            Ok(None) => (
+                T::default(),
+                None,
+                "New settings, not yet saved".into(),
+                false,
+                false,
+            ),
             Err(e) => (
                 T::default(),
                 None,
-                format!("载入失败：{e}；使用默认配置"),
+                format!("Load failed: {e}; using defaults"),
                 true,
                 true,
             ),
@@ -140,9 +146,9 @@ impl<T: Settings> SettingsStore<T> {
             self.status = if self.saved.as_ref() == Some(&self.observed)
                 && self.saved_configurations.as_ref() == Some(&self.configurations)
             {
-                "无未保存的更改"
+                "No unsaved changes"
             } else {
-                "有未保存的更改"
+                "Unsaved changes"
             }
             .into();
         }
@@ -159,11 +165,11 @@ impl<T: Settings> SettingsStore<T> {
             Ok(()) => {
                 self.saved = Some(self.observed.clone());
                 self.saved_configurations = Some(self.configurations.clone());
-                self.status = "保存成功".into();
+                self.status = "Saved successfully".into();
                 self.failed = false;
             }
             Err(e) => {
-                self.status = format!("保存失败：{e}");
+                self.status = format!("Save failed: {e}");
                 self.failed = true;
             }
         }

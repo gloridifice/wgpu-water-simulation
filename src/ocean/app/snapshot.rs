@@ -10,7 +10,7 @@ use crate::ocean::{
     },
 };
 
-/// 和窗口共用相同的计算与渲染管线，方便无窗口验证和保存结果。
+/// Shares the window's compute and render pipelines for headless verification and image export.
 pub async fn snapshot(
     initial: &SavedSettings,
     time: f32,

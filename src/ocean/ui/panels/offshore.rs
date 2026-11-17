@@ -13,41 +13,50 @@ impl Gui {
         current: OceanConfig,
         camera: &mut Camera,
     ) -> Option<OceanConfig> {
-        group(ui, "Phillips 波谱", |ui| {
-            number(ui, "波谱强度 A", &mut self.draft.amplitude, 0.0..=0.1, true);
+        group(ui, "Phillips Spectrum", |ui| {
             number(
                 ui,
-                "波谱尺度 L（米）",
+                "Spectrum Strength A",
+                &mut self.draft.amplitude,
+                0.0..=0.1,
+                true,
+            );
+            number(
+                ui,
+                "Spectrum Scale L (m)",
                 &mut self.draft.phillips_length,
                 0.1..=500.0,
                 true,
             );
             let mut angle = self.draft.wind_angle.to_degrees();
-            if parameter(ui, "风向（度）", help("风向（度）"), |ui| {
-                ui.add(ParameterSlider::new(&mut angle, -180.0..=180.0))
-            })
+            if parameter(
+                ui,
+                "Wind Direction (degrees)",
+                help("Wind Direction (degrees)"),
+                |ui| ui.add(ParameterSlider::new(&mut angle, -180.0..=180.0)),
+            )
             .changed()
             {
                 self.draft.wind_angle = angle.to_radians();
             }
-            parameter(ui, "随机种子", help("随机种子"), |ui| {
+            parameter(ui, "Random Seed", help("Random Seed"), |ui| {
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut self.draft.seed));
-                    if ui.button("更换").clicked() {
+                    if ui.button("Change").clicked() {
                         self.draft.seed = self.draft.seed.wrapping_add(1);
                     }
                 });
             });
         });
-        group(ui, "范围与采样", |ui| {
+        group(ui, "Domain and Sampling", |ui| {
             number(
                 ui,
-                "区块边长（米）",
+                "Patch Size (m)",
                 &mut self.draft.length,
                 8.0..=1024.0,
                 true,
             );
-            parameter(ui, "FFT 分辨率", help("FFT 分辨率"), |ui| {
+            parameter(ui, "FFT Resolution", help("FFT Resolution"), |ui| {
                 egui::ComboBox::from_id_salt("fft resolution")
                     .width(ui.available_width())
                     .selected_text(format!(
@@ -65,20 +74,25 @@ impl Gui {
                     });
             });
             ui.add_enabled_ui(!self.optics.lake.enabled, |ui| {
-                parameter(ui, "远海网格密度", help("远海网格密度"), |ui| {
-                    ui.add(ParameterSlider::new(
-                        &mut self.draft.mesh_resolution,
-                        8..=512,
-                    ))
-                });
+                parameter(
+                    ui,
+                    "Offshore Grid Density",
+                    help("Offshore Grid Density"),
+                    |ui| {
+                        ui.add(ParameterSlider::new(
+                            &mut self.draft.mesh_resolution,
+                            8..=512,
+                        ))
+                    },
+                );
             });
         });
         let mut apply = None;
         let [apply_button, defaults] = action_row(
             ui,
             [
-                PanelButton::new("应用更改").enabled(self.draft != current),
-                PanelButton::new("恢复默认"),
+                PanelButton::new("Apply Changes").enabled(self.draft != current),
+                PanelButton::new("Restore Defaults"),
             ],
         );
         if apply_button.clicked() {
@@ -91,25 +105,27 @@ impl Gui {
             }
         }
         if defaults
-            .on_hover_text("只恢复待应用的波谱参数，点击应用后生效。")
+            .on_hover_text(
+                "Only restores the pending spectrum parameters; click Apply to take effect.",
+            )
             .clicked()
         {
             self.draft = OceanConfig::default();
         }
         ui.label(if self.draft == current {
-            "参数已应用"
+            "Parameters applied"
         } else {
-            "有待应用修改"
+            "Changes pending"
         });
         if let Some(e) = &self.error {
             ui.colored_label(egui::Color32::LIGHT_RED, e);
         }
         if self.optics.lake.enabled {
-            group(ui, "湖泊 FFT 波形", |ui| {
+            group(ui, "Lake FFT Waves", |ui| {
                 parameter(
                     ui,
-                    "FFT 叠加强度",
-                    "共享波谱高度的无量纲倍率 0～1；0 关闭，实时生效、不重置。湖泊不使用水平挤浪和远海网格；波谱更改应用后重建并重新计时。",
+                    "FFT Overlay Strength",
+                    "Dimensionless multiplier 0–1 for the shared spectrum height; 0 disables it. Takes effect immediately without resetting. Lakes do not use horizontal choppiness or the offshore mesh; applying spectrum changes rebuilds and restarts timing.",
                     |ui| {
                         ui.add(ParameterSlider::new(
                             &mut self.optics.lake.fft_strength,
@@ -119,24 +135,30 @@ impl Gui {
                 );
                 parameter(
                     ui,
-                    "FFT 岸边渐隐",
-                    "实时生效、不重置。启用时在水深 0～0.5 米、岸距 0～1 米内减弱 FFT；关闭后保留完整强度，仍屏蔽干地并限制波谷不穿湖底。",
-                    |ui| ui.checkbox(&mut self.optics.lake.fft_shore_fade, "启用"),
+                    "FFT Shore Fade",
+                    "Takes effect immediately without resetting. When enabled, attenuates FFT within water depths of 0–0.5 m and shore distances of 0–1 m; when disabled, retains full strength while still masking dry land and keeping wave troughs above the lakebed.",
+                    |ui| ui.checkbox(&mut self.optics.lake.fft_shore_fade, "Enable"),
                 );
             });
             return apply;
         }
-        group(ui, "波形", |ui| {
+        group(ui, "Waves", |ui| {
             let mut triangular = current.triangular_mesh;
-            toggle(ui, "近正三角形网格", &mut triangular);
+            toggle(ui, "Near-Equilateral Triangle Grid", &mut triangular);
             if triangular != current.triangular_mesh {
                 self.draft.triangular_mesh = triangular;
                 apply.get_or_insert(current).triangular_mesh = triangular;
             }
-            number(ui, "波高增益", &mut camera.gain, 0.0..=3.0, false);
-            toggle(ui, "水平挤浪", &mut camera.choppy);
+            number(ui, "Wave Height Gain", &mut camera.gain, 0.0..=3.0, false);
+            toggle(ui, "Horizontal Choppiness", &mut camera.choppy);
             if camera.choppy {
-                number(ui, "挤浪强度", &mut camera.chop_amount, 0.0..=3.0, false);
+                number(
+                    ui,
+                    "Choppiness Strength",
+                    &mut camera.chop_amount,
+                    0.0..=3.0,
+                    false,
+                );
             }
         });
         apply
@@ -147,41 +169,41 @@ impl Gui {
         ui: &mut egui::Ui,
         camera: &mut Camera,
     ) {
-        group(ui, "远海泡沫生成与衰减", |ui| {
+        group(ui, "Offshore Foam Generation and Decay", |ui| {
             number(
                 ui,
-                "雅可比阈值",
+                "Jacobian Threshold",
                 &mut self.foam_settings.threshold,
                 -0.5..=1.0,
                 false,
             );
             number(
                 ui,
-                "生成速率（每秒）",
+                "Generation Rate (per s)",
                 &mut self.foam_settings.generation,
                 0.0..=20.0,
                 false,
             );
             number(
                 ui,
-                "衰减系数（每秒）",
+                "Decay Coefficient (per s)",
                 &mut self.foam_settings.decay,
                 0.0..=5.0,
                 false,
             );
         });
-        group(ui, "远海诊断", |ui| {
-            parameter(ui, "泡沫视图", help("泡沫视图"), |ui| {
+        group(ui, "Offshore Diagnostics", |ui| {
+            parameter(ui, "Foam View", help("Foam View"), |ui| {
                 choices(
                     ui,
                     &mut camera.foam_debug,
-                    &[(0, "正常"), (1, "雅可比"), (2, "覆盖率")],
+                    &[(0, "Normal"), (1, "Jacobian"), (2, "Coverage")],
                 )
             });
         });
         if ui
-            .add(PanelButton::new("清空泡沫历史"))
-            .on_hover_text("沿用全局历史重置，同时重置浅水、泡沫和沙地历史。")
+            .add(PanelButton::new("Clear Foam History"))
+            .on_hover_text("Uses the global history reset, also resetting shallow water, foam and sand history.")
             .clicked()
         {
             self.clear_foam = true;

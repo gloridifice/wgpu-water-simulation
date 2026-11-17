@@ -1,10 +1,10 @@
-// 光学层数值阶段。各入口按静态使用的资源建立稀疏 bindings。
-// q/积分/距离传播/高度平滑均在 GPU 上执行；CPU 只整理四叉树和压力基底。
+// Optical-layer numerical stages. Each entry point uses sparse bindings for its statically used resources.
+// q, integration, distance propagation and height smoothing run on the GPU; the CPU only organizes the quadtree and pressure basis.
 struct Params {
     dimensions: vec4<u32>, // nx, ny, nz, cell_count
-    offsets: vec4<u32>,    // u/v/w 偏移, column_count
-    controls: vec4<u32>,   // airborne_layers, 保留
-    coefficients: vec4<f32>, // optical_scale, 保留
+    offsets: vec4<u32>,    // u/v/w offsets, column_count
+    controls: vec4<u32>,   // airborne_layers, reserved
+    coefficients: vec4<f32>, // optical_scale, reserved
 }
 
 struct Metric {
@@ -62,7 +62,7 @@ fn face_velocity(component: u32, p: vec3<u32>) -> f32 {
     return velocities[params.offsets[component] + p.x + dims.x * (p.y + dims.y * p.z)];
 }
 
-// 每线程负责一根水柱，逐段处理固体/空气隔开的连续液体，避免跨段拟合。
+// Each thread handles one column, processing continuous liquid segments separated by solid or air to avoid fitting across segments.
 @compute @workgroup_size(64)
 fn evaluate_metrics(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let column = invocation.x;
@@ -93,7 +93,7 @@ fn evaluate_metrics(@builtin(global_invocation_id) invocation: vec3<u32>) {
             let offset = f32(j) - center;
             variance += offset * offset;
         }
-        // 水平两分量各有左右/前后两条采样列，逐列线性最小二乘。
+        // Each horizontal component has two sampling columns (left/right or front/back); fit each column by linear least squares.
         for (var horizontal = 0u; horizontal < 2u; horizontal += 1u) {
             let component = horizontal * 2u;
             for (var side = 0u; side < 2u; side += 1u) {
@@ -134,7 +134,7 @@ fn evaluate_metrics(@builtin(global_invocation_id) invocation: vec3<u32>) {
                 + abs(face_velocity(1u, vec3<u32>(x, j + 1u, z)) - vertical_mean);
             total += metrics[index].local_error;
         }
-        // 使用整个计算域层数，而不是当前液段的层数。
+        // Use the number of layers in the whole domain, not the current liquid segment.
         total /= f32(ny);
         for (var j = first; j < limit; j += 1u) {
             let index = cell_index(vec3<u32>(x, j, z));
@@ -180,7 +180,7 @@ fn seed_optical_layer(@builtin(global_invocation_id) invocation: vec3<u32>) {
     if grounded(p.x, p.z, metric.first) {
         let lower = min(max(2u * leaf_widths[column], 4u), params.dimensions.y);
         let upper = max(params.dimensions.y / 8u, lower);
-        // 先比较饱和界限，避免两个有限 f32 的乘积溢出。
+        // Compare the saturation limit first to avoid overflow when multiplying two finite f32 values.
         var scaled = 0.0;
         if params.coefficients.x > 0.0 {
             if metric.run_error >= f32(upper) / params.coefficients.x {
@@ -194,7 +194,7 @@ fn seed_optical_layer(@builtin(global_invocation_id) invocation: vec3<u32>) {
     work_out[index] = i32(radius);
 }
 
-// 一次邻域传播走一格；读写分离，重复最大半径次得到完整 L1 球并集。
+// Each neighborhood propagation travels one cell; separate reads and writes and repeat for the maximum radius to obtain the full union of L1 balls.
 @compute @workgroup_size(64)
 fn dilate_optical_layer(@builtin(global_invocation_id) invocation: vec3<u32>) {
     let index = invocation.x;

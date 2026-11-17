@@ -93,13 +93,13 @@ impl<P: PanelId> Layout<P> {
     pub fn validate(self) -> Result<Self, String> {
         fn check<P>(n: &Layout<P>, depth: usize, leaves: &mut usize) -> Result<(), String> {
             if depth > 16 {
-                return Err("布局层级超过 16".into());
+                return Err("Layout nesting exceeds 16".into());
             }
             match n {
                 Layout::Tabs { tabs, .. } => {
                     *leaves += 1;
                     if *leaves > 64 || tabs.len() > 64 {
-                        return Err("布局面板数量过多".into());
+                        return Err("Too many layout panels".into());
                     }
                 }
                 Layout::Split {
@@ -109,7 +109,7 @@ impl<P: PanelId> Layout<P> {
                     ..
                 } => {
                     if !fraction.is_finite() || !(*fraction > 0.0 && *fraction < 1.0) {
-                        return Err("布局分割比例无效".into());
+                        return Err("Invalid layout split ratio".into());
                     }
                     check(first, depth + 1, leaves)?;
                     check(second, depth + 1, leaves)?;

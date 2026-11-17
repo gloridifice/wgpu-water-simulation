@@ -52,9 +52,11 @@ impl WorkspaceStore {
         };
         let version = value["version"].as_u64();
         if !matches!(version, Some(1..=3)) {
-            return Err("不支持的布局版本".into());
+            return Err("Unsupported layout version".into());
         }
-        let entries = value["workspaces"].as_object().ok_or("缺少工作区布局")?;
+        let entries = value["workspaces"]
+            .as_object()
+            .ok_or("Missing workspace layouts")?;
         let mut errors = Vec::new();
         for id in WorkspaceId::ALL {
             if let Some(value) = entries.get(id.key()) {
@@ -80,7 +82,7 @@ impl WorkspaceStore {
         if let Some(active) = value.get("active") {
             match serde_json::from_value(active.clone()) {
                 Ok(id) => workspaces.active = id,
-                Err(_) => errors.push("未知工作区，已选择场景".into()),
+                Err(_) => errors.push("Unknown workspace; Scene selected".into()),
             }
         }
         if errors.is_empty() {

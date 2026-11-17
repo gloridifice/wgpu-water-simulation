@@ -25,7 +25,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let b = multiply(other, phase * vec2(1.0, -1.0));
     let h = a + b;
     output[index] = h;
-    // 水平位移 D(k) = -i * k/|k| * H(k)，三个通道共用 FFT。
+    // Horizontal displacement D(k) = -i * k/|k| * H(k); all three channels share the FFT.
     let minus_i_h = vec2(h.y, -h.x);
     output[n * n + index] = minus_i_h * mode.z / max(k, 0.000001);
     output[2u * n * n + index] = minus_i_h * mode.w / max(k, 0.000001);

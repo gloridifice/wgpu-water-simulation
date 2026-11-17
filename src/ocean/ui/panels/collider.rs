@@ -16,36 +16,36 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
             domain[1] + domain[3],
         ]
     };
-    yummy_egui::h3(ui, "静态碰撞体");
+    yummy_egui::h3(ui, "Static Colliders");
     parameter_table(ui, "collider actions", |ui| {
         parameter(
             ui,
-            "工作状态",
-            "在沙滩或模型场景且 SWE 开启时参与模拟、显示。固定在海底，低于顶部时挡水，超过顶部时可漫过；不模拟漂浮或刚体运动。",
+            "Status",
+            "Simulated and displayed in beach or model scenes when SWE is enabled. Fixed to the bed; blocks water below its top and allows overtopping. Floating and rigid-body motion are not simulated.",
             |ui| {
                 ui.label(if optics.swe_enabled() {
-                    "已启用"
+                    "Enabled"
                 } else {
-                    "请开启海岸场景与 SWE"
+                    "Enable a coastal scene and SWE"
                 });
             },
         );
         parameter(
             ui,
-            "有效 X 范围（米）",
-            "整个形状必须处于局部 SWE 区域，并避开外海 FFT 输入带。边缘还预留一格。",
-            |ui| ui.label(format!("{:.1} ～ {:.1}", interior[0], interior[2])),
+            "Valid X Range (m)",
+            "The entire shape must lie inside the local SWE domain and outside the offshore FFT input band. One cell is also reserved at the edge.",
+            |ui| ui.label(format!("{:.1} – {:.1}", interior[0], interior[2])),
         );
         parameter(
             ui,
-            "有效 Z 范围（米）",
-            "沿岸范围，边缘预留一格；超出时保留配置，但不参与显示和碰撞。",
-            |ui| ui.label(format!("{:.1} ～ {:.1}", interior[1], interior[3])),
+            "Valid Z Range (m)",
+            "Alongshore range, with one cell reserved at the edge. Outside this range the configuration is retained, but the collider is not displayed or simulated.",
+            |ui| ui.label(format!("{:.1} – {:.1}", interior[1], interior[3])),
         );
         parameter(
             ui,
-            "网格间距 X/Z（米）",
-            "建议碰撞体在两个方向上均覆盖至少 3 格。形状以网格采样，尺寸过小可能漏采样。",
+            "Grid Spacing X/Z (m)",
+            "Colliders should span at least 3 cells in both directions. Shapes are sampled on the grid, so very small shapes may be missed.",
             |ui| {
                 ui.label(format!(
                     "{:.2} / {:.2}",
@@ -56,15 +56,15 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
         );
         parameter(
             ui,
-            "添加",
-            "最多 8 个。默认放在岸线向海 8 米处。编辑即时生效，手动保存，不重置 SWE；仅调整底面变化处的水体，保留其他历史。不是连续移动的刚体。",
+            "Add",
+            "Up to 8. By default, placed 8 m seaward of the shoreline. Edits apply immediately, require manual save, and do not reset SWE; only water where the bed changes is adjusted, preserving other history. These are not continuously moving rigid bodies.",
             |ui| {
                 let can_add = optics.shore.colliders.iter().any(Option::is_none);
                 let responses = action_row(
                     ui,
                     [
-                        PanelButton::new("圆柱").enabled(can_add),
-                        PanelButton::new("长方体").enabled(can_add),
+                        PanelButton::new("Cylinder").enabled(can_add),
+                        PanelButton::new("Box").enabled(can_add),
                     ],
                 );
                 for (response, shape) in responses.into_iter().zip([Shape::Cylinder, Shape::Box]) {
@@ -97,35 +97,35 @@ pub fn show(ui: &mut egui::Ui, optics: &mut OpticsConfig, domain: [f32; 4]) {
         };
         ui.separator();
         ui.push_id(index, |ui| {
-            yummy_egui::h3(ui, format!("碰撞体 {}", index + 1));
+            yummy_egui::h3(ui, format!("Collider {}", index + 1));
             parameter_table(ui, "collider parameters", |ui| {
-                parameter(ui, "启用", "开启或关闭；即时生效，手动保存，不重置 SWE，暂停时也会应用。", |ui| ui.checkbox(&mut c.enabled, ""));
-                parameter(ui, "形状", "圆柱或可旋转长方体，底部连接海底；即时生效，手动保存，不重置 SWE。", |ui| {
-                    choices(ui, &mut c.shape, &[(Shape::Cylinder, "圆柱"), (Shape::Box, "长方体")]);
+                parameter(ui, "Enabled", "Toggle immediately, even while paused. Save manually; does not reset SWE.", |ui| ui.checkbox(&mut c.enabled, ""));
+                parameter(ui, "Shape", "Cylinder or rotatable box, anchored to the bed. Applies immediately, requires manual save, and does not reset SWE.", |ui| {
+                    choices(ui, &mut c.shape, &[(Shape::Cylinder, "Cylinder"), (Shape::Box, "Box")]);
                 });
-                for (axis, label) in [(0, "位置 X（米）"), (1, "位置 Z（米）")] {
-                    parameter(ui, label, "世界坐标，范围 ±1000 米。X 增大朝向外海，Z 沿岸；即时生效，手动保存，不重置 SWE。整个形状须在有效范围内。", |ui| ui.add(ParameterSlider::new(&mut c.position[axis], -1000.0..=1000.0).clamping(egui::SliderClamping::Edits).max_decimals(3)));
+                for (axis, label) in [(0, "Position X (m)"), (1, "Position Z (m)")] {
+                    parameter(ui, label, "World coordinates, range ±1000 m. Increasing X points offshore; Z runs alongshore. Applies immediately, requires manual save, and does not reset SWE. The entire shape must lie in the valid range.", |ui| ui.add(ParameterSlider::new(&mut c.position[axis], -1000.0..=1000.0).clamping(egui::SliderClamping::Edits).max_decimals(3)));
                 }
                 if c.shape == Shape::Cylinder {
-                    parameter(ui, "半径（米）", "范围 0.25～30 米；即时生效，手动保存，不重置 SWE。小于网格间距的形状可能无法分辨。", |ui| ui.add(ParameterSlider::new(&mut c.radius, 0.25..=30.0).logarithmic(true).clamping(egui::SliderClamping::Edits).max_decimals(3)));
+                    parameter(ui, "Radius (m)", "Range 0.25–30 m; applies immediately, requires manual save, and does not reset SWE. Shapes smaller than the grid spacing may not be resolved.", |ui| ui.add(ParameterSlider::new(&mut c.radius, 0.25..=30.0).logarithmic(true).clamping(egui::SliderClamping::Edits).max_decimals(3)));
                 } else {
-                    for (axis, label) in [(0, "宽度（米）"), (1, "长度（米）")] {
-                        parameter(ui, label, "完整尺寸，范围 0.5～60 米；即时生效，手动保存，不重置 SWE。", |ui| ui.add(ParameterSlider::new(&mut c.size[axis], 0.5..=60.0).logarithmic(true).clamping(egui::SliderClamping::Edits).max_decimals(3)));
+                    for (axis, label) in [(0, "Width (m)"), (1, "Length (m)")] {
+                        parameter(ui, label, "Full size, range 0.5–60 m; applies immediately, requires manual save, and does not reset SWE.", |ui| ui.add(ParameterSlider::new(&mut c.size[axis], 0.5..=60.0).logarithmic(true).clamping(egui::SliderClamping::Edits).max_decimals(3)));
                     }
-                    parameter(ui, "旋转（度）", "绕竖直轴旋转，范围 ±180 度；即时生效，手动保存，不重置 SWE。", |ui| ui.add(ParameterSlider::new(&mut c.angle, -180.0..=180.0)));
+                    parameter(ui, "Rotation (degrees)", "Rotation around the vertical axis, range ±180 degrees; applies immediately, requires manual save, and does not reset SWE.", |ui| ui.add(ParameterSlider::new(&mut c.angle, -180.0..=180.0)));
                 }
-                parameter(ui, "高度（米）", "范围 0.1～30 米，从中心处原海底向上量到水平顶面。水面超过顶面可以漫过；即时生效，手动保存，不重置 SWE。", |ui| ui.add(ParameterSlider::new(&mut c.height, 0.1..=30.0).logarithmic(true).clamping(egui::SliderClamping::Edits).max_decimals(3)));
-                parameter(ui, "顶面海拔（米）", "中心海底高度加碰撞体高度，相对海平面。模型场景使用重采样床面，不使用沙坡公式。", |ui| ui.label(if model.enabled {"烘焙床面 + 高度".to_string()} else {format!("{:.2}", -optics.beach_slope * (c.position[0] - optics.shore_x) + c.height)}));
-                parameter(ui, "模拟状态", "超出有效区域的碰撞体保留配置，但暂不显示、不参与碰撞。FFT 远海没有碰撞反馈。", |ui| {
+                parameter(ui, "Height (m)", "Range 0.1–30 m, measured from the original bed at the center to the horizontal top. Water can flow over the top. Applies immediately, requires manual save, and does not reset SWE.", |ui| ui.add(ParameterSlider::new(&mut c.height, 0.1..=30.0).logarithmic(true).clamping(egui::SliderClamping::Edits).max_decimals(3)));
+                parameter(ui, "Top Elevation (m)", "Bed elevation at the center plus collider height, relative to sea level. Model scenes use the resampled bed, not the beach slope formula.", |ui| ui.label(if model.enabled {"Baked bed + height".to_string()} else {format!("{:.2}", -optics.beach_slope * (c.position[0] - optics.shore_x) + c.height)}));
+                parameter(ui, "Simulation Status", "Colliders outside the valid region retain their configuration but are not displayed or simulated. The offshore FFT has no collision feedback.", |ui| {
                     let extent=c.extent();
                     let inside=if model.enabled {(0..2).all(|a|c.position[a]-extent[a]>=interior[a] && c.position[a]+extent[a]<=interior[a+2])} else {c.in_domain(domain,resolution)};
-                    ui.label(if !c.enabled { "已关闭" } else if !inside { "超出有效区域" } else { "范围内" });
+                    ui.label(if !c.enabled { "Disabled" } else if !inside { "Outside valid region" } else { "Inside valid region" });
                 });
-                parameter(ui, "操作", "删除即时生效，手动保存，不重置 SWE；空出的区域在继续运行后由周围水流回填。", |ui| { if ui.add(PanelButton::new("删除")).clicked() { remove = Some(index); } });
+                parameter(ui, "Action", "Deletion applies immediately, requires manual save, and does not reset SWE; surrounding water fills the vacated area as simulation continues.", |ui| { if ui.add(PanelButton::new("Delete")).clicked() { remove = Some(index); } });
             });
             let size = if c.shape == Shape::Cylinder { c.radius * 2.0 } else { c.size[0].min(c.size[1]) };
             if size < 3.0 * domain[2].max(domain[3]) / resolution as f32 {
-                ui.label("尺寸较小，建议增大以改善网格对形状的分辨。");
+                ui.label("Small shape; increase its size for better grid resolution.");
             }
         });
     }

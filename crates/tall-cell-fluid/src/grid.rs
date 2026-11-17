@@ -1,4 +1,4 @@
-//! 规则背景网格：米、秒、米/秒、帕斯卡；y 为竖直方向。
+//! Regular background grid: meters, seconds, meters/second, pascals; y is vertical.
 
 pub type Vec3 = [f64; 3];
 
@@ -26,25 +26,27 @@ impl Domain {
             || self.cell_size <= 0.0
             || self.origin.iter().any(|v| !v.is_finite())
         {
-            return Err("每轴至少两个单元；网格间距必须为有限正数，原点必须有限".into());
+            return Err("At least two cells per axis are required; grid spacing must be finite and positive, and the origin must be finite".into());
         }
         let count = self.size.iter().try_fold(1usize, |a, &b| a.checked_mul(b));
         if count.is_none_or(|n| n > isize::MAX as usize / (8 * 32)) {
-            return Err("网格尺寸溢出或超过可寻址范围".into());
+            return Err("Grid dimensions overflow or exceed the addressable range".into());
         }
         for axis in 0..3 {
             let mut dims = self.size;
-            dims[axis] = dims[axis].checked_add(1).ok_or("面网格尺寸溢出")?;
+            dims[axis] = dims[axis]
+                .checked_add(1)
+                .ok_or("Face grid dimensions overflow")?;
             if dims
                 .iter()
                 .try_fold(1usize, |a, &b| a.checked_mul(b))
                 .is_none()
             {
-                return Err("面网格尺寸溢出".into());
+                return Err("Face grid dimensions overflow".into());
             }
             let upper = self.origin[axis] + self.size[axis] as f64 * self.cell_size;
             if !upper.is_finite() {
-                return Err("计算域物理尺寸溢出".into());
+                return Err("Domain physical dimensions overflow".into());
             }
         }
         Ok(())
@@ -82,7 +84,7 @@ impl Domain {
 #[derive(Clone, Debug)]
 pub struct MacVelocity {
     pub domain: Domain,
-    /// x/y/z 面法向速度，尺寸分别为 (Nx+1,Ny,Nz)、(Nx,Ny+1,Nz)、(Nx,Ny,Nz+1)。
+    /// x/y/z face-normal velocities, with dimensions (Nx+1,Ny,Nz), (Nx,Ny+1,Nz), and (Nx,Ny,Nz+1), respectively.
     pub faces: [Vec<f64>; 3],
 }
 
@@ -136,7 +138,7 @@ impl MacVelocity {
     }
 
     pub fn max_speed(&self) -> f64 {
-        // 各分量最大值的范数，是插值速度的保守上界。
+        // The norm of the component maxima is a conservative upper bound on interpolated speed.
         self.faces
             .iter()
             .map(|v| v.iter().fold(0.0_f64, |m, x| m.max(x.abs())).powi(2))
@@ -148,9 +150,9 @@ impl MacVelocity {
 #[derive(Clone, Debug)]
 pub struct Grid {
     pub domain: Domain,
-    /// 液体为负、空气为正，单位米；存储在单元中心。
+    /// Negative in liquid, positive in air, in meters; stored at cell centers.
     pub phi: Vec<f64>,
-    /// 静态固体为负、可流动区域为正，单位米；此参考实现使用体素边界。
+    /// Negative in static solids, positive in flow regions, in meters; this reference implementation uses voxel boundaries.
     pub solid_phi: Vec<f64>,
     pub pressure: Vec<f64>,
     pub velocity: MacVelocity,
@@ -202,7 +204,7 @@ impl Grid {
         sample_array(data, self.domain.size, coords)
     }
 
-    /// 闭合计算域；固体相邻面零法向速度。没有移动固体或部分面开口近似。
+    /// Close the domain; faces adjacent to solids have zero normal velocity. No moving solids or partially open face approximation.
     pub fn enforce_boundaries(&mut self) {
         for axis in 0..3 {
             let dims = self.velocity.dimensions(axis);
@@ -251,7 +253,7 @@ impl Grid {
         (squared / count.max(1) as f64).sqrt()
     }
 
-    /// 平滑 Heaviside 的体积估计，非严格几何体积。
+    /// Smoothed Heaviside volume estimate, not an exact geometric volume.
     pub fn liquid_volume(&self) -> f64 {
         let h = self.domain.cell_size;
         self.phi
@@ -266,7 +268,7 @@ impl Grid {
     pub fn validate(&self) -> Result<(), String> {
         self.domain.validate()?;
         if self.domain != self.velocity.domain {
-            return Err("速度网格与单元网格不一致".into());
+            return Err("Velocity grid does not match the cell grid".into());
         }
         for (label, data) in [
             ("phi", &self.phi),
@@ -274,7 +276,7 @@ impl Grid {
             ("pressure", &self.pressure),
         ] {
             if data.len() != self.domain.cell_count() || data.iter().any(|x| !x.is_finite()) {
-                return Err(format!("{label} 长度不匹配或包含非有限数"));
+                return Err(format!("{label} length mismatch or non-finite values"));
             }
         }
         for axis in 0..3 {
@@ -282,7 +284,7 @@ impl Grid {
             if data.len() != self.velocity.dimensions(axis).iter().product::<usize>()
                 || data.iter().any(|x| !x.is_finite())
             {
-                return Err("速度数组长度不匹配或包含非有限数".into());
+                return Err("Velocity array length mismatch or non-finite values".into());
             }
         }
         Ok(())

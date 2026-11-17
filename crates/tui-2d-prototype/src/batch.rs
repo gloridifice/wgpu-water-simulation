@@ -40,7 +40,7 @@ fn draw(out: &mut impl Write, sim: &Simulation) -> io::Result<()> {
     let width = sim.cells().len().min(81);
     let height = 16;
     let config = sim.config();
-    // 固定纵轴，避免逐帧自动缩放掩盖数值耗散；纵向做了夸张显示。
+    // Fix the vertical axis to avoid hiding numerical dissipation with per-frame autoscaling; exaggerate vertical scale.
     let amplitude = config.bump_height.max(0.05);
     let low = config.rest_depth - 0.25 * amplitude;
     let high = config.rest_depth + 1.25 * amplitude;
@@ -50,7 +50,7 @@ fn draw(out: &mut impl Write, sim: &Simulation) -> io::Result<()> {
     };
     let mut surface = Vec::with_capacity(width);
     for column in 0..width {
-        // 仅对显示做线性采样，不改变参与求解的网格。
+        // Linearly sample for display only; the solver grid is unchanged.
         let position = column as f64 * (sim.cells().len() - 1) as f64 / (width - 1) as f64;
         let left = position.floor() as usize;
         let right = (left + 1).min(sim.cells().len() - 1);

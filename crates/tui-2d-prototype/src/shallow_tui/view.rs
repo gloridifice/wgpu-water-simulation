@@ -18,7 +18,7 @@ pub struct SurfacePlot {
 }
 
 impl SurfacePlot {
-    /// 只接受水面绘图区内的点击，坐标轴、边框和其他面板不产生扰动。
+    /// Accept clicks only inside the water plot; axes, borders and other panels do not create disturbances.
     pub fn x_at(self, column: u16, row: u16) -> Option<f64> {
         if self.area.width < 2
             || column < self.area.x
@@ -206,8 +206,8 @@ fn draw_charts(
     ));
     frame.render_widget(velocity_chart, velocity_area);
 
-    // Ratatui 0.30 Chart：边框内先留 y 标签宽度和一列 y 轴，底部留 x 轴/标签两行。
-    // 与上面的实际标签共用同一来源；测试对照渲染后的轴位置，防止命中区域偏移。
+    // Ratatui 0.30 Chart: reserve the y-label width and one y-axis column inside the border, plus two bottom rows for the x-axis and labels.
+    // Share the label source above; tests compare rendered axis positions to prevent hit-area drift.
     let inner = panel("").inner(surface_area);
     let labels = y_labels(low, high, surface_area.height);
     let label_width =
@@ -244,7 +244,7 @@ fn x_axis(length: f64) -> Axis<'static> {
 }
 
 fn y_axis(low: f64, high: f64, name: &'static str, height: u16) -> Axis<'static> {
-    // 小图只放上下界，避免三条标签挤进两行绘图区。
+    // Small plots show only upper and lower bounds, avoiding three labels in two rows.
     let labels = y_labels(low, high, height);
     let axis = Axis::default()
         .bounds([low, high])

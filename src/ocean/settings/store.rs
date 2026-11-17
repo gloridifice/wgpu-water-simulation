@@ -337,10 +337,10 @@ mod tests {
         assert!(library.overwrite(None, initial.clone()).is_err());
         assert!(library.delete(None).is_err());
         assert!(library.delete(Some(99)).is_err());
-        assert!(library.save_as("默认配置", initial.clone()).is_err());
+        assert!(library.save_as("Default", initial.clone()).is_err());
         assert!(library.save_as(" 方案一 ", initial.clone()).is_err());
         assert!(library.save_as(" \t ", initial.clone()).is_err());
-        assert!(library.rename(Some(index), "默认配置").is_err());
+        assert!(library.rename(Some(index), "Default").is_err());
         assert!(library.rename(Some(99), "不存在").is_err());
         assert!(library.get(Some(99)).is_err());
         let mut invalid = initial;
@@ -432,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_or_stale_last_selection_preserves_legacy_configurations() {
+    fn legacy_names_and_missing_or_stale_selection_preserve_configurations() {
         let dir = Directory::new();
         let initial = SavedSettings::default();
         let mut library = ConfigurationLibrary::new(initial.clone());
@@ -442,20 +442,24 @@ mod tests {
             configurations: Some(library),
         })
         .unwrap();
-        document["configurations"]
-            .as_object_mut()
-            .unwrap()
-            .remove("active");
-        for stale in [false, true] {
-            if stale {
-                document["configurations"]["active"] = serde_json::json!(999);
+        // Existing profile names are user data, including Unicode and the new English default label.
+        for name in ["Legacy Profile", "Default", "原有配置"] {
+            document["configurations"]["profiles"][0]["name"] = serde_json::json!(name);
+            document["configurations"]
+                .as_object_mut()
+                .unwrap()
+                .remove("active");
+            for stale in [false, true] {
+                if stale {
+                    document["configurations"]["active"] = serde_json::json!(999);
+                }
+                fs::write(dir.file(), serde_json::to_vec(&document).unwrap()).unwrap();
+                let (restored, store) = SettingsStore::open(dir.file());
+                assert!(!store.failed, "{}", store.status);
+                assert_eq!(restored, initial);
+                assert_eq!(store.configurations().active(), None);
+                assert_eq!(store.configurations().profiles()[0].name(), name);
             }
-            fs::write(dir.file(), serde_json::to_vec(&document).unwrap()).unwrap();
-            let (restored, store) = SettingsStore::open(dir.file());
-            assert!(!store.failed, "{}", store.status);
-            assert_eq!(restored, initial);
-            assert_eq!(store.configurations().active(), None);
-            assert_eq!(store.configurations().profiles()[0].name(), "原有配置");
         }
     }
 

@@ -1,4 +1,4 @@
-//! 时间推进：RK2 半拉格朗日输送、静态边界、重力、自适应投影和 level-set 维护。
+//! Time stepping: RK2 semi-Lagrangian advection, static boundaries, gravity, adaptive projection, and level-set maintenance.
 
 use crate::adaptivity::{AdaptiveGrid, AdaptivityConfig};
 use crate::grid::{Domain, Grid, Vec3};
@@ -6,20 +6,20 @@ use crate::pressure::{self, PressureConfig, ProjectionReport};
 
 #[derive(Clone, Debug)]
 pub struct SimulationConfig {
-    /// kg/m³。
+    /// kg/m³.
     pub density: f64,
-    /// m/s²。
+    /// m/s².
     pub gravity: Vec3,
-    /// 一次输送最多跨越的背景网格数。
+    /// Maximum number of background grid cells crossed in one advection step.
     pub cfl: f64,
-    /// 秒；advance 会按此上限分子步。
+    /// Seconds; advance splits into substeps bounded by this limit.
     pub max_time_step: f64,
     pub max_substeps: usize,
-    /// 向空气外推速度的层数，用于表面附近的回溯采样。
+    /// Number of layers for velocity extrapolation into air, for backtrace sampling near the surface.
     pub extrapolation_layers: usize,
-    /// 每多少步重建一次近似符号距离；0 禁用。
+    /// Rebuild approximate signed distances every this many steps; 0 disables it.
     pub reinitialize_every: usize,
-    /// 全局平移 level set，以保持平滑 Heaviside 估计体积；不是局部保守输送。
+    /// Shift the level set globally to preserve the smoothed Heaviside volume estimate; not locally conservative advection.
     pub conserve_volume: bool,
     pub adaptivity: AdaptivityConfig,
     pub pressure: PressureConfig,
@@ -56,7 +56,7 @@ impl SimulationConfig {
             || self.extrapolation_layers > 128
         {
             return Err(
-                "密度/步长须为有限正数；CFL 在 (0,1]，重力有限，子步上限非零，外推不超过128层"
+                "Density and time step must be finite and positive; CFL must be in (0,1], gravity finite, the substep limit nonzero, and extrapolation at most 128 layers"
                     .into(),
             );
         }
@@ -71,7 +71,7 @@ pub struct StepReport {
     pub dt: f64,
     pub volume_before: f64,
     pub volume_after: f64,
-    /// 对 phi 施加的统一偏移量，米；负值扩大液体。
+    /// Uniform offset applied to phi, in meters; negative values expand the liquid.
     pub volume_correction: f64,
     pub optical_cells: usize,
     pub adaptive_cells: usize,
@@ -107,7 +107,7 @@ impl Simulation {
         })
     }
 
-    /// 在当前边界条件和重力下采用保守的速度上界，返回可用步长（秒）。
+    /// Return an available time step (seconds) using a conservative speed bound under current boundary conditions and gravity.
     pub fn stable_time_step(&self) -> f64 {
         let acceleration = norm(self.config.gravity);
         let speed = self.grid.velocity.max_speed() + acceleration * self.config.max_time_step;
@@ -116,18 +116,23 @@ impl Simulation {
             .min(self.config.cfl * self.grid.domain.cell_size / speed.max(1e-12))
     }
 
-    /// 推进一步。拒绝超过 CFL/配置上限的 dt；失败不提交新的物理状态。
+    /// Advance one step. Reject dt above the CFL/configured limit; failures do not commit a new physical state.
     pub fn step(&mut self, dt: f64) -> Result<StepReport, String> {
         self.config.validate()?;
         self.grid.validate()?;
-        let next_step = self.steps.checked_add(1).ok_or("模拟步数溢出")?;
+        let next_step = self
+            .steps
+            .checked_add(1)
+            .ok_or("simulation step count overflow")?;
         if !dt.is_finite() || dt <= 0.0 || dt > self.stable_time_step() * (1.0 + 1e-12) {
             return Err(
-                "时间步必须为有限正数且不超过 stable_time_step()；长时间推进请用 advance".into(),
+                "Time step must be finite, positive, and no greater than stable_time_step(); use advance for longer durations".into(),
             );
         }
         if !(self.time + dt).is_finite() || self.time + dt == self.time {
-            return Err("累计时间溢出或时间步小于浮点分辨率".into());
+            return Err(
+                "Accumulated time overflow or time step below floating-point resolution".into(),
+            );
         }
         let mut old = self.grid.clone();
         old.enforce_boundaries();
@@ -146,7 +151,7 @@ impl Simulation {
         };
         add_gravity(&mut next, self.config.gravity, dt);
         next.enforce_boundaries();
-        // 背景输送不依赖四叉树；在最新界面上构造自适应压力空间。
+        // Background advection does not depend on the quadtree; build the adaptive pressure space on the latest interface.
         let adaptive = AdaptiveGrid::build(&next, &self.config.adaptivity);
         let projection = pressure::project(
             &mut next,
@@ -157,7 +162,7 @@ impl Simulation {
         )?;
         if !projection.converged {
             return Err(format!(
-                "压力投影未收敛：residual={}, divergence={} /s",
+                "Pressure projection did not converge: residual={}, divergence={} /s",
                 projection.residual_norm, projection.divergence_after
             ));
         }
@@ -181,21 +186,21 @@ impl Simulation {
         Ok(report)
     }
 
-    /// 自动分子步推进指定秒数。若后续子步失败，已成功的子步保留；time 是进度依据。
+    /// Advance by the specified seconds using automatic substeps. Successful substeps are retained if a later one fails; time tracks progress.
     pub fn advance(&mut self, seconds: f64) -> Result<Vec<StepReport>, String> {
         self.config.validate()?;
         self.grid.validate()?;
         if !seconds.is_finite() || seconds < 0.0 {
-            return Err("推进时长须为有限非负数".into());
+            return Err("Advance duration must be finite and nonnegative".into());
         }
         let target = self.time + seconds;
         if !target.is_finite() || (seconds > 0.0 && target == self.time) {
-            return Err("目标时间不可表示".into());
+            return Err("Target time is not representable".into());
         }
         let mut reports = Vec::new();
         while self.time < target {
             if reports.len() >= self.config.max_substeps {
-                return Err("达到子步上限，已成功的子步保留".into());
+                return Err("Substep limit reached; successful substeps are retained".into());
             }
             let dt = self.stable_time_step().min(target - self.time);
             reports.push(self.step(dt)?);
@@ -208,7 +213,7 @@ fn norm(v: Vec3) -> f64 {
     v.iter().map(|x| x * x).sum::<f64>().sqrt()
 }
 
-/// 中点 RK2 回溯；碰到静态固体时在路径首次采样的阻挡段二分截断。
+/// Midpoint RK2 backtrace; on hitting a static solid, truncate by bisection in the first sampled blocked segment.
 fn backtrace(grid: &Grid, p: Vec3, dt: f64) -> Vec3 {
     let u = grid.sample_velocity(p);
     let midpoint = grid
@@ -319,7 +324,7 @@ fn add_gravity(grid: &mut Grid, gravity: Vec3, dt: f64) {
     }
 }
 
-/// 只向空气面扩展，绝不覆盖投影后的液体相邻面。
+/// Extrapolate only to air faces, never overwriting projected faces adjacent to liquid.
 fn extrapolate_velocity(grid: &mut Grid, layers: usize) {
     for axis in 0..3 {
         let dims = grid.velocity.dimensions(axis);
@@ -387,7 +392,7 @@ fn extrapolate_velocity(grid: &mut Grid, layers: usize) {
     grid.enforce_boundaries();
 }
 
-/// 用格间符号变化初始化距离，再做八方向 fast sweeping。
+/// Initialize distances from sign changes between cells, then perform eight-direction fast sweeping.
 pub fn reinitialize_level_set(grid: &mut Grid) {
     let domain = grid.domain;
     let h = domain.cell_size;
@@ -420,8 +425,8 @@ pub fn reinitialize_level_set(grid: &mut Grid) {
             }
         }
         if fixed[n] {
-            // 过零边距是沿坐标轴的距离；斜面上不能把它当作法向距离。
-            // 局部线性化 |phi|/|grad(phi)| 对任意方向的平面给出正确种子。
+            // The zero-crossing edge distance is along an axis, not the normal of an oblique plane.
+            // Local linearization |phi|/|grad(phi)| gives correct seeds for planes of any orientation.
             let gradient: Vec3 = std::array::from_fn(|axis| {
                 let mut lo = p;
                 let mut hi = p;
@@ -507,7 +512,7 @@ fn correct_volume(grid: &mut Grid, target: f64) -> f64 {
     if (volume_at(0.0) - target).abs() <= h.powi(3) * 1e-12 {
         return 0.0;
     }
-    // 限制最大校正，避免界面丢失时通过全局平移凭空制造大块液体。
+    // Limit the correction to avoid creating large amounts of liquid by global shifting when the interface is lost.
     let mut lo = -h;
     let mut hi = h;
     for _ in 0..48 {

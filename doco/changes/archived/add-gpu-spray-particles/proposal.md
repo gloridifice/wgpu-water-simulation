@@ -1,46 +1,46 @@
 <!-- doco:lifecycle v=1 created-at=2026-10-27T03:56:21Z completed-at=2026-10-29T06:25:42Z archived-at=2026-10-29T06:25:50Z -->
-# GPU 驱动的近岸浪花纹理粒子
+# GPU-Driven Nearshore Spray Texture Particles
 
 ## Purpose
 
-现有 FFT 和近岸 SWE 已有水面泡沫，但没有离开水面飞溅、回落的浪花。本变更拟用纹理四边形粒子补充这一视觉效果，不引入三维流体求解。
+The existing FFT and nearshore SWE have surface foam but no spray that leaves the water and falls back. This change proposes textured quad particles for that visual effect, without a three-dimensional fluid solver.
 
-用户明确要求：发射信号存储在 GPU 缓冲区，粒子系统直接读取该缓冲区完成发射，不需要 CPU 回读。CPU 只上传配置和调度计算、绘制；不能回读发射信号或活跃数量来决定运行时行为。
+The user explicitly requires emission signals to reside in a GPU buffer, which the particle system reads directly for emission without CPU readback. The CPU only uploads configuration and schedules compute and drawing; it must not read back emission signals or active counts to determine runtime behavior.
 
 ## Scope and acceptance
 
-### 本次范围
+### Scope
 
-- 首版从近岸 SWE 生成发射信号，独立存放在固定网格索引的 storage buffer 中；发射信号与粒子状态分离。
-- 在 GPU 上积分子步发射量、保留小数余量、更新固定容量粒子池并生成间接绘制参数。
-- 用带透明通道的纹理粒子表现碎浪和水滴，包含初速度、重力、阻力、寿命、落水/触地消亡，以及与场景深度的软交界。
-- 提供独立浪花参数和发射强度调试视图，接入已有配置保存与参数面板。旧配置补默认值，不丢弃已有参数；初始设计为浪花默认关闭，显式开启后预览。
-- 保留 FFT → SWE、水面泡沫输送及沙滩湿润历史，不以泡沫显示透明度或累积密度作为发射信号。
+- Initially generate emission signals from nearshore SWE, stored separately in a fixed-grid-indexed storage buffer; keep signals separate from particle state.
+- Integrate substep emission on the GPU, retain fractional remainders, update a fixed-capacity particle pool and generate indirect draw arguments.
+- Use textured particles with alpha for breaking spray and droplets, including initial velocity, gravity, drag, lifetime, disappearance on hitting water or ground, and soft intersections with scene depth.
+- Provide independent spray parameters and an emission intensity debug view, integrated with existing configuration saving and parameter panels. Supply defaults for old configurations without discarding existing parameters; the initial design disables spray by default until explicitly enabled for preview.
+- Preserve FFT → SWE, surface foam transport and beach wetness history; do not use foam display opacity or accumulated density as an emission signal.
 
-### 非目标
+### Non-goals
 
-本次不实现远海 FFT 飞沫、独立水雾层、翻卷浪舌网格、SPH/FLIP、粒子间碰撞、任意三维模型表面精确碰撞、落水反向驱动 SWE 或补充泡沫，也不更换既有泡沫材质。远海可在后续接入相同的 GPU 信号消费边界，但不在本次预先建立通用特效框架。
+This change does not implement offshore FFT spray, a separate mist layer, a curling wave tongue mesh, SPH/FLIP, particle collisions, exact collision with arbitrary 3D model surfaces, feedback from landing particles into SWE or additional foam, or a replacement for the existing foam material. Offshore may later use the same GPU signal consumption boundary, but this change does not establish a generic effects framework in advance.
 
-### 验收
+### Acceptance
 
-1. 运行时从信号生成、粒子分配到间接绘制均在 GPU 完成；没有为发射信号、粒子状态或活跃计数增加 CPU 回读、同步等待或 CPU 发射列表。独立验证程序可在提交结束后读回检查结果。
-2. 指定静水、干地、平坦匀速回流输入不发射；指定陡峭且上升的浪前缘产生有限、非零的发射量。现有泡沫残留本身不会触发持续喷射。
-3. 按单元面积和实际模拟时间积分发射量；二阶预测阶段不额外发射。对相同给定源强的不同时间分割，未饱和时累计发射数与积分量的偏差小于每发射单元一个粒子，允许浮点误差。
-4. 容量耗尽时有界丢弃新增请求，不越界、不覆盖存活粒子、不积欠整数发射量；粒子到期后容量可复用。暂停不重复消费旧信号；重置、禁用和重建正确清除临时状态。
-5. 固定相机、波谱、随机种子和求解阶数观察时，粒子从有效水面附近产生并回落，不穿透沙滩或在水面形成明显的贴图硬切边；窗口缩放后深度采样仍正确。不要求不同硬件上的粒子顺序逐位一致。
-6. 一阶、二阶 SWE 都可用；开启浪花不改变水体和已有泡沫状态。旧配置仍可加载，关闭浪花时不执行粒子更新/绘制；不启用 `ocean` 的原有 CPU 程序可构建。
+1. Signal generation, particle allocation and indirect drawing all run on the GPU; no CPU readback, synchronous wait or CPU emission list is added for signals, particle state or active counts. A separate verification program may read results back after submission.
+2. Specified still water, dry ground and flat uniform backflow inputs emit nothing; a specified steep rising wave front produces finite, nonzero emission. Existing foam residue alone does not trigger continuous spray.
+3. Integrate emission by cell area and actual simulated time; do not emit extra particles during the second-order predictor. For different time partitions of the same given source strength, cumulative unsaturated emission differs from the integral by less than one particle per emitting cell, allowing for floating-point error.
+4. When capacity is exhausted, discard new requests in a bounded manner without out-of-bounds access, overwriting live particles or accumulating integer emission debt; capacity is reusable after particles expire. Pausing does not consume old signals again; reset, disable and rebuild clear temporary state correctly.
+5. With fixed camera, spectrum, random seed and solver order, particles originate near valid water surfaces and fall back without penetrating the beach or forming obvious hard texture edges at the water. Depth sampling remains correct after window resizing. Bit-identical particle order across hardware is not required.
+6. Both first- and second-order SWE work; enabling spray does not change water or existing foam state. Old configurations load, particle update/draw is skipped when spray is disabled, and the existing CPU program builds without `ocean`.
 
-### 调研依据
+### Research basis
 
-- [Real-time Breaking Waves for Shallow Water Simulations](https://cgl.ethz.ch/Downloads/Publications/Papers/2007/Thue07b/Thue07b.pdf)：高度场无法独立表达翻卷水面，适合以额外视觉元素补充。
-- [Real-time Animation and Rendering of Ocean Whitecaps](https://liris.cnrs.fr/Documents/Liris-5812.pdf)：FFT 波面形变白浪判据，作为后续远海发射的参考，不是本次 SWE 判据。
-- [NVIDIA Soft Particles](https://developer.download.nvidia.com/whitepapers/2007/SDK10/SoftParticles_hi.pdf)：粒子与场景交界的深度淡出。
-- [GPU Gems 3, Chapter 23](https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-23-high-speed-screen-particles)：透明粒子覆盖成本；离屏降分辨率渲染留作后续优化。
+- [Real-time Breaking Waves for Shallow Water Simulations](https://cgl.ethz.ch/Downloads/Publications/Papers/2007/Thue07b/Thue07b.pdf): a height field cannot express a curling surface alone and benefits from additional visual elements.
+- [Real-time Animation and Rendering of Ocean Whitecaps](https://liris.cnrs.fr/Documents/Liris-5812.pdf): FFT surface deformation whitecap criterion, a reference for future offshore emission rather than this SWE criterion.
+- [NVIDIA Soft Particles](https://developer.download.nvidia.com/whitepapers/2007/SDK10/SoftParticles_hi.pdf): depth fading at particle/scene intersections.
+- [GPU Gems 3, Chapter 23](https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-23-high-speed-screen-particles): transparent particle coverage cost; reduced-resolution offscreen rendering is left for future optimization.
 
-上述资料用于方案参考，不代表性能或视觉效果已在本项目验证；SWE 发射规则是拟采用的工程近似。引入任何外部纹理前需核查来源与许可。
+These sources inform the design and do not imply that performance or visuals have been verified in this project; the SWE emission rule is a proposed engineering approximation. Check provenance and licensing before introducing any external texture.
 
 ## Result
 
-已完成。用户已明确授权完成及归档；以下为既有交付与验证结论，本次未重跑运行验证。
+Completed. The user explicitly authorized completion and archiving; the following records existing delivery and verification, not a new runtime verification.
 
-已接通 GPU 信号积分、固定容量粒子池、间接纹理绘制、软交界、参数面板和配置保存。库测试、CPU feature 边界、RTX 3070/Vulkan 上的完整 GPU 验证及有界窗口预览通过。首版保留纯 SWE 区域、无透明排序和高度场碰撞的限制；未验证其他设备及真实显存耗尽。
+GPU signal integration, the fixed-capacity particle pool, indirect textured drawing, soft intersections, parameter panel and configuration saving were connected. Library tests, the CPU feature boundary, full GPU verification on RTX 3070/Vulkan and a bounded window preview passed. The initial version remains limited to pure SWE regions, unsorted transparency and height-field collision; other devices and actual VRAM exhaustion were not verified.

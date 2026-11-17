@@ -53,7 +53,14 @@ impl WorkspaceId {
         Self::ALL.iter().position(|x| *x == self).unwrap()
     }
     pub fn name(self) -> &'static str {
-        ["场景", "浅水", "远海", "动画 SDF 波纹", "着色", "配置"][self.index()]
+        [
+            "Scene",
+            "Shallow Water",
+            "Offshore",
+            "Animated SDF Ripples",
+            "Shading",
+            "Configurations",
+        ][self.index()]
     }
     pub fn key(self) -> &'static str {
         [
@@ -117,27 +124,27 @@ impl Panel {
     ];
     pub fn name(self) -> &'static str {
         match self {
-            Self::View => "渲染视图",
-            Self::Scene => "场景与地形",
-            Self::Lake => "湖泊地形",
-            Self::AnimatedSdf => "动画 SDF 波纹",
-            Self::Model => "模型与区域",
-            Self::Colliders => "碰撞体",
-            Self::Shore => "SWE 与输入",
-            Self::ShoreFoam => "近岸泡沫模拟",
-            Self::Spray => "浪花模拟",
-            Self::Ocean => "波谱与波形",
-            Self::OffshoreFoam => "远海泡沫",
-            Self::Optics => "水体与天空",
-            Self::Caustics => "焦散",
-            Self::Refraction => "折射",
+            Self::View => "Render View",
+            Self::Scene => "Scene and Terrain",
+            Self::Lake => "Lake Terrain",
+            Self::AnimatedSdf => "Animated SDF Ripples",
+            Self::Model => "Model and Domain",
+            Self::Colliders => "Colliders",
+            Self::Shore => "SWE and Input",
+            Self::ShoreFoam => "Nearshore Foam",
+            Self::Spray => "Spray",
+            Self::Ocean => "Spectrum and Waves",
+            Self::OffshoreFoam => "Offshore Foam",
+            Self::Optics => "Water and Sky",
+            Self::Caustics => "Caustics",
+            Self::Refraction => "Refraction",
             Self::Reflection => "SSR",
-            Self::FoamMaterial => "泡沫外观",
-            Self::Surface => "表面与沙地",
-            Self::SprayAppearance => "浪花外观",
-            Self::Configurations => "配置管理",
-            Self::Performance => "性能",
-            Self::Unknown => "未知面板",
+            Self::FoamMaterial => "Foam Appearance",
+            Self::Surface => "Surface and Sand",
+            Self::SprayAppearance => "Spray Appearance",
+            Self::Configurations => "Configurations",
+            Self::Performance => "Performance",
+            Self::Unknown => "Unknown Panel",
         }
     }
     pub fn available(self, optics: &OpticsConfig) -> bool {

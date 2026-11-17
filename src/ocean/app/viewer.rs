@@ -256,7 +256,7 @@ impl State {
         if let Some(settings) = self.gui.load_configuration.take() {
             let result = self
                 .load_configuration(settings)
-                .map_err(|error| format!("载入失败：{error}"));
+                .map_err(|error| format!("Load failed: {error}"));
             self.gui.configuration_panel.finish_load(result);
         }
         if self.render_size != self.gui.viewport_size {

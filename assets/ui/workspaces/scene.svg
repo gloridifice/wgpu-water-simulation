@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" role="img" aria-labelledby="scene-title">
-  <title id="scene-title">场景：空间方块</title>
+  <title id="scene-title">Scene: isometric cube</title>
   <path d="m12 2.75 8.25 4.75v9.5L12 21.75 3.75 17V7.5Z"/>
   <path d="M3.75 7.5 12 12.25 20.25 7.5M12 12.25v9.5"/>
 </svg>

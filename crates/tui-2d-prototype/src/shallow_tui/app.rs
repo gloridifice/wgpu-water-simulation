@@ -1,7 +1,7 @@
 use std::time::Duration;
 use tui_2d_prototype::solver::{Config, Simulation};
 
-/// 交互状态只调用求解器的公开接口，不参与通量和 CFL 计算。
+/// Interactive state uses only the solver's public interface, not flux or CFL calculations.
 pub struct App {
     pub sim: Simulation,
     pub initial_mass: f64,
@@ -10,7 +10,7 @@ pub struct App {
     pub selected: usize,
     pub speed: f64,
     pub disturbances: usize,
-    /// 保持纵轴不缩小；扰动超出范围时才向外扩展。
+    /// Never shrink the vertical axis; expand it only when a disturbance exceeds its range.
     pub surface_bounds: [f64; 2],
 }
 
@@ -40,7 +40,7 @@ impl App {
 
     pub fn tick(&mut self, elapsed: Duration) -> Result<(), String> {
         if !self.paused {
-            // 终端拖动/挂起后不追赶积累的几秒时间，避免一次长更新卡住输入。
+            // Do not catch up accumulated seconds after terminal dragging or suspension, avoiding a long update that blocks input.
             let advance = elapsed.as_secs_f64().min(0.1) * self.speed;
             if advance > 0.0 {
                 self.sim.advance_to(self.sim.time() + advance)?;
@@ -58,7 +58,7 @@ impl App {
     }
 
     pub fn disturb_at(&mut self, x: f64) -> Result<(), String> {
-        // 鼠标只传入物理坐标；实际状态修改仍由独立求解模块负责。
+        // Mouse input supplies physical coordinates only; the independent solver modifies the state.
         let width = (0.02 * self.sim.config().length).max(2.0 * self.sim.dx());
         self.sim
             .add_disturbance(x, 0.08 * self.sim.config().rest_depth, width)?;

@@ -1,7 +1,7 @@
-//! 单个场景 render pass 的真实 GPU timestamp 计时。
+//! Real GPU timestamp timing for a single scene render pass.
 //!
-//! 最多保留一个异步回读；尚未返回时跳过下一次采样，绘制不等待 GPU。
-//! 查询仅包住场景 pass，上传、egui、查询回读和呈现均不计入数值。
+//! Keep at most one asynchronous readback; skip the next sample while pending, without blocking drawing on the GPU.
+//! Queries cover only the scene pass, excluding upload, egui, query readback, and presentation.
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
@@ -78,7 +78,7 @@ impl SceneGpuTimer {
         })
     }
 
-    /// 必须在对应 scene pass 结束后调用，并提交同一个 encoder。
+    /// Call after the corresponding scene pass and submit the same encoder.
     pub fn resolve(&mut self, encoder: &mut wgpu::CommandEncoder) {
         if !self.ready() {
             return;
@@ -100,7 +100,7 @@ impl SceneGpuTimer {
         resources.pending = Some(receiver);
     }
 
-    /// 只轮询已完成的 map，不调用 wait，也不等待通道收到消息。
+    /// Only poll completed maps; do not call wait or wait for a channel message.
     pub fn poll(&mut self, device: &wgpu::Device) {
         if self.failed {
             return;
@@ -152,7 +152,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    #[ignore = "需要实际 GPU；验证真实 timestamp 与异步 map"]
+    #[ignore = "Requires a real GPU; verifies real timestamps and asynchronous mapping"]
     fn asynchronous_scene_timestamp_reports_sample_and_unsupported_state() {
         pollster::block_on(async {
             let instance = wgpu::Instance::default();
@@ -237,7 +237,7 @@ mod tests {
                     "GPU adapter does not support timestamp queries; unsupported state verified"
                 );
             }
-            // 同一适配器不请求可选 feature 时，应用仍能正常使用显式 unsupported 状态。
+            // Without requesting the optional feature on the same adapter, the application still works with an explicit unsupported state.
             let (plain_device, plain_queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor::default())
                 .await
