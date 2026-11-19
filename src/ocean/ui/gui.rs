@@ -79,6 +79,13 @@ fn ocean_view(
     requested_size
 }
 
+pub(crate) enum ScreenshotStatus {
+    Idle,
+    Saving,
+    Saved(std::path::PathBuf),
+    Failed(String),
+}
+
 pub struct Gui {
     pub backend: common::ui::Egui,
     pub draft: OceanConfig,
@@ -95,6 +102,8 @@ pub struct Gui {
     pub save_now: bool,
     pub save_status: String,
     pub save_failed: bool,
+    pub(crate) screenshot_requested: bool,
+    pub(crate) screenshot_status: ScreenshotStatus,
     pub settings_path: Option<std::path::PathBuf>,
     pub configuration_panel: ConfigurationPanel,
     pub load_configuration: Option<SavedSettings>,
@@ -165,6 +174,8 @@ impl Gui {
             save_now: false,
             save_status: "Local saving disabled".into(),
             save_failed: false,
+            screenshot_requested: false,
+            screenshot_status: ScreenshotStatus::Idle,
             settings_path: None,
             configuration_panel: ConfigurationPanel::new(ConfigurationLibrary::new(
                 SavedSettings::default(),
@@ -318,6 +329,30 @@ impl Gui {
                                         ui.close();
                                     }
                                 });
+                                let saving_screenshot = self.screenshot_requested
+                                    || matches!(self.screenshot_status, ScreenshotStatus::Saving);
+                                if ui
+                                    .add_enabled(!saving_screenshot, egui::Button::new("Screenshot"))
+                                    .on_hover_text("Save the current Render View as a PNG in the screenshots folder, without UI panels.")
+                                    .on_disabled_hover_text("Saving a screenshot…")
+                                    .clicked()
+                                {
+                                    self.screenshot_requested = true;
+                                }
+                                match &self.screenshot_status {
+                                    ScreenshotStatus::Saving => {
+                                        ui.label("Saving PNG…");
+                                    }
+                                    ScreenshotStatus::Saved(path) => {
+                                        ui.label("PNG saved")
+                                            .on_hover_text(path.display().to_string());
+                                    }
+                                    ScreenshotStatus::Failed(error) => {
+                                        ui.colored_label(egui::Color32::LIGHT_RED, "Screenshot failed")
+                                            .on_hover_text(error);
+                                    }
+                                    ScreenshotStatus::Idle => {}
+                                }
                                 let errors: Vec<_> = [
                                     self.error.as_deref(),
                                     self.spray_error.as_deref(),

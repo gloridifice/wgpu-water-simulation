@@ -56,6 +56,12 @@ Performance is a general panel; playback, speed, time, and camera controls remai
 - The toolbar directly displays unsaved state and save success/failure. Failures use an error color and show the specific error and target path on hover. Failure retains in-memory changes and the old file; no automatic retry occurs before another successful manual save.
 - `--no-settings` and read-only `--config` disable save buttons and shortcut; they do not create or rewrite sessions. Manual configuration saving does not change the separate layout-sidecar automatic saving rules.
 
+## Screenshots
+
+- The header **Screenshot** button saves the live Render View as a PNG at its current pixel dimensions. The image includes post-processing but excludes the toolbar, Dock panels, and other UI. Capture works while paused and does not reset the simulation.
+- The PNG is saved under `screenshots/` in the working directory with a timestamped filename, without overwriting existing files. Only one capture can be pending. The header reports completion or failure, with the absolute path or error on hover.
+- Screenshot export does not write configuration or layout files and remains available with `--no-settings` and read-only `--config`.
+
 ## Layout persistence and failure behavior
 
 - Layouts are saved separately beside the writable session path as `<session file stem>.workspaces.json`, containing version, current workspace, and six canonical layouts; they are not stored in `SavedSettings` or named configurations.

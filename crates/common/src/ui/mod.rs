@@ -81,7 +81,7 @@ pub struct Viewport {
     texture: wgpu::Texture,
 }
 impl Viewport {
-    fn texture(gpu: &Gpu, format: wgpu::TextureFormat, size: [u32; 2]) -> wgpu::Texture {
+    fn create_texture(gpu: &Gpu, format: wgpu::TextureFormat, size: [u32; 2]) -> wgpu::Texture {
         gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("docked scene view"),
             size: wgpu::Extent3d {
@@ -93,12 +93,14 @@ impl Viewport {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[format.remove_srgb_suffix()],
         })
     }
     pub fn new(backend: &mut Egui, gpu: &Gpu, format: wgpu::TextureFormat) -> Self {
-        let texture = Self::texture(gpu, format, [1, 1]);
+        let texture = Self::create_texture(gpu, format, [1, 1]);
         let view = texture.create_view(&Default::default());
         // egui expects the encoded display color, not a second sRGB decode.
         let sampled = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -112,6 +114,9 @@ impl Viewport {
         );
         Self { texture, view, id }
     }
+    pub fn texture(&self) -> &wgpu::Texture {
+        &self.texture
+    }
     pub fn resize(
         &mut self,
         backend: &mut Egui,
@@ -119,7 +124,7 @@ impl Viewport {
         format: wgpu::TextureFormat,
         size: [u32; 2],
     ) {
-        self.texture = Self::texture(gpu, format, size);
+        self.texture = Self::create_texture(gpu, format, size);
         self.view = self.texture.create_view(&Default::default());
         let sampled = self.texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(format.remove_srgb_suffix()),

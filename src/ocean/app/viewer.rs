@@ -1,4 +1,5 @@
 //! Window events, live state and frame scheduling.
+use super::screenshot::Screenshot;
 use crate::ocean::{
     Error,
     camera::Camera,
@@ -11,7 +12,7 @@ use crate::ocean::{
         spectral::FftWaves as Ocean,
     },
     ui::{
-        gui::Gui,
+        gui::{Gui, ScreenshotStatus},
         panels::configuration::ConfigurationPanel,
         performance::{FrameGpuStatus, FrameTimings, SweStatus},
     },
@@ -42,6 +43,7 @@ struct State {
     settings: Option<SettingsStore>,
     applied_model: crate::ocean::parameters::model::ModelConfig,
     frame_timer: Option<crate::ocean::gpu::timer::GpuTimer>,
+    screenshot: Option<Screenshot>,
 }
 
 impl State {
@@ -69,6 +71,7 @@ impl State {
         let frame_timer = crate::ocean::gpu::timer::GpuTimer::new(&gpu);
         Ok(Self {
             frame_timer,
+            screenshot: None,
             gui,
             window,
             surface,
@@ -385,6 +388,16 @@ impl State {
             timer.mark(&mut encoder, 1);
             timer.resolve(&mut encoder, 0, 1, dt);
         }
+        if std::mem::take(&mut self.gui.screenshot_requested) {
+            self.gui.screenshot_status =
+                match Screenshot::encode(&self.gpu, &mut encoder, self.gui.viewport.texture()) {
+                    Ok(screenshot) => {
+                        self.screenshot = Some(screenshot);
+                        ScreenshotStatus::Saving
+                    }
+                    Err(error) => ScreenshotStatus::Failed(error.to_string()),
+                };
+        }
         let render = render_start.elapsed().as_secs_f64() * 1000.0;
         let submit_start = Instant::now();
         self.gpu
@@ -415,8 +428,27 @@ impl common::app::WindowScene for State {
     fn draw(&mut self) -> Result<bool, Error> {
         State::draw(self)
     }
+    fn poll_commands(&mut self) -> Result<(), Error> {
+        if let Some(result) = self
+            .screenshot
+            .as_ref()
+            .and_then(|shot| shot.poll(&self.gpu))
+        {
+            self.screenshot = None;
+            self.gui.screenshot_status = match result {
+                Ok(path) => ScreenshotStatus::Saved(path),
+                Err(error) => ScreenshotStatus::Failed(error),
+            };
+        }
+        Ok(())
+    }
     fn exiting(&mut self) {
         self.persist_layout(true);
+        if let Some(shot) = self.screenshot.take()
+            && let Err(error) = shot.finish(&self.gpu)
+        {
+            eprintln!("Screenshot failed: {error}");
+        }
     }
     fn event(&mut self, event: WindowEvent) -> bool {
         let response = self.gui.input.on_window_event(&self.window, &event);
