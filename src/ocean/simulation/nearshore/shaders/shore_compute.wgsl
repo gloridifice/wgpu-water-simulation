@@ -278,7 +278,8 @@ fn foam_flux(c: vec2<i32>, delta: vec2<i32>, axis: u32) -> vec3<f32> {
 }
 // Positivity: the cell is the mean of its four nonnegative face states.
 // dt * outward Rusanov donor weight / axis spacing must be <= 1/4 per face.
-// Production's 0.2 CFL with the 12 m/s bound satisfies this (also for RK stages).
+// The default 0.2 CFL with the 12 m/s bound satisfies this (also for RK stages).
+// Larger user-selected CFL limits do not retain this positivity guarantee.
 fn transport_foam(c: vec2<i32>) -> vec3<f32> {
     let spacing=shore.domain.zw/shore.options.z;
     var change=vec3(0.0);
@@ -330,7 +331,7 @@ fn dual_closed_face(c: vec2<i32>, donor: vec2<i32>) -> bool {
 }
 fn dual_backtrace(c: vec2<i32>, speed: vec2<f32>) -> vec2<f32> {
     var offset=speed*shore.timing.y/(shore.domain.zw/shore.options.z);
-    // Production CFL keeps each displacement below one cell. Stop the normal
+    // The default CFL keeps each displacement below one cell. Stop the normal
     // component at a closed face; do not interpolate through emergent solids.
     let step=vec2<i32>(sign(-offset));
     if dual_closed_face(c,c+vec2(step.x,0)) { offset.x=0.0; }

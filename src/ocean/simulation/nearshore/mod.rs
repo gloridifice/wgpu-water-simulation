@@ -684,7 +684,7 @@ impl Shore {
         let speed = 12.0 + (9.81 * depth_bound).sqrt();
         let cell_x = step.domain[2] / self.resolution as f32;
         let cell_z = step.domain[3] / self.resolution as f32;
-        let stable_dt = 0.2 / (speed / cell_x + speed / cell_z);
+        let stable_dt = optics.shore.cfl / (speed / cell_x + speed / cell_z);
         let elapsed = step.timing[1].min(0.1).min(stable_dt * 128.0);
         let count = (elapsed / stable_dt).ceil().max(1.0) as u32;
         let dt = elapsed / count as f32;

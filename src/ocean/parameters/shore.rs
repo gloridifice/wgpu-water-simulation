@@ -43,6 +43,8 @@ pub struct ShoreConfig {
     pub enabled: bool,
     pub resolution: u32,
     pub order: u32,
+    /// Dimensionless conservative timestep limit, not a measured local Courant number.
+    pub cfl: f32,
     pub input_gain: f32,
     pub filter_enabled: bool,
     pub filter_cutoff: f32,
@@ -119,6 +121,7 @@ impl Default for ShoreConfig {
             enabled: true,
             resolution: RESOLUTION,
             order: 1,
+            cfl: 0.2,
             input_gain: 1.0,
             filter_enabled: true,
             filter_cutoff: 12.0,
@@ -202,6 +205,7 @@ impl ShoreConfig {
             collider.validate()?;
         }
         for (name, value, low, high) in [
+            ("SWE CFL limit", self.cfl, 0.05, 1.1),
             ("SWE input gain", self.input_gain, 0.0, 3.0),
             ("SWE filter cutoff", self.filter_cutoff, 0.0, 512.0),
             ("SWE filter transition", self.filter_transition, 0.0, 512.0),
@@ -855,11 +859,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(optics.shore, ShoreConfig::default());
+        assert_eq!(optics.shore.cfl, 0.2);
         optics.validate().unwrap();
+        for cfl in [0.05, 0.1, 0.3, 0.5, 0.7, 0.9, 1.1] {
+            let mut configured = optics;
+            configured.shore.cfl = cfl;
+            configured.validate().unwrap();
+            let saved = serde_json::to_string(&configured).unwrap();
+            let restored: OpticsConfig = serde_json::from_str(&saved).unwrap();
+            assert_eq!(restored.shore.cfl, cfl);
+        }
     }
     #[test]
     fn rejects_singular_and_nonfinite_controls() {
         for c in [
+            ShoreConfig {
+                cfl: 0.049,
+                ..Default::default()
+            },
+            ShoreConfig {
+                cfl: 1.101,
+                ..Default::default()
+            },
+            ShoreConfig {
+                cfl: f32::NAN,
+                ..Default::default()
+            },
+            ShoreConfig {
+                cfl: f32::INFINITY,
+                ..Default::default()
+            },
             ShoreConfig {
                 foam_velocity_threshold: -0.01,
                 ..Default::default()

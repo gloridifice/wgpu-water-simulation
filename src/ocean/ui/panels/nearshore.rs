@@ -60,6 +60,7 @@ impl Gui {
                     &[(1, "First Order"), (2, "Second Order")],
                 )
             });
+            number(ui, "CFL Limit (C)", &mut shore.cfl, 0.05..=1.1, false);
         });
         group(ui, "FFT → SWE Input and Blending", |ui| {
             number(

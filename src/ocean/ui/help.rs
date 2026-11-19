@@ -240,6 +240,9 @@ fn legacy_help(name: &str) -> &'static str {
         "SWE Solver" => {
             "First order uses Euler integration; second order uses MUSCL and RK2. Switching resets the simulation; set normal detail to 0 when comparing geometry."
         }
+        "CFL Limit (C)" => {
+            "Dimensionless conservative timestep limit: 0.05–1.1, default 0.2. Smaller values generally use more substeps; integer rounding can give different C values the same actual step. Applies live without resetting history. Not a measured local Courant number. Values above 0.2 are experimental and may violate water/foam stability or positivity assumptions; the default is recommended for normal use."
+        }
         "Water Foam" => {
             "Linear RGB color of water foam, including offshore foam. Changes display only."
         }

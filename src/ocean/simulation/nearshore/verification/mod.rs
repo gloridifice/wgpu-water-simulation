@@ -438,6 +438,37 @@ fn verify_order(gpu: &Gpu, order: u32, space_order: u32) -> Result<(), crate::oc
     if error > 0.0001 {
         return Err(format!("SWE lake-at-rest drift: {error}").into());
     }
+    // Live CFL edits must change scheduling without resetting or disturbing still water.
+    let mut previous_substeps = u32::MAX;
+    for (index, cfl) in [0.1, 1.1].into_iter().enumerate() {
+        optics.shore.cfl = cfl;
+        advance(
+            &mut shore,
+            &optics,
+            1.0 + (index + 1) as f32 * 0.01,
+            false,
+            gain,
+        );
+        if shore.substeps >= previous_substeps
+            || (shore.simulated_dt - 0.01).abs() > 0.000001
+            || shore.last.unwrap().options[3] != 0.0
+        {
+            return Err(
+                format!("SWE live CFL edit did not change substeps without reset: {cfl}").into(),
+            );
+        }
+        let state = read(&shore)?;
+        let drift = state[cells..2 * cells]
+            .iter()
+            .zip(&initial[cells..2 * cells])
+            .map(|(a, b)| (a[0] - b[0]).abs().max(a[1].abs()).max(a[2].abs()))
+            .fold(0.0_f32, f32::max);
+        if state.iter().flatten().any(|value| !value.is_finite()) || drift > 0.0001 {
+            return Err(format!("SWE live CFL edit disturbed still water: {cfl}").into());
+        }
+        previous_substeps = shore.substeps;
+    }
+    optics.shore.cfl = ShoreConfig::default().cfl;
     // Local pulse: conserve water away from the open sponge and propagate in both axes.
     let mut seed = still.clone();
     let n = RESOLUTION as usize;
